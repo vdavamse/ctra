@@ -1,0 +1,206 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 850" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+  <defs>
+    <filter id="sh" x="-4%" y="-4%" width="108%" height="108%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.1"/>
+    </filter>
+    <linearGradient id="gPurple" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#8B5CF6"/><stop offset="100%" style="stop-color:#7C3AED"/>
+    </linearGradient>
+    <linearGradient id="gAmber" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#F59E0B"/><stop offset="100%" style="stop-color:#D97706"/>
+    </linearGradient>
+    <linearGradient id="gGreen" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#22C55E"/><stop offset="100%" style="stop-color:#16A34A"/>
+    </linearGradient>
+    <linearGradient id="gRose" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#F43F5E"/><stop offset="100%" style="stop-color:#E11D48"/>
+    </linearGradient>
+    <linearGradient id="gSlate" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#475569"/><stop offset="100%" style="stop-color:#334155"/>
+    </linearGradient>
+    <linearGradient id="gTeal" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#14B8A6"/><stop offset="100%" style="stop-color:#0D9488"/>
+    </linearGradient>
+    <linearGradient id="gBlue" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3B82F6"/><stop offset="100%" style="stop-color:#2563EB"/>
+    </linearGradient>
+    <marker id="aGray" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#94A3B8"/>
+    </marker>
+    <marker id="aPurple" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#8B5CF6"/>
+    </marker>
+    <marker id="aAmber" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#D97706"/>
+    </marker>
+    <marker id="aGreen" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#16A34A"/>
+    </marker>
+    <marker id="aBlue" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#2563EB"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1100" height="850" rx="12" fill="#F8FAFC"/>
+
+  <!-- ================================================================ -->
+  <!-- TOP SECTION: Title + MCTS Context (y=0-80)                       -->
+  <!-- ================================================================ -->
+  <text x="550" y="30" text-anchor="middle" font-size="22" font-weight="700" fill="#0F172A">CTRA Agent Interactions</text>
+  <text x="550" y="50" text-anchor="middle" font-size="12" fill="#64748B">How MCTS drives the agent pipeline — two execution paths</text>
+
+  <!-- MCTS Runner bar -->
+  <rect x="80" y="62" width="940" height="30" rx="6" fill="url(#gAmber)" filter="url(#sh)"/>
+  <text x="550" y="82" text-anchor="middle" font-size="11" font-weight="600" fill="white">MCTS Runner: SELECT node → Agent evaluates it → results BACKPROPAGATED</text>
+
+  <!-- ================================================================ -->
+  <!-- DECISION DIAMOND (y=100-160)                                     -->
+  <!-- ================================================================ -->
+  <line x1="550" y1="92" x2="550" y2="110" stroke="#D97706" stroke-width="1.5" marker-end="url(#aAmber)"/>
+
+  <text x="550" y="108" text-anchor="middle" font-size="9" font-weight="600" fill="#D97706">MCTS Node Evaluation</text>
+
+  <!-- Diamond shape -->
+  <polygon points="550,115 620,140 550,165 480,140" fill="#FFFBEB" stroke="#D97706" stroke-width="2"/>
+  <text x="550" y="138" text-anchor="middle" font-size="10" font-weight="700" fill="#92400E">iteration</text>
+  <text x="550" y="150" text-anchor="middle" font-size="10" font-weight="700" fill="#92400E">== 0?</text>
+
+  <!-- Left arrow: Yes — single L-shaped path from diamond to left path -->
+  <path d="M 480 140 L 270 140 L 270 176" stroke="#3B82F6" stroke-width="2" fill="none" marker-end="url(#aBlue)"/>
+  <text x="390" y="134" text-anchor="middle" font-size="11" font-weight="700" fill="#2563EB">Yes</text>
+
+  <!-- Right arrow: No — single L-shaped path from diamond to right path -->
+  <path d="M 620 140 L 830 140 L 830 176" stroke="#E11D48" stroke-width="2" fill="none" marker-end="url(#aGray)"/>
+  <text x="710" y="134" text-anchor="middle" font-size="11" font-weight="700" fill="#E11D48">No</text>
+
+  <!-- ================================================================ -->
+  <!-- LEFT PATH: Iteration 0 (y=180-620)                               -->
+  <!-- ================================================================ -->
+  <rect x="40" y="180" width="460" height="460" rx="10" fill="#EFF6FF" stroke="#93C5FD" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="270" y="202" text-anchor="middle" font-size="14" font-weight="700" fill="#1E40AF">Iteration 0: Initial Feature Set</text>
+
+  <!-- Step 1: Initializer -->
+  <rect x="65" y="215" width="410" height="52" rx="6" fill="url(#gPurple)" filter="url(#sh)"/>
+  <text x="270" y="236" text-anchor="middle" font-size="11" font-weight="600" fill="white">1. Initializer [Primary LM: Opus]</text>
+  <text x="270" y="252" text-anchor="middle" font-size="8.5" fill="#DDD6FE">5-stage: zero-shot → factor analysis → factor features → combine/dedup → plan</text>
+  <line x1="270" y1="267" x2="270" y2="282" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aGray)"/>
+
+  <!-- Step 2: FeaturePlanner -->
+  <rect x="65" y="285" width="410" height="42" rx="6" fill="url(#gPurple)" filter="url(#sh)"/>
+  <text x="270" y="303" text-anchor="middle" font-size="11" font-weight="600" fill="white">2. FeaturePlanner [Primary LM: Opus]</text>
+  <text x="270" y="317" text-anchor="middle" font-size="8.5" fill="#DDD6FE">Creates FeaturePlan schema for each feature</text>
+  <line x1="270" y1="327" x2="270" y2="342" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aGray)"/>
+
+  <!-- Step 3: FeatureGrouper -->
+  <rect x="65" y="345" width="410" height="42" rx="6" fill="url(#gPurple)" filter="url(#sh)"/>
+  <text x="270" y="363" text-anchor="middle" font-size="11" font-weight="600" fill="white">3. FeatureGrouper</text>
+  <text x="270" y="377" text-anchor="middle" font-size="8.5" fill="#DDD6FE">Groups initial ~8-15 features into ≤5-feature batches</text>
+  <line x1="270" y1="387" x2="270" y2="402" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aGray)"/>
+
+  <!-- Step 4: FeatureBuilder -->
+  <rect x="65" y="405" width="410" height="42" rx="6" fill="url(#gPurple)" filter="url(#sh)"/>
+  <text x="270" y="423" text-anchor="middle" font-size="11" font-weight="600" fill="white">4. FeatureBuilder [Budget LM: Sonnet]</text>
+  <text x="270" y="437" text-anchor="middle" font-size="8.5" fill="#DDD6FE">Builds ALL features for ALL trials via RAG</text>
+  <line x1="270" y1="447" x2="270" y2="462" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aGray)"/>
+
+  <!-- Step 5: Train Models -->
+  <rect x="65" y="465" width="410" height="42" rx="6" fill="url(#gGreen)" filter="url(#sh)"/>
+  <text x="270" y="483" text-anchor="middle" font-size="11" font-weight="600" fill="white">5. Train Models</text>
+  <text x="270" y="497" text-anchor="middle" font-size="8.5" fill="#DCFCE7">XGBoost + TabPFN on tabular features</text>
+  <line x1="270" y1="507" x2="270" y2="522" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aGray)"/>
+
+  <!-- Step 6: Evaluator -->
+  <rect x="65" y="525" width="410" height="52" rx="6" fill="url(#gPurple)" filter="url(#sh)"/>
+  <text x="270" y="546" text-anchor="middle" font-size="11" font-weight="600" fill="white">6. Evaluator [Primary LM: Opus]</text>
+  <text x="270" y="562" text-anchor="middle" font-size="8.5" fill="#DDD6FE">shapiq interaction values + BuilderDiagnostics</text>
+
+  <!-- Output label for iter 0 -->
+  <text x="270" y="600" text-anchor="middle" font-size="9" font-weight="600" fill="#1E40AF">Output: AgentOutput → MCTS reward</text>
+  <text x="270" y="615" text-anchor="middle" font-size="8" fill="#3B82F6">(feature_plans, eval_outputs)</text>
+
+  <!-- ================================================================ -->
+  <!-- RIGHT PATH: Iteration N (y=180-620)                              -->
+  <!-- ================================================================ -->
+  <rect x="600" y="180" width="460" height="460" rx="10" fill="#FEF2F2" stroke="#FCA5A5" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="830" y="202" text-anchor="middle" font-size="14" font-weight="700" fill="#991B1B">Iteration N: MCTS-Driven Refinement</text>
+
+  <!-- Step 1: FeatureProposer -->
+  <rect x="625" y="215" width="410" height="52" rx="6" fill="url(#gPurple)" filter="url(#sh)"/>
+  <text x="830" y="236" text-anchor="middle" font-size="11" font-weight="600" fill="white">1. FeatureProposer [Primary LM: Opus]</text>
+  <text x="830" y="252" text-anchor="middle" font-size="8.5" fill="#DDD6FE">Proposes exactly ONE ADD / REMOVE / REFINE op per iteration</text>
+  <line x1="830" y1="267" x2="830" y2="282" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aGray)"/>
+
+  <!-- Step 2: FeaturePlanner -->
+  <rect x="625" y="285" width="410" height="42" rx="6" fill="url(#gPurple)" filter="url(#sh)"/>
+  <text x="830" y="303" text-anchor="middle" font-size="11" font-weight="600" fill="white">2. FeaturePlanner [Primary LM: Opus]</text>
+  <text x="830" y="317" text-anchor="middle" font-size="8.5" fill="#DDD6FE">Plans the single new/refined feature (skipped for REMOVE)</text>
+  <line x1="830" y1="327" x2="830" y2="342" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aGray)"/>
+
+  <!-- Step 3: FeatureGrouper -->
+  <rect x="625" y="345" width="410" height="42" rx="6" fill="url(#gPurple)" filter="url(#sh)"/>
+  <text x="830" y="363" text-anchor="middle" font-size="11" font-weight="600" fill="white">3. FeatureGrouper</text>
+  <text x="830" y="377" text-anchor="middle" font-size="8.5" fill="#DDD6FE">Pass-through at iter-N (1 feature = 1 group)</text>
+  <line x1="830" y1="387" x2="830" y2="402" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aGray)"/>
+
+  <!-- Step 4: FeatureBuilder -->
+  <rect x="625" y="405" width="410" height="42" rx="6" fill="url(#gPurple)" filter="url(#sh)"/>
+  <text x="830" y="423" text-anchor="middle" font-size="11" font-weight="600" fill="white">4. FeatureBuilder [Budget LM: Sonnet]</text>
+  <text x="830" y="437" text-anchor="middle" font-size="8.5" fill="#DDD6FE">Builds the single new/refined feature across all trials</text>
+  <line x1="830" y1="447" x2="830" y2="462" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aGray)"/>
+
+  <!-- Step 5: Train Models -->
+  <rect x="625" y="465" width="410" height="42" rx="6" fill="url(#gGreen)" filter="url(#sh)"/>
+  <text x="830" y="483" text-anchor="middle" font-size="11" font-weight="600" fill="white">5. Train Models</text>
+  <text x="830" y="497" text-anchor="middle" font-size="8.5" fill="#DCFCE7">XGBoost + TabPFN on updated features</text>
+  <line x1="830" y1="507" x2="830" y2="522" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aGray)"/>
+
+  <!-- Step 6: Evaluator -->
+  <rect x="625" y="525" width="410" height="52" rx="6" fill="url(#gPurple)" filter="url(#sh)"/>
+  <text x="830" y="546" text-anchor="middle" font-size="11" font-weight="600" fill="white">6. Evaluator [Primary LM: Opus]</text>
+  <text x="830" y="562" text-anchor="middle" font-size="8.5" fill="#DDD6FE">shapiq + BuilderDiagnostics + none_explanations</text>
+
+  <!-- Feedback arrow from Evaluator back to FeatureProposer (iter N) -->
+  <path d="M 625 551 L 612 551 Q 605 551 605 540 L 605 235 Q 605 225 615 225 L 622 225" stroke="#8B5CF6" stroke-width="1.5" fill="none" stroke-dasharray="4,2" marker-end="url(#aPurple)"/>
+  <text x="610" y="395" font-size="8" fill="#7C3AED" transform="rotate(-90, 610, 395)">Suggestions → next iteration</text>
+
+  <!-- Output label for iter N -->
+  <text x="830" y="600" text-anchor="middle" font-size="9" font-weight="600" fill="#991B1B">Output: AgentOutput → MCTS reward</text>
+  <text x="830" y="615" text-anchor="middle" font-size="8" fill="#DC2626">(feature_plans, eval_outputs, none_explanations)</text>
+
+  <!-- ================================================================ -->
+  <!-- CONVERGENCE SECTION (y=650-720)                                  -->
+  <!-- ================================================================ -->
+  <!-- Arrow from left path to AgentOutput — single L-shaped path -->
+  <path d="M 270 640 L 270 660 L 550 660 L 550 672" stroke="#94A3B8" stroke-width="1.5" fill="none" marker-end="url(#aGray)"/>
+  <!-- Arrow from right path to AgentOutput — single L-shaped path -->
+  <path d="M 830 640 L 830 660 L 551 660" stroke="#94A3B8" stroke-width="1.5" fill="none"/>
+
+  <!-- AgentOutput box -->
+  <rect x="330" y="675" width="440" height="50" rx="8" fill="url(#gSlate)" filter="url(#sh)"/>
+  <text x="550" y="696" text-anchor="middle" font-size="12" font-weight="700" fill="white">AgentOutput</text>
+  <text x="550" y="712" text-anchor="middle" font-size="9" fill="#CBD5E1">feature_plans, eval_outputs, none_explanations</text>
+
+  <!-- Arrow to MCTS backpropagation -->
+  <line x1="550" y1="725" x2="550" y2="737" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aGray)"/>
+
+  <rect x="330" y="740" width="440" height="30" rx="6" fill="url(#gAmber)" filter="url(#sh)"/>
+  <text x="550" y="760" text-anchor="middle" font-size="10" font-weight="600" fill="white">[accuracy, parsimony] → MCTS backpropagation</text>
+
+  <!-- ================================================================ -->
+  <!-- LM USAGE LEGEND (y=780-800)                                      -->
+  <!-- ================================================================ -->
+  <rect x="40" y="780" width="1020" height="28" rx="6" fill="#F3F4F6" stroke="#D1D5DB" stroke-width="1"/>
+  <text x="55" y="799" font-size="10" font-weight="700" fill="#374151">LM Usage:</text>
+  <text x="150" y="799" font-size="9.5" fill="#4B5563">Primary (Claude Opus 4.6):</text>
+  <text x="340" y="799" font-size="9.5" font-weight="600" fill="#7C3AED">Initializer, FeatureProposer, FeaturePlanner, Evaluator</text>
+  <text x="680" y="799" font-size="9.5" fill="#4B5563">Budget (Claude Sonnet 4.6):</text>
+  <text x="880" y="799" font-size="9.5" font-weight="600" fill="#7C3AED">FeatureBuilder</text>
+
+  <!-- ================================================================ -->
+  <!-- FOOTER (y=815-845)                                               -->
+  <!-- ================================================================ -->
+  <rect x="40" y="815" width="1020" height="28" rx="6" fill="#F1F5F9" stroke="#E2E8F0" stroke-width="1"/>
+  <text x="550" y="826" text-anchor="middle" font-size="9" fill="#334155">Data flow types: ProposerOutput → FeaturePlan → ModelEvalResult → EvalOutput → AgentOutput</text>
+  <text x="550" y="839" text-anchor="middle" font-size="9" fill="#475569">CTRA — Clinical Trial Risk Assessment | Based on AutoCT (Liu et al., EMNLP 2025)</text>
+</svg>

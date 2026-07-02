@@ -1,0 +1,265 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 750" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+  <defs>
+    <filter id="sh" x="-4%" y="-4%" width="108%" height="108%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.1"/>
+    </filter>
+    <linearGradient id="gPurple" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#8B5CF6"/><stop offset="100%" style="stop-color:#7C3AED"/>
+    </linearGradient>
+    <linearGradient id="gAmber" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#F59E0B"/><stop offset="100%" style="stop-color:#D97706"/>
+    </linearGradient>
+    <linearGradient id="gGreen" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#22C55E"/><stop offset="100%" style="stop-color:#16A34A"/>
+    </linearGradient>
+    <linearGradient id="gRose" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#F43F5E"/><stop offset="100%" style="stop-color:#E11D48"/>
+    </linearGradient>
+    <linearGradient id="gSlate" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#475569"/><stop offset="100%" style="stop-color:#334155"/>
+    </linearGradient>
+    <linearGradient id="gTeal" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#14B8A6"/><stop offset="100%" style="stop-color:#0D9488"/>
+    </linearGradient>
+    <linearGradient id="gBlue" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3B82F6"/><stop offset="100%" style="stop-color:#2563EB"/>
+    </linearGradient>
+    <marker id="aGray" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#94A3B8"/>
+    </marker>
+    <marker id="aPurple" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#8B5CF6"/>
+    </marker>
+    <marker id="aAmber" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#D97706"/>
+    </marker>
+    <marker id="aGreen" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#16A34A"/>
+    </marker>
+    <marker id="aRose" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#E11D48"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1100" height="750" rx="12" fill="#F8FAFC"/>
+
+  <!-- ================================================================ -->
+  <!-- TITLE (y=0-60)                                                   -->
+  <!-- ================================================================ -->
+  <text x="550" y="32" text-anchor="middle" font-size="22" font-weight="700" fill="#0F172A">CTRA — Feature Generation: MCTS Loop (Iteration N)</text>
+  <text x="550" y="52" text-anchor="middle" font-size="12" fill="#64748B">Each rollout runs the full agent pipeline on a candidate feature set</text>
+
+  <!-- ================================================================ -->
+  <!-- PHASE 1: SELECT (top-left, y=70-230)                             -->
+  <!-- ================================================================ -->
+  <rect x="30" y="70" width="280" height="195" rx="10" fill="#FFFBEB" stroke="#FDE68A" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="170" y="92" text-anchor="middle" font-size="13" font-weight="700" fill="#D97706">1. SELECT</text>
+  <text x="170" y="108" text-anchor="middle" font-size="9" fill="#92400E">Pareto UCB chooses non-dominated leaf</text>
+
+  <!-- Tree nodes for SELECT -->
+  <!-- Root node -->
+  <circle cx="100" cy="140" r="18" fill="url(#gAmber)" filter="url(#sh)"/>
+  <text x="100" y="137" text-anchor="middle" font-size="8" font-weight="700" fill="white">Q=0.72</text>
+  <text x="100" y="149" text-anchor="middle" font-size="7" fill="#FEF3C7">N=8</text>
+
+  <!-- Child A (selected path - highlighted) -->
+  <line x1="118" y1="135" x2="158" y2="175" stroke="#16A34A" stroke-width="2.5"/>
+  <!-- Child B -->
+  <line x1="100" y1="158" x2="100" y2="195" stroke="#D97706" stroke-width="1.2"/>
+  <!-- Child C -->
+  <line x1="82" y1="135" x2="55" y2="175" stroke="#D97706" stroke-width="1.2"/>
+
+  <circle cx="55" cy="180" r="13" fill="#FEF3C7" stroke="#F59E0B" stroke-width="1.5"/>
+  <text x="55" y="178" text-anchor="middle" font-size="7" fill="#92400E">Q=.68</text>
+  <text x="55" y="188" text-anchor="middle" font-size="6" fill="#B45309">N=3</text>
+
+  <circle cx="100" cy="200" r="13" fill="#FEF3C7" stroke="#F59E0B" stroke-width="1.5"/>
+  <text x="100" y="198" text-anchor="middle" font-size="7" fill="#92400E">Q=.65</text>
+  <text x="100" y="208" text-anchor="middle" font-size="6" fill="#B45309">N=2</text>
+
+  <!-- Selected leaf (green highlight) -->
+  <circle cx="165" cy="180" r="13" fill="#22C55E" stroke="#16A34A" stroke-width="2"/>
+  <text x="165" y="178" text-anchor="middle" font-size="7" font-weight="600" fill="white">Q=.74</text>
+  <text x="165" y="188" text-anchor="middle" font-size="6" fill="#DCFCE7">N=3</text>
+
+  <!-- Grandchildren of selected path — spread apart -->
+  <line x1="178" y1="176" x2="225" y2="188" stroke="#16A34A" stroke-width="2"/>
+  <line x1="178" y1="185" x2="225" y2="225" stroke="#D97706" stroke-width="1"/>
+
+  <!-- Selected grandchild (leaf to expand) -->
+  <circle cx="232" cy="190" r="12" fill="#22C55E" stroke="#16A34A" stroke-width="2.5"/>
+  <text x="232" y="188" text-anchor="middle" font-size="7" font-weight="700" fill="white">LEAF</text>
+  <text x="232" y="197" text-anchor="middle" font-size="6" fill="#DCFCE7">N=0</text>
+
+  <!-- Unselected sibling — further down -->
+  <circle cx="232" cy="228" r="10" fill="#FEF3C7" stroke="#F59E0B" stroke-width="1" opacity="0.6"/>
+
+  <text x="170" y="250" text-anchor="middle" font-size="8" fill="#92400E">Green path = UCB-selected trajectory</text>
+
+  <!-- Arrow from SELECT to EXPAND -->
+  <line x1="310" y1="165" x2="340" y2="165" stroke="#D97706" stroke-width="2" marker-end="url(#aAmber)"/>
+
+  <!-- ================================================================ -->
+  <!-- PHASE 2: EXPAND (top-right, y=70-230)                            -->
+  <!-- ================================================================ -->
+  <rect x="345" y="70" width="250" height="195" rx="10" fill="#FFFBEB" stroke="#FDE68A" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="470" y="92" text-anchor="middle" font-size="13" font-weight="700" fill="#D97706">2. EXPAND</text>
+  <text x="470" y="108" text-anchor="middle" font-size="9" fill="#92400E">Create child: ADD / REMOVE / REFINE feature</text>
+
+  <!-- Parent (selected leaf from step 1) -->
+  <circle cx="410" cy="155" r="13" fill="#22C55E" stroke="#16A34A" stroke-width="2"/>
+  <text x="410" y="153" text-anchor="middle" font-size="7" font-weight="600" fill="white">LEAF</text>
+  <text x="410" y="162" text-anchor="middle" font-size="6" fill="#DCFCE7">N=0</text>
+
+  <!-- Expansion arrow -->
+  <line x1="410" y1="168" x2="410" y2="195" stroke="#D97706" stroke-width="2" stroke-dasharray="4,2"/>
+
+  <!-- New child node (highlighted, the expanded node) -->
+  <circle cx="410" cy="210" r="16" fill="url(#gAmber)" stroke="#D97706" stroke-width="2.5" filter="url(#sh)"/>
+  <text x="410" y="208" text-anchor="middle" font-size="7" font-weight="700" fill="white">NEW</text>
+  <text x="410" y="218" text-anchor="middle" font-size="6" fill="#FEF3C7">N=0</text>
+
+  <!-- Annotation for expand -->
+  <text x="480" y="150" font-size="9" fill="#92400E">Action chosen:</text>
+  <text x="480" y="164" font-size="9" font-weight="600" fill="#B45309">ADD: drug_target_count</text>
+  <text x="480" y="180" font-size="8" fill="#92400E">or REMOVE: trial_duration</text>
+  <text x="480" y="194" font-size="8" fill="#92400E">or REFINE: enrollment_size</text>
+
+  <text x="470" y="250" text-anchor="middle" font-size="8" fill="#92400E">New node inherits parent's feature set + change</text>
+
+  <!-- Arrow from EXPAND down to SIMULATE -->
+  <line x1="410" y1="226" x2="410" y2="275" stroke="#D97706" stroke-width="2" marker-end="url(#aAmber)"/>
+
+  <!-- ================================================================ -->
+  <!-- PHASE 3: SIMULATE (center, y=280-490)                            -->
+  <!-- ================================================================ -->
+  <rect x="30" y="280" width="730" height="220" rx="10" fill="#FAF5FF" stroke="#DDD6FE" stroke-width="2" stroke-dasharray="6,3" filter="url(#sh)"/>
+  <text x="395" y="302" text-anchor="middle" font-size="13" font-weight="700" fill="#7C3AED">3. SIMULATE — Run full agent pipeline for new node</text>
+
+  <!-- Agent pipeline boxes (horizontal flow) -->
+  <rect x="50" y="318" width="130" height="50" rx="6" fill="url(#gPurple)" filter="url(#sh)"/>
+  <text x="115" y="340" text-anchor="middle" font-size="10" font-weight="600" fill="white">FeatureProposer</text>
+  <text x="115" y="354" text-anchor="middle" font-size="7.5" fill="#DDD6FE">Opus 4.6</text>
+
+  <line x1="180" y1="343" x2="195" y2="343" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aGray)"/>
+
+  <rect x="200" y="318" width="115" height="50" rx="6" fill="url(#gPurple)" filter="url(#sh)"/>
+  <text x="257" y="340" text-anchor="middle" font-size="10" font-weight="600" fill="white">FeaturePlanner</text>
+  <text x="257" y="354" text-anchor="middle" font-size="7.5" fill="#DDD6FE">Opus 4.6</text>
+
+  <line x1="315" y1="343" x2="330" y2="343" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aGray)"/>
+
+  <rect x="335" y="318" width="115" height="50" rx="6" fill="url(#gPurple)" filter="url(#sh)"/>
+  <text x="392" y="340" text-anchor="middle" font-size="10" font-weight="600" fill="white">FeatureGrouper</text>
+  <text x="392" y="354" text-anchor="middle" font-size="7.5" fill="#DDD6FE">max 5/group</text>
+
+  <line x1="450" y1="343" x2="465" y2="343" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aGray)"/>
+
+  <rect x="470" y="318" width="115" height="50" rx="6" fill="url(#gPurple)" filter="url(#sh)"/>
+  <text x="527" y="340" text-anchor="middle" font-size="10" font-weight="600" fill="white">FeatureBuilder</text>
+  <text x="527" y="354" text-anchor="middle" font-size="7.5" fill="#DDD6FE">Sonnet 4.6 (budget)</text>
+
+  <line x1="585" y1="343" x2="600" y2="343" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aGray)"/>
+
+  <rect x="605" y="318" width="68" height="50" rx="6" fill="url(#gGreen)" filter="url(#sh)"/>
+  <text x="639" y="340" text-anchor="middle" font-size="9" font-weight="600" fill="white">Train</text>
+  <text x="639" y="353" text-anchor="middle" font-size="7.5" fill="#DCFCE7">XGB+TabPFN</text>
+
+  <line x1="673" y1="343" x2="688" y2="343" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aGray)"/>
+
+  <rect x="693" y="318" width="55" height="50" rx="6" fill="url(#gPurple)" filter="url(#sh)"/>
+  <text x="720" y="340" text-anchor="middle" font-size="9" font-weight="600" fill="white">Evaluator</text>
+  <text x="720" y="353" text-anchor="middle" font-size="7" fill="#DDD6FE">Opus 4.6</text>
+
+  <!-- Annotations below pipeline — centered within SIMULATE box -->
+  <text x="395" y="392" text-anchor="middle" font-size="8.5" fill="#5B21B6">FeatureProposer: receives suggestions from parent's evaluator</text>
+  <text x="395" y="407" text-anchor="middle" font-size="8.5" fill="#5B21B6">FeatureBuilder: computes only changed features (budget LM: Sonnet 4.6)</text>
+  <text x="395" y="422" text-anchor="middle" font-size="8.5" fill="#5B21B6">Evaluator: shapiq interaction values + BuilderDiagnostics</text>
+
+  <!-- Feedback arrow from Evaluator back to Proposer -->
+  <path d="M 720 368 L 720 450 Q 720 465 700 465 L 130 465 Q 110 465 110 450 L 110 368" stroke="#8B5CF6" stroke-width="1.5" fill="none" stroke-dasharray="4,2" marker-end="url(#aPurple)"/>
+  <text x="415" y="480" text-anchor="middle" font-size="9" font-weight="600" fill="#7C3AED">Suggestions → next rollout's Proposer (feedback loop)</text>
+
+  <!-- ================================================================ -->
+  <!-- PHASE 4: BACKPROPAGATE (right side, y=70-270)                    -->
+  <!-- ================================================================ -->
+  <rect x="630" y="70" width="440" height="195" rx="10" fill="#F0FDF4" stroke="#BBF7D0" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="850" y="92" text-anchor="middle" font-size="13" font-weight="700" fill="#16A34A">4. BACKPROPAGATE</text>
+  <text x="850" y="108" text-anchor="middle" font-size="9" fill="#166534">[accuracy, parsimony] vector up the tree</text>
+
+  <!-- Mini tree showing backprop path -->
+  <circle cx="750" cy="150" r="15" fill="url(#gAmber)" filter="url(#sh)"/>
+  <text x="750" y="154" text-anchor="middle" font-size="8" font-weight="600" fill="white">Root</text>
+
+  <line x1="765" y1="152" x2="805" y2="175" stroke="#16A34A" stroke-width="2.5"/>
+
+  <circle cx="810" cy="180" r="13" fill="url(#gAmber)" opacity="0.9"/>
+  <text x="810" y="184" text-anchor="middle" font-size="7" fill="white">0-0</text>
+
+  <line x1="823" y1="182" x2="855" y2="205" stroke="#16A34A" stroke-width="2.5"/>
+
+  <circle cx="860" cy="210" r="13" fill="#22C55E" stroke="#16A34A" stroke-width="2"/>
+  <text x="860" y="208" text-anchor="middle" font-size="7" font-weight="600" fill="white">LEAF</text>
+  <text x="860" y="217" text-anchor="middle" font-size="6" fill="#DCFCE7">eval'd</text>
+
+  <!-- Backprop arrows going UP — rose color, routed BELOW the connection lines to avoid overlap -->
+  <path d="M 860 223 Q 870 235 840 225 Q 820 218 810 195" stroke="#E11D48" stroke-width="2.5" fill="none" stroke-dasharray="5,3" marker-end="url(#aRose)"/>
+  <path d="M 810 168 Q 800 145 770 140 Q 758 139 750 138" stroke="#E11D48" stroke-width="2.5" fill="none" stroke-dasharray="5,3" marker-end="url(#aRose)"/>
+  <text x="885" y="232" font-size="8" font-weight="700" fill="#E11D48">reward ↑</text>
+
+  <!-- Reward vector annotation -->
+  <rect x="900" y="140" width="155" height="55" rx="6" fill="white" stroke="#BBF7D0" stroke-width="1.5"/>
+  <text x="977" y="158" text-anchor="middle" font-size="9" font-weight="600" fill="#166534">Reward Vector:</text>
+  <text x="977" y="173" text-anchor="middle" font-size="8.5" fill="#15803D">accuracy = ROC-AUC (0.74)</text>
+  <text x="977" y="186" text-anchor="middle" font-size="8.5" fill="#15803D">parsimony = 1 - feat/max (0.82)</text>
+
+  <text x="850" y="247" text-anchor="middle" font-size="8.5" fill="#166534">All ancestors updated: Q-value, visit count N</text>
+  <text x="850" y="260" text-anchor="middle" font-size="8.5" fill="#166534">Pareto front maintained across all terminal nodes</text>
+
+  <!-- Arrow from Evaluator output to Backpropagate -->
+  <path d="M 748 318 L 860 280 L 860 228" stroke="#16A34A" stroke-width="1.5" fill="none" stroke-dasharray="5,3" marker-end="url(#aGreen)"/>
+
+  <!-- ================================================================ -->
+  <!-- BOTTOM SECTION: Key info boxes (y=520-590)                       -->
+  <!-- ================================================================ -->
+  <rect x="30" y="520" width="340" height="70" rx="8" fill="url(#gRose)" filter="url(#sh)"/>
+  <text x="200" y="545" text-anchor="middle" font-size="12" font-weight="700" fill="white">Output</text>
+  <text x="200" y="562" text-anchor="middle" font-size="10" fill="#FFE4E6">Pareto front of feature sets per phase</text>
+  <text x="200" y="578" text-anchor="middle" font-size="9" fill="#FFE4E6">Best trade-off: accuracy vs parsimony</text>
+
+  <rect x="390" y="520" width="340" height="70" rx="8" fill="url(#gSlate)" filter="url(#sh)"/>
+  <text x="560" y="545" text-anchor="middle" font-size="12" font-weight="700" fill="white">Configuration</text>
+  <text x="560" y="562" text-anchor="middle" font-size="10" fill="#CBD5E1">Rollouts: 10-20 | Depth: 7-10</text>
+  <text x="560" y="578" text-anchor="middle" font-size="9" fill="#CBD5E1">Per-phase isolation (I, II, III separate trees)</text>
+
+  <rect x="750" y="520" width="320" height="70" rx="8" fill="url(#gTeal)" filter="url(#sh)"/>
+  <text x="910" y="545" text-anchor="middle" font-size="12" font-weight="700" fill="white">Data Sources via LinearRAG</text>
+  <text x="910" y="562" text-anchor="middle" font-size="10" fill="#CCFBF1">CTG + PubMed + ChEMBL + FAERS</text>
+  <text x="910" y="578" text-anchor="middle" font-size="9" fill="#CCFBF1">+ AACT + PrimeKG + Drugs@FDA</text>
+
+  <!-- ================================================================ -->
+  <!-- FOOTER (y=610-650)                                               -->
+  <!-- ================================================================ -->
+  <rect x="30" y="615" width="1040" height="50" rx="8" fill="#F1F5F9" stroke="#E2E8F0" stroke-width="1"/>
+  <text x="550" y="637" text-anchor="middle" font-size="11" font-weight="600" fill="#334155">Repeat for 10-20 rollouts — each phase (I, II, III) runs independently with its own MCTS tree</text>
+  <text x="550" y="654" text-anchor="middle" font-size="10" fill="#475569">CTRA — Clinical Trial Risk Assessment | Based on AutoCT (Liu et al., EMNLP 2025)</text>
+
+  <!-- Color legend -->
+  <rect x="180" y="680" width="12" height="12" rx="3" fill="#F59E0B"/>
+  <text x="198" y="691" font-size="9.5" fill="#475569">MCTS (Select/Expand)</text>
+  <rect x="330" y="680" width="12" height="12" rx="3" fill="#8B5CF6"/>
+  <text x="348" y="691" font-size="9.5" fill="#475569">LLM Agents</text>
+  <rect x="440" y="680" width="12" height="12" rx="3" fill="#22C55E"/>
+  <text x="458" y="691" font-size="9.5" fill="#475569">Training / Backprop</text>
+  <rect x="590" y="680" width="12" height="12" rx="3" fill="#F43F5E"/>
+  <text x="608" y="691" font-size="9.5" fill="#475569">Output</text>
+  <rect x="680" y="680" width="12" height="12" rx="3" fill="#14B8A6"/>
+  <text x="698" y="691" font-size="9.5" fill="#475569">RAG</text>
+  <rect x="750" y="680" width="12" height="12" rx="3" fill="#475569"/>
+  <text x="768" y="691" font-size="9.5" fill="#475569">Infrastructure</text>
+
+  <!-- Iteration flow summary -->
+  <text x="550" y="720" text-anchor="middle" font-size="9" fill="#64748B">SELECT → EXPAND → SIMULATE (agent pipeline) → BACKPROPAGATE → repeat</text>
+  <text x="550" y="738" text-anchor="middle" font-size="9" fill="#64748B">Feedback from Evaluator guides next Proposer. Pareto front tracks best accuracy-parsimony trade-offs.</text>
+</svg>

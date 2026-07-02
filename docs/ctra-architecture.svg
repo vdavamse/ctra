@@ -1,0 +1,329 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 980" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+  <defs>
+    <filter id="shadow" x="-4%" y="-4%" width="108%" height="108%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.1"/>
+    </filter>
+    <linearGradient id="gBlue" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3B82F6"/><stop offset="100%" style="stop-color:#2563EB"/>
+    </linearGradient>
+    <linearGradient id="gTeal" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#14B8A6"/><stop offset="100%" style="stop-color:#0D9488"/>
+    </linearGradient>
+    <linearGradient id="gPurple" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#8B5CF6"/><stop offset="100%" style="stop-color:#7C3AED"/>
+    </linearGradient>
+    <linearGradient id="gAmber" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#F59E0B"/><stop offset="100%" style="stop-color:#D97706"/>
+    </linearGradient>
+    <linearGradient id="gRose" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#F43F5E"/><stop offset="100%" style="stop-color:#E11D48"/>
+    </linearGradient>
+    <linearGradient id="gGreen" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#22C55E"/><stop offset="100%" style="stop-color:#16A34A"/>
+    </linearGradient>
+    <linearGradient id="gSlate" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#475569"/><stop offset="100%" style="stop-color:#334155"/>
+    </linearGradient>
+    <marker id="aGray" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#94A3B8"/>
+    </marker>
+    <marker id="aBlue" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#3B82F6"/>
+    </marker>
+    <marker id="aPurple" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#8B5CF6"/>
+    </marker>
+    <marker id="aTeal" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#14B8A6"/>
+    </marker>
+    <marker id="aAmber" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#D97706"/>
+    </marker>
+    <marker id="aGreen" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#16A34A"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="980" rx="12" fill="#F8FAFC"/>
+
+  <!-- Title -->
+  <text x="600" y="38" text-anchor="middle" font-size="24" font-weight="700" fill="#0F172A">CTRA Architecture</text>
+  <text x="600" y="58" text-anchor="middle" font-size="12" fill="#64748B">Clinical Trial Risk Assessment — LLM-Driven Feature Engineering with Classical ML</text>
+
+  <!-- ============================================ -->
+  <!-- SHARED: Data Sources + LinearRAG (top)       -->
+  <!-- ============================================ -->
+
+  <rect x="30" y="75" width="1140" height="95" rx="10" fill="#EFF6FF" stroke="#BFDBFE" stroke-width="1" stroke-dasharray="6,3"/>
+  <text x="56" y="93" font-size="11" font-weight="700" fill="#3B82F6">DATA SOURCES</text>
+  <text x="178" y="93" font-size="10" fill="#60A5FA">Indexed into LinearRAG (shared by training and prediction)</text>
+
+  <rect x="50" y="104" width="155" height="28" rx="6" fill="url(#gBlue)" filter="url(#shadow)"/>
+  <text x="127" y="123" text-anchor="middle" font-size="10.5" font-weight="500" fill="white">ClinicalTrials.gov</text>
+
+  <rect x="220" y="104" width="155" height="28" rx="6" fill="url(#gBlue)" filter="url(#shadow)"/>
+  <text x="297" y="123" text-anchor="middle" font-size="10.5" font-weight="500" fill="white">PubMed</text>
+
+  <rect x="390" y="104" width="155" height="28" rx="6" fill="url(#gBlue)" filter="url(#shadow)"/>
+  <text x="467" y="123" text-anchor="middle" font-size="10.5" font-weight="500" fill="white">ChEMBL</text>
+
+  <rect x="560" y="104" width="155" height="28" rx="6" fill="url(#gBlue)" filter="url(#shadow)"/>
+  <text x="637" y="123" text-anchor="middle" font-size="10.5" font-weight="500" fill="white">FAERS / OpenFDA</text>
+
+  <!-- LinearRAG -->
+  <rect x="760" y="88" width="195" height="70" rx="8" fill="url(#gTeal)" filter="url(#shadow)"/>
+  <text x="857" y="111" text-anchor="middle" font-size="13" font-weight="700" fill="white">LinearRAG</text>
+  <text x="857" y="127" text-anchor="middle" font-size="9.5" fill="#CCFBF1">Multi-hop Retrieval</text>
+  <text x="857" y="141" text-anchor="middle" font-size="9.5" fill="#CCFBF1">PageRank + GLiNER-BioMed NER</text>
+
+  <line x1="715" y1="118" x2="757" y2="118" stroke="#3B82F6" stroke-width="1.5" marker-end="url(#aBlue)"/>
+
+  <!-- Label leakage badge -->
+  <rect x="980" y="88" width="180" height="70" rx="8" fill="#FEF2F2" stroke="#FECACA" stroke-width="1" filter="url(#shadow)"/>
+  <text x="1070" y="109" text-anchor="middle" font-size="10" font-weight="700" fill="#DC2626">Label Leakage</text>
+  <text x="1070" y="122" text-anchor="middle" font-size="10" font-weight="700" fill="#DC2626">Prevention</text>
+  <text x="1070" y="139" text-anchor="middle" font-size="9" fill="#991B1B">Date-filtered retrieval:</text>
+  <text x="1070" y="152" text-anchor="middle" font-size="9" fill="#991B1B">evidence predates trial</text>
+
+  <!-- ================================================================ -->
+  <!-- LEFT PANEL: TRAINING (train_mcts.py)                             -->
+  <!-- ================================================================ -->
+
+  <!-- Training panel: y=185, height=720, bottom=905 -->
+  <rect x="30" y="185" width="570" height="720" rx="12" fill="white" stroke="#E2E8F0" stroke-width="2" filter="url(#shadow)"/>
+
+  <!-- Training header -->
+  <rect x="30" y="185" width="570" height="40" rx="12" fill="url(#gSlate)"/>
+  <rect x="30" y="205" width="570" height="20" fill="url(#gSlate)"/>
+  <text x="315" y="210" text-anchor="middle" font-size="15" font-weight="700" fill="white">TRAINING</text>
+  <text x="315" y="222" text-anchor="middle" font-size="10" fill="#CBD5E1">train_mcts.py → run_agent.py (subprocess per node)</text>
+
+  <!-- Training Input -->
+  <rect x="55" y="240" width="170" height="48" rx="8" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="140" y="261" text-anchor="middle" font-size="11" font-weight="600" fill="#334155">Training Input</text>
+  <text x="140" y="276" text-anchor="middle" font-size="9.5" fill="#64748B">100-500 (NCT ID, label) pairs</text>
+
+  <line x1="225" y1="264" x2="255" y2="264" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aGray)"/>
+
+  <!-- LLM Agent Layer (training) — y=238, height=230, bottom=468 -->
+  <rect x="258" y="238" width="325" height="230" rx="10" fill="#FAF5FF" stroke="#DDD6FE" stroke-width="1" stroke-dasharray="5,3"/>
+  <text x="275" y="255" font-size="10" font-weight="700" fill="#7C3AED">LLM AGENTS</text>
+  <text x="360" y="255" font-size="9" fill="#A78BFA">Claude Opus 4.6 / DSPy</text>
+
+  <rect x="273" y="264" width="140" height="42" rx="6" fill="url(#gPurple)" filter="url(#shadow)"/>
+  <text x="343" y="282" text-anchor="middle" font-size="10" font-weight="600" fill="white">Initializer</text>
+  <text x="343" y="296" text-anchor="middle" font-size="8.5" fill="#DDD6FE">5-Stage Init (iter 0)</text>
+
+  <rect x="273" y="314" width="140" height="42" rx="6" fill="url(#gPurple)" filter="url(#shadow)"/>
+  <text x="343" y="332" text-anchor="middle" font-size="10" font-weight="600" fill="white">Feature Proposer</text>
+  <text x="343" y="346" text-anchor="middle" font-size="8.5" fill="#DDD6FE">Add / Remove / Refine</text>
+
+  <rect x="428" y="314" width="140" height="42" rx="6" fill="url(#gPurple)" filter="url(#shadow)"/>
+  <text x="498" y="332" text-anchor="middle" font-size="10" font-weight="600" fill="white">Feature Planner</text>
+  <text x="498" y="346" text-anchor="middle" font-size="8.5" fill="#DDD6FE">Schema + Instructions</text>
+
+  <rect x="273" y="362" width="140" height="42" rx="6" fill="url(#gPurple)" filter="url(#shadow)"/>
+  <text x="343" y="380" text-anchor="middle" font-size="10" font-weight="600" fill="white">Feature Grouper</text>
+  <text x="343" y="394" text-anchor="middle" font-size="8.5" fill="#DDD6FE">Data Dependency Groups</text>
+
+  <rect x="428" y="362" width="140" height="42" rx="6" fill="url(#gPurple)" filter="url(#shadow)"/>
+  <text x="498" y="380" text-anchor="middle" font-size="10" font-weight="600" fill="white">Feature Builder</text>
+  <text x="498" y="394" text-anchor="middle" font-size="8.5" fill="#DDD6FE">ReAct + RAG Tools</text>
+
+  <!-- Evaluator — now at y=410, bottom=452, safely inside LLM AGENTS box (bottom=468) -->
+  <rect x="428" y="410" width="140" height="42" rx="6" fill="url(#gPurple)" filter="url(#shadow)"/>
+  <text x="498" y="428" text-anchor="middle" font-size="10" font-weight="600" fill="white">Evaluator</text>
+  <text x="498" y="442" text-anchor="middle" font-size="8.5" fill="#DDD6FE">Error Analysis</text>
+
+  <!-- Arrows between agents -->
+  <line x1="413" y1="335" x2="425" y2="335" stroke="white" stroke-width="1" marker-end="url(#aGray)" opacity="0.5"/>
+  <line x1="343" y1="356" x2="343" y2="359" stroke="white" stroke-width="1" marker-end="url(#aGray)" opacity="0.5"/>
+  <line x1="413" y1="383" x2="425" y2="383" stroke="white" stroke-width="1" marker-end="url(#aGray)" opacity="0.5"/>
+
+  <!-- RAG connection -->
+  <line x1="857" y1="158" x2="857" y2="176" stroke="#14B8A6" stroke-width="1" stroke-dasharray="3,2"/>
+  <line x1="857" y1="176" x2="343" y2="176" stroke="#14B8A6" stroke-width="1" stroke-dasharray="3,2"/>
+  <line x1="343" y1="176" x2="343" y2="237" stroke="#14B8A6" stroke-width="1" stroke-dasharray="3,2"/>
+  <text x="600" y="174" text-anchor="middle" font-size="8" fill="#0D9488">RAG tools</text>
+
+  <!-- Evaluator feedback loop — from Evaluator (bottom at y=452) looping back to Proposer -->
+  <path d="M 498 452 L 498 480 Q 498 490 490 490 L 268 490 Q 258 490 258 480 L 258 336" stroke="#8B5CF6" stroke-width="1.2" fill="none" stroke-dasharray="4,2" marker-end="url(#aPurple)"/>
+  <text x="378" y="502" text-anchor="middle" font-size="8" fill="#7C3AED">Suggestions feed back to Proposer</text>
+
+  <!-- Arrow from agents to Tabular Features -->
+  <line x1="319" y1="452" x2="319" y2="497" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aGray)"/>
+
+  <!-- Tabular Features — moved to y=500 (clear of evaluator feedback at y=502) -->
+  <rect x="55" y="500" width="528" height="35" rx="6" fill="white" stroke="#DDD6FE" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="319" y="516" text-anchor="middle" font-size="10.5" font-weight="600" fill="#5B21B6">Tabular Features</text>
+  <text x="319" y="528" text-anchor="middle" font-size="8" fill="#8B5CF6">trial_phase | enrollment_count | has_prior_success | drug_mechanism | ...</text>
+
+  <!-- Arrow from Tabular Features to Classifiers -->
+  <line x1="319" y1="535" x2="319" y2="547" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aGray)"/>
+
+  <!-- Classifiers — moved to y=550 -->
+  <rect x="55" y="550" width="528" height="75" rx="10" fill="#F0FDF4" stroke="#BBF7D0" stroke-width="1" stroke-dasharray="5,3"/>
+  <text x="75" y="568" font-size="10" font-weight="700" fill="#16A34A">CLASSIFIERS</text>
+  <text x="172" y="568" font-size="9" fill="#22C55E">Trained on tabular features</text>
+
+  <rect x="140" y="578" width="170" height="35" rx="6" fill="url(#gGreen)" filter="url(#shadow)"/>
+  <text x="225" y="600" text-anchor="middle" font-size="10" font-weight="600" fill="white">XGBoost</text>
+
+  <rect x="328" y="578" width="170" height="35" rx="6" fill="url(#gGreen)" filter="url(#shadow)"/>
+  <text x="413" y="600" text-anchor="middle" font-size="10" font-weight="600" fill="white">TabPFN</text>
+
+  <!-- Arrow from Classifiers to Validation -->
+  <line x1="319" y1="625" x2="319" y2="637" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aGray)"/>
+
+  <!-- Validation — moved to y=640 -->
+  <rect x="55" y="640" width="528" height="35" rx="6" fill="white" stroke="#22C55E" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="319" y="656" text-anchor="middle" font-size="10.5" font-weight="600" fill="#16A34A">Validation: ROC-AUC per model → pick best → reward for MCTS</text>
+  <text x="319" y="668" text-anchor="middle" font-size="8.5" fill="#22C55E">Evaluate on val set, also score on test set</text>
+
+  <!-- Arrow from Validation to MCTS -->
+  <line x1="319" y1="675" x2="319" y2="689" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aGray)"/>
+
+  <!-- MCTS — moved to y=692 -->
+  <rect x="55" y="692" width="528" height="120" rx="10" fill="#FFFBEB" stroke="#FDE68A" stroke-width="1" stroke-dasharray="5,3"/>
+  <text x="75" y="710" font-size="10" font-weight="700" fill="#D97706">MCTS</text>
+  <text x="118" y="710" font-size="9" fill="#F59E0B">Monte Carlo Tree Search — explores feature configurations</text>
+
+  <!-- Tree -->
+  <circle cx="105" cy="762" r="16" fill="url(#gAmber)" filter="url(#shadow)"/>
+  <text x="105" y="766" text-anchor="middle" font-size="9" font-weight="700" fill="white">0</text>
+
+  <line x1="121" y1="756" x2="165" y2="746" stroke="#D97706" stroke-width="1.5"/>
+  <line x1="121" y1="762" x2="165" y2="762" stroke="#D97706" stroke-width="1.5"/>
+  <line x1="121" y1="768" x2="165" y2="778" stroke="#D97706" stroke-width="1.5"/>
+
+  <circle cx="180" cy="746" r="12" fill="url(#gAmber)" filter="url(#shadow)"/>
+  <text x="180" y="750" text-anchor="middle" font-size="8" font-weight="600" fill="white">0-0</text>
+  <circle cx="180" cy="762" r="12" fill="#FEF3C7" stroke="#F59E0B" stroke-width="1.5"/>
+  <text x="180" y="766" text-anchor="middle" font-size="8" font-weight="600" fill="#92400E">0-1</text>
+  <circle cx="180" cy="778" r="12" fill="#FEF3C7" stroke="#F59E0B" stroke-width="1.5"/>
+  <text x="180" y="782" text-anchor="middle" font-size="8" font-weight="600" fill="#92400E">0-2</text>
+
+  <line x1="192" y1="746" x2="225" y2="739" stroke="#D97706" stroke-width="1"/>
+  <line x1="192" y1="746" x2="225" y2="753" stroke="#D97706" stroke-width="1"/>
+
+  <circle cx="237" cy="739" r="10" fill="url(#gAmber)" opacity="0.8"/>
+  <circle cx="237" cy="753" r="10" fill="#FEF3C7" stroke="#F59E0B" stroke-width="1" opacity="0.7"/>
+
+  <!-- MCTS description -->
+  <text x="300" y="742" font-size="10" fill="#92400E">Each node = different feature set</text>
+  <text x="300" y="758" font-size="10" fill="#92400E">Each edge = Add / Remove / Refine</text>
+  <text x="300" y="774" font-size="10" fill="#92400E">Reward = best val ROC-AUC</text>
+  <text x="300" y="797" font-size="10" font-weight="600" fill="#92400E">10-20 rollouts, depth 7-10</text>
+
+  <!-- MCTS loop arrow back to agents -->
+  <path d="M 545 762 Q 570 762 570 712 Q 570 500 570 400 Q 570 350 555 350 L 250 350" stroke="#D97706" stroke-width="1.5" fill="none" stroke-dasharray="5,3" marker-end="url(#aAmber)"/>
+  <text x="578" y="563" font-size="8" fill="#D97706" transform="rotate(-90, 578, 563)">Next rollout: back to Agent Layer</text>
+
+  <!-- Training output — moved to y=830 -->
+  <rect x="55" y="830" width="528" height="48" rx="8" fill="url(#gSlate)" filter="url(#shadow)"/>
+  <text x="319" y="851" text-anchor="middle" font-size="12" font-weight="600" fill="white">Training Output: MCTS Pickle</text>
+  <text x="319" y="867" text-anchor="middle" font-size="9.5" fill="#CBD5E1">.output/{task}-r{rollouts}-d{depth}.pkl — contains all nodes, feature plans, trained pipelines</text>
+
+  <line x1="319" y1="812" x2="319" y2="827" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aGray)"/>
+
+  <!-- ================================================================ -->
+  <!-- RIGHT PANEL: PREDICTION (predict.py)                             -->
+  <!-- ================================================================ -->
+
+  <rect x="620" y="185" width="550" height="590" rx="12" fill="white" stroke="#E2E8F0" stroke-width="2" filter="url(#shadow)"/>
+
+  <!-- Prediction header -->
+  <rect x="620" y="185" width="550" height="40" rx="12" fill="url(#gRose)"/>
+  <rect x="620" y="205" width="550" height="20" fill="url(#gRose)"/>
+  <text x="895" y="210" text-anchor="middle" font-size="15" font-weight="700" fill="white">PREDICTION</text>
+  <text x="895" y="222" text-anchor="middle" font-size="10" fill="#FFE4E6">predict.py — single trial inference</text>
+
+  <!-- Prediction Input -->
+  <rect x="645" y="242" width="200" height="48" rx="8" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="745" y="263" text-anchor="middle" font-size="11" font-weight="600" fill="#334155">New Trial</text>
+  <text x="745" y="278" text-anchor="middle" font-size="9.5" fill="#64748B">NCT ID or internal trial ID</text>
+
+  <!-- Trained model input -->
+  <rect x="870" y="242" width="280" height="48" rx="8" fill="#F1F5F9" stroke="#475569" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="1010" y="263" text-anchor="middle" font-size="11" font-weight="600" fill="#334155">Best MCTS Node</text>
+  <text x="1010" y="278" text-anchor="middle" font-size="9.5" fill="#64748B">feature_plans + trained pipeline from .pkl</text>
+
+  <!-- Arrow from training output to best node -->
+  <path d="M 583 854 Q 610 854 610 834 Q 610 310 860 275 L 867 270" stroke="#475569" stroke-width="1.5" fill="none" stroke-dasharray="5,3" marker-end="url(#aGray)"/>
+
+  <line x1="745" y1="290" x2="745" y2="308" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aGray)"/>
+
+  <!-- Feature Builder (prediction) -->
+  <rect x="645" y="312" width="505" height="65" rx="10" fill="#FAF5FF" stroke="#DDD6FE" stroke-width="1" stroke-dasharray="5,3"/>
+  <text x="665" y="330" font-size="10" font-weight="700" fill="#7C3AED">FEATURE BUILDER</text>
+  <text x="780" y="330" font-size="9" fill="#A78BFA">Uses best node's feature plans</text>
+
+  <rect x="660" y="340" width="220" height="28" rx="6" fill="url(#gPurple)" filter="url(#shadow)"/>
+  <text x="770" y="359" text-anchor="middle" font-size="10" font-weight="500" fill="white">LLM builds features for 1 trial via RAG</text>
+
+  <rect x="900" y="340" width="235" height="28" rx="6" fill="white" stroke="#8B5CF6" stroke-width="1"/>
+  <text x="1017" y="359" text-anchor="middle" font-size="9.5" fill="#7C3AED">Same plans as training — consistent features</text>
+
+  <!-- RAG connection (prediction) -->
+  <line x1="857" y1="158" x2="857" y2="176" stroke="#14B8A6" stroke-width="1" stroke-dasharray="3,2"/>
+  <line x1="857" y1="176" x2="770" y2="176" stroke="#14B8A6" stroke-width="1" stroke-dasharray="3,2"/>
+  <line x1="770" y1="176" x2="770" y2="310" stroke="#14B8A6" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#aTeal)"/>
+
+  <line x1="895" y1="377" x2="895" y2="395" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aGray)"/>
+
+  <!-- features_to_df -->
+  <rect x="645" y="398" width="505" height="35" rx="6" fill="white" stroke="#DDD6FE" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="897" y="414" text-anchor="middle" font-size="10.5" font-weight="600" fill="#5B21B6">features_to_df()</text>
+  <text x="897" y="426" text-anchor="middle" font-size="8.5" fill="#8B5CF6">1-row DataFrame with feature columns</text>
+
+  <line x1="895" y1="433" x2="895" y2="451" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aGray)"/>
+
+  <!-- Best pipeline -->
+  <rect x="645" y="454" width="505" height="50" rx="8" fill="url(#gGreen)" filter="url(#shadow)"/>
+  <text x="897" y="476" text-anchor="middle" font-size="12" font-weight="600" fill="white">Best Pipeline: predict_proba()</text>
+  <text x="897" y="492" text-anchor="middle" font-size="10" fill="#DCFCE7">ColumnTransformer + best classifier (XGBoost / TabPFN)</text>
+
+  <line x1="895" y1="504" x2="895" y2="522" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aGray)"/>
+
+  <!-- Output -->
+  <rect x="645" y="525" width="505" height="115" rx="10" fill="#FFF1F2" stroke="#FECDD3" stroke-width="1" stroke-dasharray="5,3"/>
+  <text x="665" y="543" font-size="10" font-weight="700" fill="#E11D48">OUTPUT</text>
+
+  <rect x="660" y="553" width="155" height="40" rx="6" fill="url(#gRose)" filter="url(#shadow)"/>
+  <text x="737" y="572" text-anchor="middle" font-size="11" font-weight="600" fill="white">Prediction</text>
+  <text x="737" y="585" text-anchor="middle" font-size="9" fill="#FFE4E6">P(success) = 0.73</text>
+
+  <rect x="830" y="553" width="155" height="40" rx="6" fill="url(#gRose)" filter="url(#shadow)"/>
+  <text x="907" y="572" text-anchor="middle" font-size="11" font-weight="600" fill="white">shapiq Values</text>
+  <text x="907" y="585" text-anchor="middle" font-size="9" fill="#FFE4E6">Main effects + interactions</text>
+
+  <rect x="1000" y="553" width="135" height="40" rx="6" fill="url(#gRose)" filter="url(#shadow)"/>
+  <text x="1067" y="572" text-anchor="middle" font-size="11" font-weight="600" fill="white">Builder</text>
+  <text x="1067" y="585" text-anchor="middle" font-size="9" fill="#FFE4E6">Diagnostics</text>
+
+  <text x="895" y="630" text-anchor="middle" font-size="9" fill="#9F1239">Every prediction is auditable — human-readable features with quantified contributions</text>
+
+  <!-- ============================================ -->
+  <!-- Footer                                       -->
+  <!-- ============================================ -->
+
+  <text x="600" y="920" text-anchor="middle" font-size="11" fill="#475569">CTRA — Clinical Trial Risk Assessment | Based on AutoCT (Liu et al., EMNLP 2025)</text>
+  <text x="600" y="938" text-anchor="middle" font-size="10" fill="#64748B">Enhanced: Claude Opus 4.6 | LinearRAG | TabPFN | 7 Data Sources + GLiNER-BioMed</text>
+
+  <!-- Color legend -->
+  <rect x="200" y="950" width="12" height="12" rx="3" fill="#3B82F6"/>
+  <text x="218" y="961" font-size="10" fill="#475569">Data Sources</text>
+  <rect x="320" y="950" width="12" height="12" rx="3" fill="#14B8A6"/>
+  <text x="338" y="961" font-size="10" fill="#475569">RAG</text>
+  <rect x="390" y="950" width="12" height="12" rx="3" fill="#8B5CF6"/>
+  <text x="408" y="961" font-size="10" fill="#475569">LLM Agents</text>
+  <rect x="510" y="950" width="12" height="12" rx="3" fill="#22C55E"/>
+  <text x="528" y="961" font-size="10" fill="#475569">Classifiers</text>
+  <rect x="620" y="950" width="12" height="12" rx="3" fill="#F59E0B"/>
+  <text x="638" y="961" font-size="10" fill="#475569">MCTS</text>
+  <rect x="700" y="950" width="12" height="12" rx="3" fill="#F43F5E"/>
+  <text x="718" y="961" font-size="10" fill="#475569">Output</text>
+  <rect x="790" y="950" width="12" height="12" rx="3" fill="#475569"/>
+  <text x="808" y="961" font-size="10" fill="#475569">Training / Prediction</text>
+</svg>

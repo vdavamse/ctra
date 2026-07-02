@@ -1,0 +1,39 @@
+FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# System dependencies for building native extensions
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc g++ git && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Copy package metadata for cached dependency install
+COPY pyproject.toml ./
+RUN mkdir -p src/ctra
+COPY src/ctra/__init__.py ./src/ctra/__init__.py
+
+# Install all dependencies including eval extras
+RUN uv pip install --system --no-cache ".[eval]"
+
+# Copy full source
+COPY src/ ./src/
+COPY scripts/ ./scripts/
+
+# Re-install package (no-deps, deps already cached above)
+RUN uv pip install --system --no-cache --no-deps .
+
+# Pre-download GLiNER-BioMed model into the image
+RUN python -c "\
+from ctra.rag.ner_config import build_ner_pipeline; \
+from ctra.config.settings import RAGConfig; \
+build_ner_pipeline(RAGConfig()); \
+print('GLiNER model cached')"
+
+# Default: run full eval on freely available benchmarks
+CMD ["python", "scripts/eval_ner.py", "--benchmarks", "chia,tac", "--mode", "both", "--output-dir", "output/ner_eval/"]

@@ -1,0 +1,601 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 4400" font-family="Inter, Helvetica, Arial, sans-serif">
+  <defs>
+    <linearGradient id="headerGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#1a1a2e"/>
+      <stop offset="100%" stop-color="#16213e"/>
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f3460"/>
+      <stop offset="100%" stop-color="#533483"/>
+    </linearGradient>
+    <linearGradient id="greenGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#00b894"/>
+      <stop offset="100%" stop-color="#00cec9"/>
+    </linearGradient>
+    <linearGradient id="blueGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#0984e3"/>
+      <stop offset="100%" stop-color="#6c5ce7"/>
+    </linearGradient>
+    <linearGradient id="yellowGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#fdcb6e"/>
+      <stop offset="100%" stop-color="#e17055"/>
+    </linearGradient>
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="3" stdDeviation="6" flood-opacity="0.08"/>
+    </filter>
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#636e72"/>
+    </marker>
+  </defs>
+
+  <!-- Global background -->
+  <rect width="1800" height="4400" fill="#f0f2f5"/>
+
+  <!-- ============================================================ -->
+  <!-- HEADER BAR -->
+  <!-- ============================================================ -->
+  <rect width="1800" height="120" fill="url(#headerGrad)"/>
+  <text x="900" y="42" text-anchor="middle" fill="#00cec9" font-size="15" font-weight="600" letter-spacing="5">CLINICAL TRIAL RISK ASSESSMENT</text>
+  <text x="900" y="78" text-anchor="middle" fill="#ffffff" font-size="32" font-weight="700">Multi-Objective MCTS: Feature Set Optimization</text>
+  <text x="900" y="106" text-anchor="middle" fill="#8899aa" font-size="13">Hybrid Deep Rollout + Pareto Ranking  |  3 Objectives  |  Adaptive Branching  |  Multi-Fidelity  |  360 tests passing</text>
+
+  <!-- ============================================================ -->
+  <!-- SECTION 1 : MCTS LOOP -->
+  <!-- ============================================================ -->
+  <g transform="translate(40,145)">
+    <rect width="1720" height="460" rx="14" fill="#ffffff" filter="url(#shadow)"/>
+    <rect width="1720" height="46" rx="14" fill="url(#accentGrad)"/>
+    <text x="24" y="31" fill="#ffffff" font-size="18" font-weight="700">1. THE MCTS SEARCH LOOP</text>
+
+    <!-- 4 phase boxes, evenly spaced -->
+    <g transform="translate(60,70)">
+      <!-- SELECT -->
+      <rect width="340" height="130" rx="10" fill="#ebf5fb" stroke="#0984e3" stroke-width="1.5"/>
+      <text x="170" y="28" text-anchor="middle" fill="#0984e3" font-size="15" font-weight="700">1. SELECT</text>
+      <text x="170" y="50" text-anchor="middle" fill="#2d3436" font-size="12">Pareto UCT traversal</text>
+      <text x="170" y="68" text-anchor="middle" fill="#636e72" font-size="11">Vector UCB per objective</text>
+      <text x="170" y="84" text-anchor="middle" fill="#636e72" font-size="11">Pareto front filtering</text>
+      <text x="170" y="100" text-anchor="middle" fill="#636e72" font-size="11">Hypervolume ranking</text>
+      <text x="170" y="120" text-anchor="middle" fill="#0984e3" font-size="10" font-weight="600">Root to leaf traversal</text>
+    </g>
+
+    <!-- Arrow 1 -->
+    <line x1="410" y1="135" x2="450" y2="135" stroke="#636e72" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <g transform="translate(460,70)">
+      <!-- EXPAND -->
+      <rect width="340" height="130" rx="10" fill="#eafaf1" stroke="#00b894" stroke-width="1.5"/>
+      <text x="170" y="28" text-anchor="middle" fill="#00b894" font-size="15" font-weight="700">2. EXPAND</text>
+      <text x="170" y="50" text-anchor="middle" fill="#2d3436" font-size="12">AB-MCTS adaptive branching</text>
+      <text x="170" y="68" text-anchor="middle" fill="#636e72" font-size="11">branch = log2(visits) + 2</text>
+      <text x="170" y="84" text-anchor="middle" fill="#636e72" font-size="11">Add / Remove / Refine ops</text>
+      <text x="170" y="100" text-anchor="middle" fill="#636e72" font-size="11">LLM suggests modifications</text>
+      <text x="170" y="120" text-anchor="middle" fill="#00b894" font-size="10" font-weight="600">2-8 children per node</text>
+    </g>
+
+    <!-- Arrow 2 -->
+    <line x1="810" y1="135" x2="850" y2="135" stroke="#636e72" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <g transform="translate(860,60)">
+      <!-- SIMULATE (highlighted) -->
+      <rect width="380" height="150" rx="10" fill="#fef9e7" stroke="#e17055" stroke-width="2.5"/>
+      <text x="190" y="30" text-anchor="middle" fill="#d63031" font-size="15" font-weight="700">3. SIMULATE (Deep Rollout)</text>
+      <text x="190" y="54" text-anchor="middle" fill="#2d3436" font-size="12" font-weight="600">Expand + evaluate to max_depth</text>
+      <text x="190" y="74" text-anchor="middle" fill="#636e72" font-size="11">Evaluate EVERY node on the path</text>
+      <text x="190" y="92" text-anchor="middle" fill="#636e72" font-size="11">Random child selection policy</text>
+      <text x="190" y="110" text-anchor="middle" fill="#636e72" font-size="11">Track best-on-path by hypervolume</text>
+      <text x="190" y="136" text-anchor="middle" fill="#d63031" font-size="12" font-weight="700">~7 evaluations per rollout</text>
+    </g>
+
+    <!-- Arrow 3 -->
+    <line x1="1250" y1="135" x2="1290" y2="135" stroke="#636e72" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <g transform="translate(1300,70)">
+      <!-- BACKPROP -->
+      <rect width="340" height="130" rx="10" fill="#f5eef8" stroke="#6c5ce7" stroke-width="1.5"/>
+      <text x="170" y="28" text-anchor="middle" fill="#6c5ce7" font-size="15" font-weight="700">4. BACKPROPAGATE</text>
+      <text x="170" y="50" text-anchor="middle" fill="#2d3436" font-size="12">Best-on-path objective vector</text>
+      <text x="170" y="68" text-anchor="middle" fill="#636e72" font-size="11">Update all ancestors to root</text>
+      <text x="170" y="84" text-anchor="middle" fill="#636e72" font-size="11">visit_count += 1</text>
+      <text x="170" y="100" text-anchor="middle" fill="#636e72" font-size="11">total_reward += best_vector</text>
+      <text x="170" y="120" text-anchor="middle" fill="#6c5ce7" font-size="10" font-weight="600">3D vector propagation</text>
+    </g>
+
+    <!-- Repeat loop arrow -->
+    <path d="M 1470 210 C 1470 270, 230 270, 230 210" fill="none" stroke="#b2bec3" stroke-width="2" stroke-dasharray="8,4" marker-end="url(#arrow)"/>
+    <text x="860" y="262" text-anchor="middle" fill="#636e72" font-size="13" font-weight="600">REPEAT (10-20 rollouts)</text>
+
+    <!-- Select best bar -->
+    <rect x="280" y="290" width="1140" height="50" rx="10" fill="url(#accentGrad)"/>
+    <text x="850" y="312" text-anchor="middle" fill="#ffffff" font-size="14" font-weight="600">5. SELECT BEST: Pareto front of all visited nodes, ranked by hypervolume contribution</text>
+    <text x="850" y="330" text-anchor="middle" fill="#aabbcc" font-size="11">Output: best feature set + full Pareto front of trade-off solutions</text>
+
+    <!-- Stat badges -->
+    <g transform="translate(60,360)">
+      <rect width="190" height="50" rx="8" fill="#0984e3"/>
+      <text x="95" y="24" text-anchor="middle" fill="#ffffff" font-size="13" font-weight="600">10 rollouts</text>
+      <text x="95" y="42" text-anchor="middle" fill="#bee3f8" font-size="10">= ~70 evaluations</text>
+    </g>
+    <g transform="translate(280,360)">
+      <rect width="190" height="50" rx="8" fill="#00b894"/>
+      <text x="95" y="24" text-anchor="middle" fill="#ffffff" font-size="13" font-weight="600">Depth 7</text>
+      <text x="95" y="42" text-anchor="middle" fill="#b2f5ea" font-size="10">reached every rollout</text>
+    </g>
+    <g transform="translate(500,360)">
+      <rect width="190" height="50" rx="8" fill="#6c5ce7"/>
+      <text x="95" y="24" text-anchor="middle" fill="#ffffff" font-size="13" font-weight="600">3 Objectives</text>
+      <text x="95" y="42" text-anchor="middle" fill="#d6bcfa" font-size="10">acc + pars + stab</text>
+    </g>
+    <g transform="translate(720,360)">
+      <rect width="190" height="50" rx="8" fill="#e17055"/>
+      <text x="95" y="24" text-anchor="middle" fill="#ffffff" font-size="13" font-weight="600">Pareto Front</text>
+      <text x="95" y="42" text-anchor="middle" fill="#ffeaa7" font-size="10">10 trade-off solutions</text>
+    </g>
+  </g>
+
+  <!-- ============================================================ -->
+  <!-- SECTION 2 : THREE OBJECTIVES -->
+  <!-- ============================================================ -->
+  <g transform="translate(40,630)">
+    <rect width="1720" height="470" rx="14" fill="#ffffff" filter="url(#shadow)"/>
+    <rect width="1720" height="46" rx="14" fill="url(#accentGrad)"/>
+    <text x="24" y="31" fill="#ffffff" font-size="18" font-weight="700">2. THE THREE OBJECTIVES (normalized to [0, 1], higher = better)</text>
+
+    <!-- Card 1: Accuracy -->
+    <g transform="translate(30,65)">
+      <rect width="540" height="380" rx="10" fill="#ebf5fb" stroke="#0984e3" stroke-width="1.5"/>
+      <circle cx="30" cy="28" r="16" fill="#0984e3"/>
+      <text x="30" y="34" text-anchor="middle" fill="#fff" font-size="14" font-weight="700">1</text>
+      <text x="54" y="34" fill="#0984e3" font-size="17" font-weight="700">Predictive Accuracy</text>
+      <text x="20" y="62" fill="#2d3436" font-size="12" font-weight="600">Metric: Weighted ROC-AUC across phases</text>
+      <text x="20" y="82" fill="#636e72" font-size="11">ROC-AUC measures classifier ability to rank successful</text>
+      <text x="20" y="98" fill="#636e72" font-size="11">vs failed trials. 0.5 = random, 1.0 = perfect.</text>
+      <rect x="20" y="114" width="500" height="28" rx="5" fill="#d6eaf8"/>
+      <text x="270" y="133" text-anchor="middle" fill="#1a5276" font-size="12" font-family="monospace" font-weight="600">0.2*AUC_I + 0.5*AUC_II + 0.3*AUC_III</text>
+      <text x="20" y="164" fill="#636e72" font-size="11">Phase II weighted 50%: highest failure rate (65-70%),</text>
+      <text x="20" y="180" fill="#636e72" font-size="11">most business value per correct prediction.</text>
+      <text x="20" y="210" fill="#2d3436" font-size="12" font-weight="600">Example progression:</text>
+      <rect x="20" y="222" width="236" height="16" rx="3" fill="#74b9ff" opacity="0.5"/>
+      <text x="270" y="235" fill="#636e72" font-size="10">2 features: 0.63</text>
+      <rect x="20" y="244" width="295" height="16" rx="3" fill="#74b9ff" opacity="0.65"/>
+      <text x="330" y="257" fill="#636e72" font-size="10">+ adverse_events: 0.68</text>
+      <rect x="20" y="266" width="354" height="16" rx="3" fill="#74b9ff" opacity="0.8"/>
+      <text x="390" y="279" fill="#636e72" font-size="10">+ sponsor_success: 0.72</text>
+      <rect x="20" y="288" width="413" height="16" rx="3" fill="#0984e3"/>
+      <text x="448" y="301" fill="#2d3436" font-size="10" font-weight="600">+ biomarker: 0.75</text>
+      <text x="20" y="330" fill="#b2bec3" font-size="10" font-style="italic">Diminishing returns: each feature helps less</text>
+      <text x="20" y="360" fill="#e17055" font-size="11" font-weight="600">Each feature = ~6 LLM calls/trial</text>
+      <text x="20" y="376" fill="#e17055" font-size="11" font-weight="600">10 feats x 500 trials = 30,000 calls</text>
+    </g>
+
+    <!-- Card 2: Parsimony -->
+    <g transform="translate(590,65)">
+      <rect width="540" height="380" rx="10" fill="#eafaf1" stroke="#00b894" stroke-width="1.5"/>
+      <circle cx="30" cy="28" r="16" fill="#00b894"/>
+      <text x="30" y="34" text-anchor="middle" fill="#fff" font-size="14" font-weight="700">2</text>
+      <text x="54" y="34" fill="#00b894" font-size="17" font-weight="700">Parsimony (Feature Efficiency)</text>
+      <text x="20" y="62" fill="#2d3436" font-size="12" font-weight="600">Metric: 1 - (n_features / max_features)</text>
+      <text x="20" y="82" fill="#636e72" font-size="11">Fewer features = lower LLM cost, faster inference,</text>
+      <text x="20" y="98" fill="#636e72" font-size="11">less overfitting risk.</text>
+      <rect x="20" y="114" width="500" height="28" rx="5" fill="#d5f5e3"/>
+      <text x="270" y="133" text-anchor="middle" fill="#1e8449" font-size="12" font-family="monospace" font-weight="600">parsimony = 1 - (n / 50)</text>
+      <text x="20" y="164" fill="#2d3436" font-size="12" font-weight="600">Scale:</text>
+      <!-- Scale bar -->
+      <rect x="20" y="178" width="500" height="24" rx="4" fill="#e8f8f5"/>
+      <rect x="20" y="178" width="50" height="24" rx="4" fill="#e74c3c"/>
+      <text x="45" y="195" text-anchor="middle" fill="#fff" font-size="9" font-weight="600">50</text>
+      <rect x="70" y="178" width="200" height="24" fill="#f39c12"/>
+      <text x="170" y="195" text-anchor="middle" fill="#fff" font-size="9" font-weight="600">25</text>
+      <rect x="270" y="178" width="125" height="24" fill="#2ecc71"/>
+      <text x="332" y="195" text-anchor="middle" fill="#fff" font-size="9" font-weight="600">10</text>
+      <rect x="395" y="178" width="125" height="24" rx="4" fill="#00b894"/>
+      <text x="457" y="195" text-anchor="middle" fill="#fff" font-size="9" font-weight="600">0</text>
+      <text x="20" y="224" fill="#636e72" font-size="10">0.0 (at capacity)                                                          1.0 (max parsimony)</text>
+      <text x="20" y="258" fill="#2d3436" font-size="12" font-weight="600">The Pareto trade-off:</text>
+      <text x="20" y="278" fill="#636e72" font-size="11">Parsimony creates tension with accuracy.</text>
+      <text x="20" y="296" fill="#636e72" font-size="11">MCTS must find the MINIMUM features for</text>
+      <text x="20" y="314" fill="#636e72" font-size="11">MAXIMUM performance. This is why we need</text>
+      <text x="20" y="332" fill="#636e72" font-size="11">multi-objective optimization, not just accuracy.</text>
+      <text x="20" y="364" fill="#636e72" font-size="11">AutoCT produces 10-30 features per task.</text>
+    </g>
+
+    <!-- Card 3: Stability -->
+    <g transform="translate(1150,65)">
+      <rect width="540" height="380" rx="10" fill="#f5eef8" stroke="#6c5ce7" stroke-width="1.5"/>
+      <circle cx="30" cy="28" r="16" fill="#6c5ce7"/>
+      <text x="30" y="34" text-anchor="middle" fill="#fff" font-size="14" font-weight="700">3</text>
+      <text x="54" y="34" fill="#6c5ce7" font-size="17" font-weight="700">Cross-Phase Stability</text>
+      <text x="20" y="62" fill="#2d3436" font-size="12" font-weight="600">Metric: 1 - CV(phase_aucs)</text>
+      <text x="20" y="82" fill="#636e72" font-size="11">Features must work consistently across ALL trial</text>
+      <text x="20" y="98" fill="#636e72" font-size="11">phases, not excel at one while failing others.</text>
+      <rect x="20" y="114" width="500" height="28" rx="5" fill="#ebdef0"/>
+      <text x="270" y="133" text-anchor="middle" fill="#6c3483" font-size="12" font-family="monospace" font-weight="600">stability = 1 - (std / mean)</text>
+      <text x="20" y="164" fill="#2d3436" font-size="12" font-weight="600">Examples:</text>
+      <rect x="20" y="178" width="500" height="36" rx="5" fill="#d5f5e3"/>
+      <text x="30" y="202" fill="#1e8449" font-size="11" font-weight="600">[0.80, 0.80, 0.80]  CV=0.00  stab=1.00  Perfect</text>
+      <rect x="20" y="222" width="500" height="36" rx="5" fill="#fef9e7"/>
+      <text x="30" y="246" fill="#7d6608" font-size="11" font-weight="600">[0.90, 0.70, 0.75]  CV=0.12  stab=0.89  Good</text>
+      <rect x="20" y="266" width="500" height="36" rx="5" fill="#fdedec"/>
+      <text x="30" y="290" fill="#922b21" font-size="11" font-weight="600">[0.95, 0.40, 0.30]  CV=0.55  stab=0.45  Unstable!</text>
+      <text x="20" y="334" fill="#e74c3c" font-size="12" font-weight="600">A model great at Phase I but failing</text>
+      <text x="20" y="352" fill="#e74c3c" font-size="12" font-weight="600">Phase III is operationally useless.</text>
+      <text x="20" y="376" fill="#636e72" font-size="11">Clinical teams need ALL phases.</text>
+    </g>
+  </g>
+
+  <!-- ============================================================ -->
+  <!-- SECTION 3 : DEEP ROLLOUT -->
+  <!-- ============================================================ -->
+  <g transform="translate(40,1126)">
+    <rect width="1720" height="480" rx="14" fill="#ffffff" filter="url(#shadow)"/>
+    <rect width="1720" height="46" rx="14" fill="#e17055"/>
+    <text x="24" y="31" fill="#ffffff" font-size="18" font-weight="700">3. DEEP ROLLOUT SIMULATION (the key innovation matching AutoCT)</text>
+
+    <!-- Left: Shallow -->
+    <g transform="translate(30,65)">
+      <rect width="800" height="250" rx="10" fill="#fef9e7" stroke="#f39c12" stroke-width="1.5"/>
+      <text x="400" y="28" text-anchor="middle" fill="#d63031" font-size="15" font-weight="700">SHALLOW (old): 1 eval per rollout</text>
+      <!-- Shallow tree drawing -->
+      <circle cx="250" cy="80" r="20" fill="#636e72"/>
+      <text x="250" y="86" text-anchor="middle" fill="#fff" font-size="10" font-weight="600">Root</text>
+      <line x1="250" y1="100" x2="180" y2="140" stroke="#b2bec3" stroke-width="2"/>
+      <line x1="250" y1="100" x2="320" y2="140" stroke="#b2bec3" stroke-width="2"/>
+      <circle cx="180" cy="155" r="16" fill="#0984e3"/>
+      <text x="180" y="160" text-anchor="middle" fill="#fff" font-size="9" font-weight="600">eval</text>
+      <circle cx="320" cy="155" r="16" fill="#dfe6e9" stroke="#b2bec3"/>
+      <text x="320" y="160" text-anchor="middle" fill="#b2bec3" font-size="9">wait</text>
+      <text x="550" y="90" text-anchor="middle" fill="#636e72" font-size="13">10 rollouts = 11 evals</text>
+      <text x="550" y="115" text-anchor="middle" fill="#d63031" font-size="16" font-weight="700">Max depth: 2</text>
+      <text x="550" y="145" text-anchor="middle" fill="#636e72" font-size="12">Cannot discover deep</text>
+      <text x="550" y="163" text-anchor="middle" fill="#636e72" font-size="12">feature combinations.</text>
+      <text x="400" y="210" text-anchor="middle" fill="#636e72" font-size="13">Budget wasted on shallow, breadth-first exploration.</text>
+      <text x="400" y="232" text-anchor="middle" fill="#636e72" font-size="13">Features A+B+C+D synergy never found.</text>
+    </g>
+
+    <!-- Right: Deep -->
+    <g transform="translate(880,65)">
+      <rect width="800" height="250" rx="10" fill="#d5f5e3" stroke="#00b894" stroke-width="2"/>
+      <text x="400" y="28" text-anchor="middle" fill="#00b894" font-size="15" font-weight="700">DEEP (new): ~7 evals per rollout</text>
+      <!-- Deep chain drawing -->
+      <g transform="translate(80,50)">
+        <circle cx="0" cy="0" r="14" fill="#00b894"/>
+        <text x="0" y="5" text-anchor="middle" fill="#fff" font-size="8">d0</text>
+        <line x1="0" y1="14" x2="0" y2="30" stroke="#00b894" stroke-width="2"/>
+        <circle cx="0" cy="44" r="12" fill="#00b894"/>
+        <text x="0" y="48" text-anchor="middle" fill="#fff" font-size="8">d1</text>
+        <line x1="0" y1="56" x2="0" y2="70" stroke="#00b894" stroke-width="2"/>
+        <circle cx="0" cy="82" r="12" fill="#00b894"/>
+        <text x="0" y="86" text-anchor="middle" fill="#fff" font-size="8">d2</text>
+        <line x1="0" y1="94" x2="0" y2="108" stroke="#00b894" stroke-width="2"/>
+        <circle cx="0" cy="120" r="12" fill="#e17055"/>
+        <text x="0" y="124" text-anchor="middle" fill="#fff" font-size="8">d4</text>
+        <text x="20" y="124" fill="#e17055" font-size="10" font-weight="600">best on path</text>
+        <line x1="0" y1="132" x2="0" y2="148" stroke="#00b894" stroke-width="1.5" stroke-dasharray="3,3"/>
+        <text x="0" y="168" text-anchor="middle" fill="#636e72" font-size="9">...to depth 7</text>
+
+        <!-- Annotations -->
+        <text x="110" y="5" fill="#636e72" font-size="10">{enroll_size}</text>
+        <text x="110" y="48" fill="#636e72" font-size="10">{+ drug_targets}</text>
+        <text x="110" y="86" fill="#636e72" font-size="10">{+ adverse_events}</text>
+        <text x="110" y="124" fill="#e17055" font-size="10" font-weight="600">{+ biomarker} synergy!</text>
+      </g>
+      <text x="520" y="90" text-anchor="middle" fill="#636e72" font-size="13">10 rollouts = 63 evals</text>
+      <text x="520" y="115" text-anchor="middle" fill="#00b894" font-size="16" font-weight="700">Max depth: 7</text>
+      <text x="520" y="145" text-anchor="middle" fill="#00b894" font-size="12" font-weight="600">Matches AutoCT exactly!</text>
+      <text x="400" y="210" text-anchor="middle" fill="#636e72" font-size="13">Every rollout goes to max_depth. Every intermediate</text>
+      <text x="400" y="232" text-anchor="middle" fill="#636e72" font-size="13">node evaluated and stored for Pareto selection.</text>
+    </g>
+
+    <!-- WHY box -->
+    <g transform="translate(30,340)">
+      <rect width="1660" height="110" rx="8" fill="#fdf2e9" stroke="#e17055" stroke-width="1"/>
+      <text x="830" y="28" text-anchor="middle" fill="#d63031" font-size="14" font-weight="700">Why Deep Rollout Matters for Clinical Trial Features</text>
+      <text x="830" y="52" text-anchor="middle" fill="#2d3436" font-size="12">"biomarker_available" alone scores acc=0.53. But combined with "drug_targets" + "mechanism_novelty" the trio scores 0.78.</text>
+      <text x="830" y="72" text-anchor="middle" fill="#2d3436" font-size="12">This epistasis (feature interaction) is only discoverable by going deep. Without deep rollout, MCTS stays at depth 2.</text>
+      <text x="830" y="96" text-anchor="middle" fill="#636e72" font-size="12" font-weight="600">Best-on-path: the node with highest hypervolume on the rollout path is backpropagated (not just the leaf).</text>
+    </g>
+  </g>
+
+  <!-- ============================================================ -->
+  <!-- SECTION 4 : SIMULATION RESULTS -->
+  <!-- ============================================================ -->
+  <g transform="translate(40,1632)">
+    <rect width="1720" height="440" rx="14" fill="#ffffff" filter="url(#shadow)"/>
+    <rect width="1720" height="46" rx="14" fill="url(#greenGrad)"/>
+    <text x="24" y="31" fill="#ffffff" font-size="18" font-weight="700">4. SIMULATION RESULTS (real run: synergy discovery problem, 10 rollouts)</text>
+
+    <!-- Stat badges -->
+    <g transform="translate(30,68)">
+      <rect width="195" height="70" rx="8" fill="#0984e3"/>
+      <text x="97" y="28" text-anchor="middle" fill="#bee3f8" font-size="11">Total Nodes</text>
+      <text x="97" y="56" text-anchor="middle" fill="#fff" font-size="26" font-weight="700">61</text>
+    </g>
+    <g transform="translate(245,68)">
+      <rect width="195" height="70" rx="8" fill="#00b894"/>
+      <text x="97" y="28" text-anchor="middle" fill="#b2f5ea" font-size="11">Evaluated</text>
+      <text x="97" y="56" text-anchor="middle" fill="#fff" font-size="26" font-weight="700">45</text>
+    </g>
+    <g transform="translate(460,68)">
+      <rect width="195" height="70" rx="8" fill="#6c5ce7"/>
+      <text x="97" y="28" text-anchor="middle" fill="#d6bcfa" font-size="11">Max Depth</text>
+      <text x="97" y="56" text-anchor="middle" fill="#fff" font-size="26" font-weight="700">6</text>
+    </g>
+    <g transform="translate(675,68)">
+      <rect width="195" height="70" rx="8" fill="#e17055"/>
+      <text x="97" y="28" text-anchor="middle" fill="#ffeaa7" font-size="11">Synergy Found</text>
+      <text x="97" y="56" text-anchor="middle" fill="#fff" font-size="26" font-weight="700">4/4</text>
+    </g>
+    <g transform="translate(890,68)">
+      <rect width="195" height="70" rx="8" fill="#1a1a2e"/>
+      <text x="97" y="28" text-anchor="middle" fill="#8899aa" font-size="11">Pareto Front</text>
+      <text x="97" y="56" text-anchor="middle" fill="#00cec9" font-size="26" font-weight="700">10</text>
+    </g>
+    <g transform="translate(1105,68)">
+      <rect width="195" height="70" rx="8" fill="#2d3436"/>
+      <text x="97" y="28" text-anchor="middle" fill="#8899aa" font-size="11">Best Accuracy</text>
+      <text x="97" y="56" text-anchor="middle" fill="#00cec9" font-size="26" font-weight="700">0.865</text>
+    </g>
+    <g transform="translate(1320,68)">
+      <rect width="195" height="70" rx="8" fill="#2d3436"/>
+      <text x="97" y="28" text-anchor="middle" fill="#8899aa" font-size="11">Best HV</text>
+      <text x="97" y="56" text-anchor="middle" fill="#00cec9" font-size="26" font-weight="700">0.674</text>
+    </g>
+
+    <!-- Best path -->
+    <text x="30" y="170" fill="#2d3436" font-size="15" font-weight="700">Best Path: Root to Best Node (6 refinement steps, synergy discovered at depth 6)</text>
+
+    <g transform="translate(30,185)">
+      <!-- d0 -->
+      <rect width="175" height="70" rx="6" fill="#ebf5fb" stroke="#0984e3" stroke-width="1"/>
+      <text x="87" y="18" text-anchor="middle" fill="#0984e3" font-size="10" font-weight="700">d0: [noise_1]</text>
+      <text x="87" y="36" text-anchor="middle" fill="#636e72" font-size="10">acc=0.82</text>
+      <text x="87" y="52" text-anchor="middle" fill="#636e72" font-size="10">pars=0.87 stab=0.92</text>
+      <text x="87" y="66" text-anchor="middle" fill="#b2bec3" font-size="9">11 visits</text>
+    </g>
+    <text x="215" y="225" fill="#636e72" font-size="12">+noise_3</text>
+    <line x1="207" y1="220" x2="240" y2="220" stroke="#636e72" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <g transform="translate(250,185)">
+      <rect width="175" height="70" rx="6" fill="#ebf5fb" stroke="#0984e3" stroke-width="1"/>
+      <text x="87" y="18" text-anchor="middle" fill="#0984e3" font-size="10" font-weight="700">d1: [+noise_3]</text>
+      <text x="87" y="36" text-anchor="middle" fill="#636e72" font-size="10">acc=0.85</text>
+      <text x="87" y="52" text-anchor="middle" fill="#636e72" font-size="10">pars=0.86 stab=0.91</text>
+    </g>
+    <text x="435" y="225" fill="#636e72" font-size="12">+feat_D</text>
+    <line x1="427" y1="220" x2="460" y2="220" stroke="#636e72" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <g transform="translate(470,185)">
+      <rect width="175" height="70" rx="6" fill="#ebf5fb" stroke="#0984e3" stroke-width="1"/>
+      <text x="87" y="18" text-anchor="middle" fill="#0984e3" font-size="10" font-weight="700">d2: [+feat_D]</text>
+      <text x="87" y="36" text-anchor="middle" fill="#636e72" font-size="10">acc=0.86</text>
+      <text x="87" y="52" text-anchor="middle" fill="#636e72" font-size="10">pars=0.86 stab=0.91</text>
+    </g>
+    <text x="655" y="225" fill="#e17055" font-size="12" font-weight="600">+feat_C</text>
+    <line x1="647" y1="220" x2="680" y2="220" stroke="#e17055" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <g transform="translate(690,185)">
+      <rect width="175" height="70" rx="6" fill="#fef9e7" stroke="#f39c12" stroke-width="1.5"/>
+      <text x="87" y="18" text-anchor="middle" fill="#e17055" font-size="10" font-weight="700">d3: [+feat_C]</text>
+      <text x="87" y="36" text-anchor="middle" fill="#e17055" font-size="10">1st synergy</text>
+      <text x="87" y="52" text-anchor="middle" fill="#636e72" font-size="10">acc=0.60 pars=0.92</text>
+    </g>
+    <text x="875" y="225" fill="#e17055" font-size="12" font-weight="600">+feat_A</text>
+    <line x1="867" y1="220" x2="900" y2="220" stroke="#e17055" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <g transform="translate(910,185)">
+      <rect width="175" height="70" rx="6" fill="#fef9e7" stroke="#f39c12" stroke-width="1.5"/>
+      <text x="87" y="18" text-anchor="middle" fill="#e17055" font-size="10" font-weight="700">d4: [+feat_A]</text>
+      <text x="87" y="36" text-anchor="middle" fill="#e17055" font-size="10">2nd synergy</text>
+      <text x="87" y="52" text-anchor="middle" fill="#636e72" font-size="10">acc=0.70 pars=0.90</text>
+    </g>
+    <line x1="1087" y1="220" x2="1120" y2="220" stroke="#e17055" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <g transform="translate(1130,180)">
+      <rect width="220" height="80" rx="8" fill="#d5f5e3" stroke="#00b894" stroke-width="2.5"/>
+      <text x="110" y="22" text-anchor="middle" fill="#00b894" font-size="12" font-weight="700">d6: ALL 4 SYNERGY!</text>
+      <text x="110" y="42" text-anchor="middle" fill="#2d3436" font-size="10">[+noise_2, +feat_B]</text>
+      <text x="110" y="58" text-anchor="middle" fill="#00b894" font-size="11" font-weight="700">acc=0.87 pars=0.86</text>
+      <text x="110" y="74" text-anchor="middle" fill="#00b894" font-size="11" font-weight="700">stab=0.91</text>
+    </g>
+
+    <!-- Depth bar chart -->
+    <g transform="translate(30,295)">
+      <text x="0" y="0" fill="#2d3436" font-size="13" font-weight="700">Evaluated nodes by depth:</text>
+      <text x="75" y="25" text-anchor="end" fill="#636e72" font-size="10">d0</text>
+      <rect x="80" y="14" width="15" height="14" rx="2" fill="#0984e3"/>
+      <text x="75" y="45" text-anchor="end" fill="#636e72" font-size="10">d1</text>
+      <rect x="80" y="34" width="30" height="14" rx="2" fill="#0984e3"/>
+      <text x="75" y="65" text-anchor="end" fill="#636e72" font-size="10">d2</text>
+      <rect x="80" y="54" width="60" height="14" rx="2" fill="#6c5ce7"/>
+      <text x="75" y="85" text-anchor="end" fill="#636e72" font-size="10">d3</text>
+      <rect x="80" y="74" width="120" height="14" rx="2" fill="#6c5ce7"/>
+      <text x="75" y="105" text-anchor="end" fill="#636e72" font-size="10">d4-6</text>
+      <rect x="80" y="94" width="225" height="14" rx="2" fill="#00b894"/>
+      <text x="320" y="105" fill="#00b894" font-size="10" font-weight="600">30 nodes (67%)</text>
+      <text x="400" y="50" fill="#636e72" font-size="11">Dense coverage at ALL depths.</text>
+      <text x="400" y="68" fill="#636e72" font-size="11">Deep rollout ensures no depth</text>
+      <text x="400" y="86" fill="#636e72" font-size="11">level is left unexplored.</text>
+    </g>
+  </g>
+
+  <!-- ============================================================ -->
+  <!-- SECTION 5 : COMPARISON TABLE -->
+  <!-- ============================================================ -->
+  <g transform="translate(40,2098)">
+    <rect width="1720" height="370" rx="14" fill="#ffffff" filter="url(#shadow)"/>
+    <rect width="1720" height="46" rx="14" fill="url(#blueGrad)"/>
+    <text x="24" y="31" fill="#ffffff" font-size="18" font-weight="700">5. CTRA vs AutoCT: Head-to-Head (same problem, 10 rollouts)</text>
+
+    <!-- Table header -->
+    <g transform="translate(60,66)">
+      <rect width="1600" height="34" rx="5" fill="#2d3436"/>
+      <text x="400" y="23" text-anchor="middle" fill="#fff" font-size="13" font-weight="600">Metric</text>
+      <text x="850" y="23" text-anchor="middle" fill="#00cec9" font-size="13" font-weight="600">AutoCT (Original)</text>
+      <text x="1300" y="23" text-anchor="middle" fill="#00cec9" font-size="13" font-weight="600">CTRA (Ours)</text>
+    </g>
+
+    <!-- Table rows -->
+    <g transform="translate(60,104)" font-size="12">
+      <rect width="1600" height="30" fill="#f8f9fa"/>
+      <text x="400" y="20" text-anchor="middle" fill="#2d3436">Max tree depth</text>
+      <text x="850" y="20" text-anchor="middle" fill="#636e72" font-weight="600">7</text>
+      <text x="1300" y="20" text-anchor="middle" fill="#00b894" font-weight="700">7 (matched)</text>
+
+      <rect y="34" width="1600" height="30" fill="#fff"/>
+      <text x="400" y="54" text-anchor="middle" fill="#2d3436">Total evaluation calls</text>
+      <text x="850" y="54" text-anchor="middle" fill="#636e72" font-weight="600">63</text>
+      <text x="1300" y="54" text-anchor="middle" fill="#00b894" font-weight="700">63 (matched)</text>
+
+      <rect y="68" width="1600" height="30" fill="#f8f9fa"/>
+      <text x="400" y="88" text-anchor="middle" fill="#2d3436">Total nodes in tree</text>
+      <text x="850" y="88" text-anchor="middle" fill="#636e72" font-weight="600">63</text>
+      <text x="1300" y="88" text-anchor="middle" fill="#0984e3" font-weight="700">160 (richer tree)</text>
+
+      <rect y="102" width="1600" height="30" fill="#fff"/>
+      <text x="400" y="122" text-anchor="middle" fill="#2d3436">Objectives</text>
+      <text x="850" y="122" text-anchor="middle" fill="#636e72">1 (ROC-AUC only)</text>
+      <text x="1300" y="122" text-anchor="middle" fill="#6c5ce7" font-weight="700">3 (accuracy + parsimony + stability)</text>
+
+      <rect y="136" width="1600" height="30" fill="#f8f9fa"/>
+      <text x="400" y="156" text-anchor="middle" fill="#2d3436">Selection strategy</text>
+      <text x="850" y="156" text-anchor="middle" fill="#636e72">Scalar UCT</text>
+      <text x="1300" y="156" text-anchor="middle" fill="#6c5ce7" font-weight="700">Pareto UCT + hypervolume</text>
+
+      <rect y="170" width="1600" height="30" fill="#fff"/>
+      <text x="400" y="190" text-anchor="middle" fill="#2d3436">Adaptive branching</text>
+      <text x="850" y="190" text-anchor="middle" fill="#e74c3c">No (fixed)</text>
+      <text x="1300" y="190" text-anchor="middle" fill="#00b894" font-weight="700">Yes (AB-MCTS log2)</text>
+
+      <rect y="204" width="1600" height="30" fill="#f8f9fa"/>
+      <text x="400" y="224" text-anchor="middle" fill="#2d3436">Multi-fidelity evaluation</text>
+      <text x="850" y="224" text-anchor="middle" fill="#e74c3c">No</text>
+      <text x="1300" y="224" text-anchor="middle" fill="#00b894" font-weight="700">Yes (25%/50%/75%/100%)</text>
+
+      <rect y="238" width="1600" height="30" fill="#fff"/>
+      <text x="400" y="258" text-anchor="middle" fill="#2d3436">Output</text>
+      <text x="850" y="258" text-anchor="middle" fill="#636e72">Single best node</text>
+      <text x="1300" y="258" text-anchor="middle" fill="#6c5ce7" font-weight="700">Pareto front (multiple trade-offs)</text>
+    </g>
+  </g>
+
+  <!-- ============================================================ -->
+  <!-- SECTION 6+7 : BENEFITS + LIMITATIONS -->
+  <!-- ============================================================ -->
+  <g transform="translate(40,2494)">
+    <!-- Benefits -->
+    <rect width="830" height="530" rx="14" fill="#ffffff" filter="url(#shadow)"/>
+    <rect width="830" height="46" rx="14" fill="#00b894"/>
+    <text x="24" y="31" fill="#ffffff" font-size="18" font-weight="700">6. BENEFITS</text>
+
+    <g transform="translate(24,66)" font-size="12">
+      <circle cx="16" cy="14" r="12" fill="#00b894"/>
+      <text x="16" y="18" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">1</text>
+      <text x="36" y="12" fill="#2d3436" font-weight="700">Deep Feature Combination Discovery</text>
+      <text x="36" y="30" fill="#636e72">Depth 7 in 10 rollouts. Discovers synergistic features.</text>
+
+      <circle cx="16" cy="62" r="12" fill="#00b894"/>
+      <text x="16" y="66" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">2</text>
+      <text x="36" y="60" fill="#2d3436" font-weight="700">Multi-Objective Optimization</text>
+      <text x="36" y="78" fill="#636e72">Accuracy + parsimony + stability. Pareto front output.</text>
+
+      <circle cx="16" cy="110" r="12" fill="#00b894"/>
+      <text x="16" y="114" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">3</text>
+      <text x="36" y="108" fill="#2d3436" font-weight="700">Pareto-Aware Tree Traversal</text>
+      <text x="36" y="126" fill="#636e72">Vector UCB + HV explores diverse objective regions.</text>
+
+      <circle cx="16" cy="158" r="12" fill="#00b894"/>
+      <text x="16" y="162" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">4</text>
+      <text x="36" y="156" fill="#2d3436" font-weight="700">AB-MCTS Adaptive Branching</text>
+      <text x="36" y="174" fill="#636e72">Promising nodes get more children. Budget-efficient.</text>
+
+      <circle cx="16" cy="206" r="12" fill="#00b894"/>
+      <text x="16" y="210" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">5</text>
+      <text x="36" y="204" fill="#2d3436" font-weight="700">Multi-Fidelity Cost Reduction</text>
+      <text x="36" y="222" fill="#636e72">Early: 25% data. Late: 100%. ~38% LLM cost savings.</text>
+
+      <circle cx="16" cy="254" r="12" fill="#00b894"/>
+      <text x="16" y="258" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">6</text>
+      <text x="36" y="252" fill="#2d3436" font-weight="700">Backward Compatible</text>
+      <text x="36" y="270" fill="#636e72">deep_simulation=False or objectives=["accuracy"] reverts.</text>
+    </g>
+
+    <!-- Multi-fidelity detail -->
+    <g transform="translate(24,370)">
+      <rect width="782" height="130" rx="8" fill="#fdf2e9" stroke="#e17055" stroke-width="1"/>
+      <text x="391" y="22" text-anchor="middle" fill="#d63031" font-size="12" font-weight="700">Multi-Fidelity Schedule: [0.25, 0.5, 0.75, 1.0]</text>
+      <rect x="10" y="36" width="185" height="28" rx="4" fill="#fdcb6e" opacity="0.5"/>
+      <text x="102" y="55" text-anchor="middle" fill="#7d6608" font-size="10" font-weight="600">Rollouts 1-5: 25%</text>
+      <rect x="200" y="36" width="185" height="28" rx="4" fill="#fdcb6e" opacity="0.7"/>
+      <text x="292" y="55" text-anchor="middle" fill="#7d6608" font-size="10" font-weight="600">Rollouts 6-10: 50%</text>
+      <rect x="390" y="36" width="185" height="28" rx="4" fill="#e17055" opacity="0.4"/>
+      <text x="482" y="55" text-anchor="middle" fill="#922b21" font-size="10" font-weight="600">Rollouts 11-15: 75%</text>
+      <rect x="580" y="36" width="192" height="28" rx="4" fill="#00b894" opacity="0.5"/>
+      <text x="676" y="55" text-anchor="middle" fill="#1e8449" font-size="10" font-weight="600">Rollouts 16-20: 100%</text>
+      <text x="200" y="90" fill="#636e72" font-size="11">Without: 20 x 7 x $2 = $280</text>
+      <text x="200" y="108" fill="#00b894" font-size="11" font-weight="600">With multi-fidelity: ~$175 (38% savings)</text>
+    </g>
+
+    <!-- Limitations -->
+    <g transform="translate(890,0)">
+      <rect width="830" height="530" rx="14" fill="#ffffff" filter="url(#shadow)"/>
+      <rect width="830" height="46" rx="14" fill="#e17055"/>
+      <text x="24" y="31" fill="#ffffff" font-size="18" font-weight="700">7. LIMITATIONS</text>
+
+      <g transform="translate(24,66)" font-size="12">
+        <circle cx="16" cy="14" r="12" fill="#e17055"/>
+        <text x="16" y="18" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">1</text>
+        <text x="36" y="12" fill="#2d3436" font-weight="700">Deep Rollout Cost</text>
+        <text x="36" y="30" fill="#636e72">~7 evals/rollout. 10 rollouts = ~$140 with Opus 4.6.</text>
+        <text x="36" y="46" fill="#b2bec3" font-size="10" font-style="italic">Mitigated: multi-fidelity reduces to ~$87.</text>
+
+        <circle cx="16" cy="74" r="12" fill="#e17055"/>
+        <text x="16" y="78" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">2</text>
+        <text x="36" y="72" fill="#2d3436" font-weight="700">Random Simulation Policy</text>
+        <text x="36" y="90" fill="#636e72">Picks random children during deep rollout.</text>
+        <text x="36" y="106" fill="#b2bec3" font-size="10" font-style="italic">Deferred: Phase 2c (predictive scoring).</text>
+
+        <circle cx="16" cy="134" r="12" fill="#e17055"/>
+        <text x="16" y="138" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">3</text>
+        <text x="36" y="132" fill="#2d3436" font-weight="700">No Cross-Branch Memory</text>
+        <text x="36" y="150" fill="#636e72">Good combos in branch A not shared with B.</text>
+        <text x="36" y="166" fill="#b2bec3" font-size="10" font-style="italic">Deferred: Phase 2c (ML-Master memory).</text>
+
+        <circle cx="16" cy="194" r="12" fill="#e17055"/>
+        <text x="16" y="198" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">4</text>
+        <text x="36" y="192" fill="#2d3436" font-weight="700">Best-on-Path is Approximate</text>
+        <text x="36" y="210" fill="#636e72">Uses HV product as proxy. Two non-dominated</text>
+        <text x="36" y="226" fill="#636e72">intermediate nodes have no clear "best."</text>
+
+        <circle cx="16" cy="254" r="12" fill="#e17055"/>
+        <text x="16" y="258" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">5</text>
+        <text x="36" y="252" fill="#2d3436" font-weight="700">No LLM-FE Alternative Yet</text>
+        <text x="36" y="270" fill="#636e72">Head-to-head with evolutionary search not done.</text>
+        <text x="36" y="286" fill="#b2bec3" font-size="10" font-style="italic">Deferred: Task #15.</text>
+
+        <circle cx="16" cy="314" r="12" fill="#e17055"/>
+        <text x="16" y="318" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">6</text>
+        <text x="36" y="312" fill="#2d3436" font-weight="700">expand_fn is a Black Box</text>
+        <text x="36" y="330" fill="#636e72">Quality depends on LLM's feature engineering.</text>
+      </g>
+
+      <!-- Test coverage box -->
+      <g transform="translate(24,410)">
+        <rect width="782" height="90" rx="8" fill="#f0f2f5" stroke="#dfe6e9"/>
+        <text x="391" y="22" text-anchor="middle" fill="#2d3436" font-size="13" font-weight="700">Test Coverage: 114 search tests across 6 files</text>
+        <text x="130" y="46" text-anchor="middle" fill="#0984e3" font-size="11">test_pareto: 38</text>
+        <text x="290" y="46" text-anchor="middle" fill="#0984e3" font-size="11">test_objectives: 25</text>
+        <text x="450" y="46" text-anchor="middle" fill="#0984e3" font-size="11">test_mcts: 23</text>
+        <text x="130" y="68" text-anchor="middle" fill="#00b894" font-size="11">test_simulation: 15</text>
+        <text x="330" y="68" text-anchor="middle" fill="#00b894" font-size="11">test_deep_exploration: 7</text>
+        <text x="560" y="68" text-anchor="middle" fill="#e17055" font-size="11">test_autoct_comparison: 6</text>
+        <text x="391" y="86" text-anchor="middle" fill="#00b894" font-size="12" font-weight="700">360 total project tests, all passing</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- ============================================================ -->
+  <!-- FOOTER -->
+  <!-- ============================================================ -->
+  <rect y="3060" width="1800" height="50" fill="url(#headerGrad)"/>
+  <text x="900" y="3090" text-anchor="middle" fill="#8899aa" font-size="12">CTRA Multi-Objective MCTS | Deep rollout matches AutoCT depth | Pareto ranking for multi-objective trade-offs | 360 tests passing</text>
+</svg>

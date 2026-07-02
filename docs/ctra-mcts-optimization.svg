@@ -1,0 +1,347 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 830" font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
+  <defs>
+    <linearGradient id="headerGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#1a365d"/>
+      <stop offset="100%" style="stop-color:#2c5282"/>
+    </linearGradient>
+    <linearGradient id="nodeGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#ebf8ff"/>
+      <stop offset="100%" style="stop-color:#bee3f8"/>
+    </linearGradient>
+    <linearGradient id="selectedGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#c6f6d5"/>
+      <stop offset="100%" style="stop-color:#68d391"/>
+    </linearGradient>
+    <linearGradient id="expandGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#fefcbf"/>
+      <stop offset="100%" style="stop-color:#f6e05e"/>
+    </linearGradient>
+    <linearGradient id="oldGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#fed7d7"/>
+      <stop offset="100%" style="stop-color:#fc8181"/>
+    </linearGradient>
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="115%">
+      <feDropShadow dx="1" dy="2" stdDeviation="2" flood-opacity="0.15"/>
+    </filter>
+    <filter id="shadowLg" x="-5%" y="-5%" width="110%" height="115%">
+      <feDropShadow dx="2" dy="3" stdDeviation="4" flood-opacity="0.2"/>
+    </filter>
+    <marker id="arrowGreen" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#38a169"/>
+    </marker>
+    <marker id="arrowBlue" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#3182ce"/>
+    </marker>
+    <marker id="arrowGray" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#a0aec0"/>
+    </marker>
+    <marker id="arrowRed" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#e53e3e"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1100" height="820" rx="12" fill="#f7fafc" stroke="#e2e8f0" stroke-width="1"/>
+
+  <!-- Header -->
+  <rect x="0" y="0" width="1100" height="56" rx="12" fill="url(#headerGrad)"/>
+  <rect x="0" y="20" width="1100" height="36" fill="url(#headerGrad)"/>
+  <text x="550" y="36" text-anchor="middle" fill="white" font-size="20" font-weight="700" letter-spacing="0.5">CTRA MCTS Optimization — AutoCT Feature Search</text>
+
+  <!-- ============================================ -->
+  <!-- LEFT SIDE: Published AutoCT (problems)       -->
+  <!-- ============================================ -->
+  <rect x="20" y="72" width="520" height="340" rx="8" fill="white" stroke="#fc8181" stroke-width="1.5" filter="url(#shadowLg)"/>
+  <rect x="20" y="72" width="520" height="32" rx="8" fill="#fc8181"/>
+  <rect x="20" y="96" width="520" height="8" fill="#fc8181"/>
+  <text x="280" y="94" text-anchor="middle" fill="white" font-size="13" font-weight="700">PUBLISHED AUTOCT MCTS — IDENTIFIED ISSUES</text>
+
+  <!-- Mini tree: published -->
+  <g transform="translate(50, 120)">
+    <!-- Root -->
+    <rect x="80" y="0" width="80" height="28" rx="6" fill="url(#nodeGrad)" stroke="#3182ce" stroke-width="1.2"/>
+    <text x="120" y="18" text-anchor="middle" font-size="10" font-weight="600" fill="#2c5282">Root</text>
+
+    <!-- Level 1 children -->
+    <line x1="120" y1="28" x2="40" y2="52" stroke="#a0aec0" stroke-width="1"/>
+    <line x1="120" y1="28" x2="120" y2="52" stroke="#a0aec0" stroke-width="1"/>
+    <line x1="120" y1="28" x2="200" y2="52" stroke="#a0aec0" stroke-width="1"/>
+    <rect x="6" y="52" width="68" height="24" rx="5" fill="url(#nodeGrad)" stroke="#3182ce" stroke-width="1"/>
+    <text x="40" y="68" text-anchor="middle" font-size="9" fill="#2c5282">0-0</text>
+    <rect x="86" y="52" width="68" height="24" rx="5" fill="url(#selectedGrad)" stroke="#38a169" stroke-width="1.2"/>
+    <text x="120" y="68" text-anchor="middle" font-size="9" font-weight="600" fill="#276749">0-1 (sel)</text>
+    <rect x="166" y="52" width="68" height="24" rx="5" fill="url(#nodeGrad)" stroke="#3182ce" stroke-width="1"/>
+    <text x="200" y="68" text-anchor="middle" font-size="9" fill="#2c5282">0-2</text>
+
+    <!-- Random simulation path (red dashed) -->
+    <line x1="120" y1="76" x2="90" y2="100" stroke="#e53e3e" stroke-width="1.5" stroke-dasharray="4,3"/>
+    <rect x="56" y="100" width="68" height="24" rx="5" fill="url(#oldGrad)" stroke="#e53e3e" stroke-width="1" stroke-dasharray="3,2"/>
+    <text x="90" y="116" text-anchor="middle" font-size="8" fill="#9b2c2c">random</text>
+
+    <line x1="90" y1="124" x2="60" y2="148" stroke="#e53e3e" stroke-width="1.5" stroke-dasharray="4,3"/>
+    <rect x="26" y="148" width="68" height="24" rx="5" fill="url(#oldGrad)" stroke="#e53e3e" stroke-width="1" stroke-dasharray="3,2"/>
+    <text x="60" y="164" text-anchor="middle" font-size="8" fill="#9b2c2c">random</text>
+
+    <line x1="60" y1="172" x2="40" y2="196" stroke="#e53e3e" stroke-width="1.5" stroke-dasharray="4,3"/>
+    <rect x="6" y="196" width="68" height="24" rx="5" fill="url(#oldGrad)" stroke="#e53e3e" stroke-width="1" stroke-dasharray="3,2"/>
+    <text x="40" y="212" text-anchor="middle" font-size="8" fill="#9b2c2c">random</text>
+
+    <!-- Dots -->
+    <text x="40" y="236" text-anchor="middle" font-size="12" fill="#e53e3e">...</text>
+
+    <!-- Cost label -->
+    <rect x="140" y="130" width="130" height="50" rx="6" fill="#fff5f5" stroke="#fc8181" stroke-width="1"/>
+    <text x="205" y="148" text-anchor="middle" font-size="9" font-weight="700" fill="#c53030">~6-7 random steps</text>
+    <text x="205" y="162" text-anchor="middle" font-size="9" fill="#c53030">per rollout ($$$)</text>
+    <text x="205" y="175" text-anchor="middle" font-size="8" fill="#9b2c2c">never backpropagated</text>
+    <line x1="140" y1="155" x2="100" y2="155" stroke="#e53e3e" stroke-width="1" marker-end="url(#arrowRed)"/>
+  </g>
+
+  <!-- Issue bullets -->
+  <g transform="translate(310, 130)" font-size="10">
+    <text x="0" y="0" font-weight="700" fill="#c53030">Issues identified:</text>
+    <circle cx="6" cy="16" r="2.5" fill="#e53e3e"/>
+    <text x="14" y="20" fill="#4a5568">Simulation nodes never backpropagated</text>
+    <circle cx="6" cy="34" r="2.5" fill="#e53e3e"/>
+    <text x="14" y="38" fill="#4a5568">Random child selection during sim</text>
+    <circle cx="6" cy="52" r="2.5" fill="#e53e3e"/>
+    <text x="14" y="56" fill="#4a5568"><tspan font-family="monospace" font-size="9">alpha=1.0</tspan> makes UCT ~random </text><a href="2510.21275v1.pdf"><text x="196" y="56" font-size="10" fill="#3182ce" text-decoration="underline">[31]</text></a>
+    <circle cx="6" cy="70" r="2.5" fill="#e53e3e"/>
+    <text x="14" y="74" fill="#4a5568">~60-70 explored nodes get no credit</text>
+    <circle cx="6" cy="88" r="2.5" fill="#e53e3e"/>
+    <text x="14" y="92" fill="#4a5568">Error nodes get reward=0, not penalty</text>
+
+    <rect x="-4" y="108" width="208" height="50" rx="5" fill="#fff5f5" stroke="#fc8181" stroke-width="1"/>
+    <text x="100" y="124" text-anchor="middle" font-size="9" font-weight="700" fill="#c53030">Deep sim is valuable for feature</text>
+    <text x="100" y="138" text-anchor="middle" font-size="9" font-weight="700" fill="#c53030">combinations — but results are</text>
+    <text x="100" y="152" text-anchor="middle" font-size="9" font-weight="700" fill="#c53030">discarded (not backpropagated)</text>
+
+    <rect x="-4" y="166" width="220" height="76" rx="5" fill="#f7fafc" stroke="#a0aec0" stroke-width="1"/>
+    <text x="106" y="181" text-anchor="middle" font-size="9" font-weight="600" fill="#4a5568">Grounding:</text>
+    <a href="https://doi.org/10.1109/TCIAIG.2012.2186810"><text x="4" y="196" font-size="8" fill="#3182ce" text-decoration="underline">Browne et al. 2012 [27] — MCTS survey</text></a>
+    <a href="2310.04406v2.pdf"><text x="4" y="209" font-size="8" fill="#3182ce" text-decoration="underline">LATS [25] — backprop all nodes</text></a>
+    <a href="AlphaGoZero-nature24270.pdf"><text x="4" y="222" font-size="8" fill="#3182ce" text-decoration="underline">AlphaGo Zero [28] — informed sim</text></a>
+    <a href="2510.21275v1.pdf"><text x="4" y="235" font-size="8" fill="#3182ce" text-decoration="underline">Schmocker et al. [31] — C scaling</text></a>
+  </g>
+
+  <!-- ============================================ -->
+  <!-- RIGHT SIDE: CTRA Optimized MCTS              -->
+  <!-- ============================================ -->
+  <rect x="560" y="72" width="520" height="340" rx="8" fill="white" stroke="#48bb78" stroke-width="1.5" filter="url(#shadowLg)"/>
+  <rect x="560" y="72" width="520" height="32" rx="8" fill="#48bb78"/>
+  <rect x="560" y="96" width="520" height="8" fill="#48bb78"/>
+  <text x="820" y="94" text-anchor="middle" fill="white" font-size="13" font-weight="700">CTRA OPTIMIZED MCTS — PARETO MULTI-OBJECTIVE + FIXES</text>
+
+  <!-- Cycle diagram -->
+  <g transform="translate(540, 120)">
+    <!-- SELECT box -->
+    <rect x="60" y="0" width="90" height="36" rx="8" fill="url(#selectedGrad)" stroke="#38a169" stroke-width="1.5" filter="url(#shadow)"/>
+    <text x="105" y="15" text-anchor="middle" font-size="10" font-weight="700" fill="#276749">1. SELECT</text>
+    <text x="105" y="28" text-anchor="middle" font-size="8" fill="#276749">Pareto UCB [32]</text>
+
+    <!-- Arrow select→expand -->
+    <line x1="150" y1="18" x2="168" y2="18" stroke="#38a169" stroke-width="1.5" marker-end="url(#arrowGreen)"/>
+
+    <!-- EXPAND box -->
+    <rect x="178" y="0" width="90" height="36" rx="8" fill="url(#expandGrad)" stroke="#d69e2e" stroke-width="1.5" filter="url(#shadow)"/>
+    <text x="223" y="15" text-anchor="middle" font-size="10" font-weight="700" fill="#744210">2. EXPAND</text>
+    <text x="223" y="28" text-anchor="middle" font-size="8" fill="#744210">Explore leaf</text>
+
+    <!-- Arrow expand→simulate -->
+    <line x1="268" y1="18" x2="286" y2="18" stroke="#38a169" stroke-width="1.5" marker-end="url(#arrowGreen)"/>
+
+    <!-- SIMULATE box -->
+    <rect x="296" y="0" width="90" height="36" rx="8" fill="#feebc8" stroke="#dd6b20" stroke-width="1.5" filter="url(#shadow)"/>
+    <text x="341" y="15" text-anchor="middle" font-size="10" font-weight="700" fill="#7b341e">3. SIMULATE</text>
+    <text x="341" y="28" text-anchor="middle" font-size="8" fill="#7b341e">Evaluate node</text>
+
+    <!-- Arrow simulate→backprop -->
+    <line x1="386" y1="18" x2="404" y2="18" stroke="#38a169" stroke-width="1.5" marker-end="url(#arrowGreen)"/>
+
+    <!-- BACKPROPAGATE box -->
+    <rect x="414" y="0" width="90" height="36" rx="8" fill="#e9d8fd" stroke="#805ad5" stroke-width="1.5" filter="url(#shadow)"/>
+    <text x="459" y="15" text-anchor="middle" font-size="10" font-weight="700" fill="#553c9a">4. BACKPROP</text>
+    <text x="459" y="28" text-anchor="middle" font-size="8" fill="#553c9a">All nodes</text>
+
+    <!-- Arrow backprop→select (loop — routes below) -->
+    <path d="M414,18 L414,52 L36,52 L36,18 L60,18" stroke="#38a169" stroke-width="1.5" fill="none" marker-end="url(#arrowGreen)"/>
+    <text x="225" y="66" text-anchor="middle" font-size="9" font-weight="600" fill="#38a169">repeat x30-50 rollouts</text>
+
+    <!-- Key fixes labels -->
+    <rect x="170" y="80" width="234" height="28" rx="5" fill="#f0fff4" stroke="#48bb78" stroke-width="1"/>
+    <text x="287" y="98" text-anchor="middle" font-size="8" font-weight="700" fill="#276749">Backprop ALL sim nodes (not just path) <a href="https://doi.org/10.1109/TCIAIG.2012.2186810"><tspan fill="#2c5282" text-decoration="underline">[27]</tspan></a></text>
+  </g>
+
+  <!-- Optimized tree -->
+  <g transform="translate(620, 230)">
+    <rect x="80" y="0" width="80" height="28" rx="6" fill="url(#nodeGrad)" stroke="#3182ce" stroke-width="1.2"/>
+    <text x="120" y="12" text-anchor="middle" font-size="9" font-weight="600" fill="#2c5282">Root</text>
+    <text x="120" y="23" text-anchor="middle" font-size="7" fill="#4a5568">Q=0.68 n=42</text>
+
+    <line x1="120" y1="28" x2="40" y2="52" stroke="#38a169" stroke-width="1.2"/>
+    <line x1="120" y1="28" x2="120" y2="52" stroke="#a0aec0" stroke-width="1"/>
+    <line x1="120" y1="28" x2="200" y2="52" stroke="#a0aec0" stroke-width="1"/>
+
+    <rect x="6" y="52" width="68" height="28" rx="5" fill="url(#selectedGrad)" stroke="#38a169" stroke-width="1.2"/>
+    <text x="40" y="64" text-anchor="middle" font-size="8" font-weight="600" fill="#276749">Add feat</text>
+    <text x="40" y="74" text-anchor="middle" font-size="7" fill="#276749">Q=0.71 n=18</text>
+
+    <rect x="86" y="52" width="68" height="28" rx="5" fill="url(#nodeGrad)" stroke="#3182ce" stroke-width="1"/>
+    <text x="120" y="64" text-anchor="middle" font-size="8" fill="#2c5282">Refine</text>
+    <text x="120" y="74" text-anchor="middle" font-size="7" fill="#4a5568">Q=0.66 n=14</text>
+
+    <rect x="166" y="52" width="68" height="28" rx="5" fill="url(#nodeGrad)" stroke="#3182ce" stroke-width="1"/>
+    <text x="200" y="64" text-anchor="middle" font-size="8" fill="#2c5282">Remove</text>
+    <text x="200" y="74" text-anchor="middle" font-size="7" fill="#4a5568">Q=0.64 n=10</text>
+
+    <!-- Deeper selected — spread apart to avoid overlap -->
+    <line x1="40" y1="80" x2="8" y2="106" stroke="#38a169" stroke-width="1.2"/>
+    <line x1="40" y1="80" x2="80" y2="106" stroke="#a0aec0" stroke-width="1"/>
+    <rect x="-24" y="106" width="64" height="24" rx="5" fill="url(#selectedGrad)" stroke="#38a169" stroke-width="1.2"/>
+    <text x="8" y="122" text-anchor="middle" font-size="7" font-weight="600" fill="#276749">Q=0.73 n=8</text>
+    <rect x="48" y="106" width="64" height="24" rx="5" fill="url(#nodeGrad)" stroke="#3182ce" stroke-width="1"/>
+    <text x="80" y="122" text-anchor="middle" font-size="7" fill="#4a5568">Q=0.69 n=6</text>
+
+    <!-- All nodes backpropagated label -->
+    <rect x="130" y="100" width="120" height="32" rx="5" fill="#f0fff4" stroke="#48bb78" stroke-width="1"/>
+    <text x="190" y="116" text-anchor="middle" font-size="9" font-weight="700" fill="#276749">All sim nodes</text>
+    <text x="190" y="128" text-anchor="middle" font-size="9" font-weight="700" fill="#276749">backpropagated</text>
+  </g>
+
+  <!-- Stats comparison -->
+  <g transform="translate(850, 230)">
+    <rect x="0" y="0" width="210" height="175" rx="6" fill="#f0fff4" stroke="#48bb78" stroke-width="1"/>
+    <text x="105" y="18" text-anchor="middle" font-size="10" font-weight="700" fill="#276749">Key Changes</text>
+    <line x1="10" y1="24" x2="200" y2="24" stroke="#c6f6d5" stroke-width="1"/>
+    <text x="12" y="42" font-size="9" fill="#4a5568">Selection:</text>
+    <text x="198" y="42" text-anchor="end" font-size="9" font-weight="700" fill="#276749">Pareto vector UCB [32]</text>
+    <text x="12" y="60" font-size="9" fill="#4a5568">Reward:</text>
+    <text x="198" y="60" text-anchor="end" font-size="9" font-weight="700" fill="#276749">2-obj vector (was scalar)</text>
+    <text x="12" y="78" font-size="9" fill="#4a5568">Branching:</text>
+    <text x="198" y="78" text-anchor="end" font-size="9" font-weight="700" fill="#276749">Adaptive GEN/CONT [33]</text>
+    <text x="12" y="96" font-size="9" fill="#4a5568">Sim backprop:</text>
+    <text x="198" y="96" text-anchor="end" font-size="9" font-weight="700" fill="#276749">All nodes (was path only)</text>
+    <line x1="10" y1="104" x2="200" y2="104" stroke="#c6f6d5" stroke-width="1"/>
+    <text x="12" y="122" font-size="9" fill="#4a5568">Output:</text>
+    <text x="198" y="122" text-anchor="end" font-size="9" font-weight="700" fill="#276749">Pareto front of feature sets</text>
+    <text x="12" y="140" font-size="9" fill="#4a5568">Convergence:</text>
+    <text x="198" y="140" text-anchor="end" font-size="9" font-weight="700" fill="#276749">Prevented (diversity forced)</text>
+  </g>
+
+  <!-- ============================================ -->
+  <!-- BOTTOM: Implemented Enhancements + Rejected   -->
+  <!-- ============================================ -->
+  <rect x="20" y="428" width="1060" height="385" rx="8" fill="white" stroke="#3182ce" stroke-width="1.5" filter="url(#shadowLg)"/>
+  <rect x="20" y="428" width="1060" height="32" rx="8" fill="#3182ce"/>
+  <rect x="20" y="452" width="1060" height="8" fill="#3182ce"/>
+  <text x="550" y="450" text-anchor="middle" fill="white" font-size="13" font-weight="700">IMPLEMENTED ENHANCEMENTS + REJECTED APPROACHES</text>
+
+  <!-- Column 1: Pareto MCTS + AB-MCTS (the two search-level enhancements) -->
+  <g transform="translate(30, 478)">
+    <rect x="0" y="0" width="340" height="315" rx="6" fill="#f0fff4" stroke="#48bb78" stroke-width="1.5"/>
+    <rect x="0" y="0" width="340" height="28" rx="6" fill="#48bb78"/>
+    <rect x="0" y="18" width="340" height="10" fill="#48bb78"/>
+    <text x="170" y="19" text-anchor="middle" fill="white" font-size="11" font-weight="700">Pareto MCTS + AB-MCTS (Implemented)</text>
+
+    <!-- Pareto section -->
+    <text x="8" y="48" font-size="9" font-weight="700" fill="#276749">Pareto Multi-Objective Search</text>
+    <text x="8" y="62" font-size="9" font-weight="600" fill="#2d3748">Source: <a href="https://doi.org/10.1002/advs.202410640"><tspan fill="#2c5282" text-decoration="underline">PMMG [32]</tspan></a></text>
+    <text x="8" y="78" font-size="9" fill="#4a5568">Replaces scalar UCB with vector UCB +</text>
+    <text x="8" y="91" font-size="9" fill="#4a5568">Pareto dominance pools. Two objectives:</text>
+    <circle cx="14" cy="107" r="2.5" fill="#48bb78"/>
+    <text x="22" y="111" font-size="9" fill="#4a5568">Accuracy: validation ROC-AUC</text>
+    <circle cx="14" cy="125" r="2.5" fill="#48bb78"/>
+    <text x="22" y="129" font-size="9" fill="#4a5568">Parsimony: 1 - n_features / max</text>
+    <text x="8" y="147" font-size="9" fill="#4a5568">Dominated children pruned; selection from</text>
+    <text x="8" y="160" font-size="9" fill="#4a5568">non-dominated pool forces diverse exploration.</text>
+
+    <!-- Divider -->
+    <line x1="10" y1="172" x2="330" y2="172" stroke="#c6f6d5" stroke-width="1"/>
+
+    <!-- AB-MCTS section -->
+    <text x="8" y="190" font-size="9" font-weight="700" fill="#276749">AB-MCTS Adaptive Branching</text>
+    <text x="8" y="204" font-size="9" font-weight="600" fill="#2d3748">Source: <a href="https://arxiv.org/abs/2503.04412"><tspan fill="#2c5282" text-decoration="underline">TreeQuest [33]</tspan></a> (NeurIPS 2025 Spotlight)</text>
+    <text x="8" y="220" font-size="9" fill="#4a5568">Dynamic branch factor per node:</text>
+    <rect x="15" y="228" width="310" height="24" rx="4" fill="white" stroke="#c6f6d5" stroke-width="1"/>
+    <text x="170" y="244" text-anchor="middle" font-size="9" font-family="monospace" fill="#276749">clamp(floor(log2(N)) + 2, min, max)</text>
+    <text x="8" y="268" font-size="9" fill="#4a5568">Promising nodes (high visits) expand wider;</text>
+    <text x="8" y="281" font-size="9" fill="#4a5568">rarely visited nodes stay narrow, saving budget.</text>
+
+    <text x="8" y="303" font-size="9" font-weight="600" fill="#276749">Pareto selects WHICH child; branching decides HOW MANY.</text>
+  </g>
+
+  <!-- Column 2: Component Attribution (BuilderDiagnostics) -->
+  <g transform="translate(385, 478)">
+    <rect x="0" y="0" width="310" height="315" rx="6" fill="#f0fff4" stroke="#48bb78" stroke-width="1.5"/>
+    <rect x="0" y="0" width="310" height="28" rx="6" fill="#48bb78"/>
+    <rect x="0" y="18" width="310" height="10" fill="#48bb78"/>
+    <text x="155" y="19" text-anchor="middle" fill="white" font-size="11" font-weight="700">BuilderDiagnostics (Implemented)</text>
+    <text x="8" y="48" font-size="9" font-weight="600" fill="#2d3748">Inspired by: <a href="2502.14693v3.pdf"><tspan fill="#2c5282" text-decoration="underline">I-MCTS [23]</tspan></a> + <a href="2506.04293v1.pdf"><tspan fill="#2c5282" text-decoration="underline">AutoCT [5]</tspan></a></text>
+    <text x="8" y="64" font-size="9" fill="#4a5568">Attributes feature failures to Researcher</text>
+    <text x="8" y="77" font-size="9" fill="#4a5568">(bad idea) vs Builder (bad execution).</text>
+
+    <!-- Pipeline boxes -->
+    <g transform="translate(15, 92)">
+      <rect x="0" y="0" width="120" height="24" rx="4" fill="#ebf8ff" stroke="#3182ce" stroke-width="1"/>
+      <text x="60" y="16" text-anchor="middle" font-size="7.5" font-weight="600" fill="#2c5282">Builder (Research)</text>
+      <text x="128" y="16" font-size="9" fill="#a0aec0">&#8594;</text>
+      <rect x="138" y="0" width="120" height="24" rx="4" fill="#ebf8ff" stroke="#3182ce" stroke-width="1"/>
+      <text x="198" y="16" text-anchor="middle" font-size="7.5" font-weight="600" fill="#2c5282">Builder (Construct)</text>
+
+      <rect x="40" y="36" width="190" height="24" rx="4" fill="#e9d8fd" stroke="#805ad5" stroke-width="1.2"/>
+      <text x="135" y="52" text-anchor="middle" font-size="7.5" font-weight="600" fill="#553c9a">Evaluator + BuilderDiagnostics</text>
+      <path d="M80,36 L60,24" stroke="#805ad5" stroke-width="1" fill="none" marker-end="url(#arrowGray)" stroke-dasharray="3,2"/>
+      <path d="M180,36 L198,24" stroke="#805ad5" stroke-width="1" fill="none" marker-end="url(#arrowGray)" stroke-dasharray="3,2"/>
+    </g>
+
+    <text x="8" y="175" font-size="9" font-weight="600" fill="#276749">Attribution heuristic:</text>
+    <circle cx="14" cy="191" r="2" fill="#48bb78"/>
+    <text x="22" y="195" font-size="8.5" fill="#4a5568">RESEARCHER: none_rate &gt; 0.8</text>
+    <text x="22" y="208" font-size="8.5" fill="#4a5568">AND research_coverage &lt; 0.3</text>
+    <circle cx="14" cy="223" r="2" fill="#48bb78"/>
+    <text x="22" y="227" font-size="8.5" fill="#4a5568">BUILDER: none_rate &gt; 0.3</text>
+    <text x="22" y="240" font-size="8.5" fill="#4a5568">AND research_coverage &gt; 0.5</text>
+
+    <text x="8" y="264" font-size="9" font-weight="600" fill="#276749">Effect:</text>
+    <text x="8" y="278" font-size="9" fill="#4a5568">Evaluator targets root cause — refine</text>
+    <text x="8" y="291" font-size="9" fill="#4a5568">RAG query (Researcher) or feature def</text>
+    <text x="8" y="304" font-size="9" fill="#4a5568">(Builder), not blind mutations.</text>
+  </g>
+
+  <!-- Column 3: Rejected: Hybrid Value -->
+  <g transform="translate(710, 478)">
+    <rect x="0" y="0" width="350" height="315" rx="6" fill="#fff5f5" stroke="#fc8181" stroke-width="1"/>
+    <rect x="0" y="0" width="350" height="28" rx="6" fill="#e53e3e"/>
+    <rect x="0" y="18" width="350" height="10" fill="#e53e3e"/>
+    <text x="175" y="19" text-anchor="middle" fill="white" font-size="11" font-weight="700">Rejected: Hybrid Value Model</text>
+    <text x="8" y="48" font-size="9" font-weight="600" fill="#2d3748">Source: <a href="2502.14693v3.pdf"><tspan fill="#2c5282" text-decoration="underline">I-MCTS [23]</tspan></a></text>
+    <text x="8" y="64" font-size="9" fill="#4a5568">LLM pre-scores nodes before execution.</text>
+    <text x="8" y="77" font-size="9" fill="#4a5568">Blends LLM estimate with actual score.</text>
+
+    <text x="8" y="100" font-size="9" font-weight="700" fill="#c53030">Why rejected for CTRA:</text>
+
+    <circle cx="14" cy="118" r="2" fill="#e53e3e"/>
+    <text x="22" y="122" font-size="9" fill="#4a5568">LLMs 30%+ miscalibrated on</text>
+    <text x="22" y="135" font-size="9" fill="#4a5568">biomedical tasks (PMC 2025)</text>
+
+    <circle cx="14" cy="151" r="2" fill="#e53e3e"/>
+    <text x="22" y="155" font-size="9" fill="#4a5568">Inverse confidence-accuracy in</text>
+    <text x="22" y="168" font-size="9" fill="#4a5568">clinical domains (JMIR 2025)</text>
+
+    <circle cx="14" cy="184" r="2" fill="#e53e3e"/>
+    <text x="22" y="188" font-size="9" fill="#4a5568">I-MCTS ablation: +0.6 pts at r=10</text>
+    <text x="22" y="201" font-size="9" fill="#4a5568">even on generic data</text>
+
+    <circle cx="14" cy="217" r="2" fill="#e53e3e"/>
+    <text x="22" y="221" font-size="9" fill="#4a5568">SEA-TS explicitly rejected LLM scoring</text>
+
+    <circle cx="14" cy="237" r="2" fill="#e53e3e"/>
+    <text x="22" y="241" font-size="9" fill="#4a5568">Tested on Kaggle only, never clinical</text>
+
+    <text x="175" y="268" text-anchor="middle" font-size="9" font-weight="700" fill="#c53030">SELA &#8594; I-MCTS &#8594; SEA-TS: trend away</text>
+
+    <line x1="10" y1="278" x2="340" y2="278" stroke="#fecaca" stroke-width="1"/>
+    <text x="8" y="296" font-size="8.5" font-weight="600" fill="#718096">Also evaluated, not implemented:</text>
+    <text x="8" y="310" font-size="8.5" fill="#718096">Introspective sibling (I-MCTS), MA-MCTS z-score (SEA-TS)</text>
+  </g>
+</svg>

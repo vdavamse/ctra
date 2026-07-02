@@ -1,0 +1,296 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 1050" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+  <defs>
+    <filter id="sh" x="-4%" y="-4%" width="108%" height="108%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.1"/>
+    </filter>
+    <linearGradient id="gPurp" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#8B5CF6"/><stop offset="100%" style="stop-color:#7C3AED"/>
+    </linearGradient>
+    <linearGradient id="gBlue" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3B82F6"/><stop offset="100%" style="stop-color:#2563EB"/>
+    </linearGradient>
+    <linearGradient id="gTeal" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#14B8A6"/><stop offset="100%" style="stop-color:#0D9488"/>
+    </linearGradient>
+    <linearGradient id="gAmber" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#F59E0B"/><stop offset="100%" style="stop-color:#D97706"/>
+    </linearGradient>
+    <linearGradient id="gRose" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#F43F5E"/><stop offset="100%" style="stop-color:#E11D48"/>
+    </linearGradient>
+    <linearGradient id="gGreen" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#22C55E"/><stop offset="100%" style="stop-color:#16A34A"/>
+    </linearGradient>
+    <linearGradient id="gSlate" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#475569"/><stop offset="100%" style="stop-color:#334155"/>
+    </linearGradient>
+    <linearGradient id="gIndigo" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#6366F1"/><stop offset="100%" style="stop-color:#4F46E5"/>
+    </linearGradient>
+    <marker id="aG" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#94A3B8"/>
+    </marker>
+    <marker id="aP" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#8B5CF6"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1100" height="1050" rx="12" fill="#F8FAFC"/>
+
+  <!-- Title -->
+  <text x="550" y="36" text-anchor="middle" font-size="22" font-weight="700" fill="#0F172A">CTRA — Feature Generation Pipeline (Initial / Iteration 0)</text>
+  <text x="550" y="55" text-anchor="middle" font-size="12" fill="#64748B">Initializer pipeline — how the initial feature set is created before MCTS search begins</text>
+
+  <!-- ================================================================ -->
+  <!-- STEP 1: ZERO-SHOT BRAINSTORMING                                  -->
+  <!-- ================================================================ -->
+
+  <circle cx="42" cy="100" r="20" fill="url(#gPurp)" filter="url(#sh)"/>
+  <text x="42" y="106" text-anchor="middle" font-size="13" font-weight="700" fill="white">1</text>
+
+  <rect x="72" y="75" width="1000" height="65" rx="10" fill="#FAF5FF" stroke="#DDD6FE" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="92" y="97" font-size="13" font-weight="700" fill="#7C3AED">Zero-Shot Brainstorming</text>
+  <text x="276" y="97" font-size="11" fill="#A78BFA">— LLM parametric knowledge only, no data</text>
+
+  <rect x="92" y="108" width="180" height="22" rx="5" fill="url(#gPurp)"/>
+  <text x="182" y="123" text-anchor="middle" font-size="10" font-weight="500" fill="white">Task: "Predict trial outcome"</text>
+
+  <text x="290" y="123" font-size="11" fill="#94A3B8">→</text>
+
+  <rect x="308" y="108" width="750" height="22" rx="5" fill="white" stroke="#DDD6FE" stroke-width="1"/>
+  <text x="683" y="123" text-anchor="middle" font-size="10" fill="#7C3AED">Output: ~10 feature ideas from LLM knowledge — trial_phase, enrollment_count, sponsor_type, num_endpoints, ...</text>
+
+  <!-- Arrow down -->
+  <line x1="550" y1="140" x2="550" y2="158" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aG)"/>
+
+  <!-- ================================================================ -->
+  <!-- STEP 2: FACTOR ANALYSIS                                          -->
+  <!-- ================================================================ -->
+
+  <circle cx="42" cy="230" r="20" fill="url(#gAmber)" filter="url(#sh)"/>
+  <text x="42" y="236" text-anchor="middle" font-size="13" font-weight="700" fill="white">2</text>
+
+  <rect x="72" y="162" width="1000" height="165" rx="10" fill="#FFFBEB" stroke="#FDE68A" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="92" y="184" font-size="13" font-weight="700" fill="#D97706">Factor Analysis on Example Trials</text>
+  <text x="380" y="184" font-size="11" fill="#F59E0B">— TrialBench labels + RAG explain WHY trials succeed or fail</text>
+
+  <!-- Row 1: inputs -->
+  <rect x="92" y="198" width="175" height="55" rx="7" fill="url(#gSlate)" filter="url(#sh)"/>
+  <text x="179" y="216" text-anchor="middle" font-size="10" font-weight="600" fill="white">TrialBench Labels</text>
+  <text x="179" y="231" text-anchor="middle" font-size="9" fill="#94F990">NCT00048204 → 1 (success)</text>
+  <text x="179" y="244" text-anchor="middle" font-size="9" fill="#FCA5A5">NCT00266799 → 0 (failure)</text>
+
+  <text x="280" y="228" font-size="14" fill="#D97706">→</text>
+
+  <rect x="298" y="198" width="130" height="55" rx="7" fill="white" stroke="#FDE68A" stroke-width="1.5"/>
+  <text x="363" y="218" text-anchor="middle" font-size="10" font-weight="600" fill="#92400E">Sample 3+3</text>
+  <text x="363" y="233" text-anchor="middle" font-size="9" fill="#22C55E">3 successes</text>
+  <text x="363" y="248" text-anchor="middle" font-size="9" fill="#F43F5E">3 failures</text>
+
+  <text x="442" y="228" font-size="14" fill="#D97706">→</text>
+
+  <rect x="462" y="198" width="275" height="55" rx="7" fill="url(#gAmber)" filter="url(#sh)"/>
+  <text x="599" y="216" text-anchor="middle" font-size="10" font-weight="600" fill="white">For each trial: ReAct Agent</text>
+  <text x="599" y="232" text-anchor="middle" font-size="9" fill="#FEF3C7">Look up trial → search PubMed + NCT</text>
+  <text x="599" y="246" text-anchor="middle" font-size="9" fill="#FEF3C7">"What factors drove this outcome?"</text>
+
+  <rect x="752" y="198" width="155" height="55" rx="7" fill="url(#gTeal)" filter="url(#sh)"/>
+  <text x="829" y="216" text-anchor="middle" font-size="10" font-weight="600" fill="white">RAG Sources</text>
+  <text x="829" y="232" text-anchor="middle" font-size="9" fill="#CCFBF1">7 sources via LinearRAG</text>
+  <text x="829" y="246" text-anchor="middle" font-size="9" fill="#CCFBF1">+ GLiNER-BioMed NER</text>
+
+  <text x="920" y="228" font-size="14" fill="#D97706">→</text>
+
+  <rect x="940" y="198" width="120" height="55" rx="7" fill="white" stroke="#FDE68A" stroke-width="1.5"/>
+  <text x="1000" y="216" text-anchor="middle" font-size="10" font-weight="600" fill="#92400E">Factors</text>
+  <text x="1000" y="232" text-anchor="middle" font-size="8.5" fill="#B45309">"Drug class had</text>
+  <text x="1000" y="244" text-anchor="middle" font-size="8.5" fill="#B45309">prior success"</text>
+
+  <!-- Row 2: factor-based features output -->
+  <rect x="92" y="268" width="968" height="45" rx="7" fill="white" stroke="#FDE68A" stroke-width="1.5"/>
+  <text x="110" y="288" font-size="10" font-weight="600" fill="#92400E">Factor-Based Feature Ideas:</text>
+  <text x="310" y="288" font-size="10" fill="#B45309">LLM converts 6 trial analyses into generalizable feature proposals</text>
+  <text x="550" y="305" text-anchor="middle" font-size="9.5" fill="#8B5CF6">prior_drug_class_success_rate, enrollment_feasibility, endpoint_complexity, adverse_event_history, ...</text>
+
+  <!-- Arrow down -->
+  <line x1="550" y1="327" x2="550" y2="345" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aG)"/>
+
+  <!-- ================================================================ -->
+  <!-- STEP 3: COMBINE + DEDUPLICATE                                    -->
+  <!-- ================================================================ -->
+
+  <circle cx="42" cy="375" r="20" fill="url(#gIndigo)" filter="url(#sh)"/>
+  <text x="42" y="381" text-anchor="middle" font-size="13" font-weight="700" fill="white">3</text>
+
+  <rect x="72" y="349" width="1000" height="65" rx="10" fill="#EEF2FF" stroke="#C7D2FE" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="92" y="371" font-size="13" font-weight="700" fill="#4F46E5">Combine and Deduplicate</text>
+  <text x="302" y="371" font-size="11" fill="#818CF8">— LLM merges zero-shot + factor-based ideas into non-overlapping set</text>
+
+  <rect x="92" y="380" width="140" height="22" rx="5" fill="#FAF5FF" stroke="#DDD6FE" stroke-width="1"/>
+  <text x="162" y="395" text-anchor="middle" font-size="9.5" fill="#7C3AED">~10 zero-shot ideas</text>
+
+  <text x="240" y="395" font-size="10" fill="#4F46E5">+</text>
+
+  <rect x="258" y="380" width="160" height="22" rx="5" fill="#FFFBEB" stroke="#FDE68A" stroke-width="1"/>
+  <text x="338" y="395" text-anchor="middle" font-size="9.5" fill="#92400E">~8 factor-based ideas</text>
+
+  <text x="430" y="395" font-size="10" fill="#4F46E5">=</text>
+
+  <rect x="448" y="380" width="610" height="22" rx="5" fill="white" stroke="#C7D2FE" stroke-width="1.5"/>
+  <text x="753" y="395" text-anchor="middle" font-size="10" font-weight="600" fill="#4F46E5">~10 unique, deduplicated feature definitions ready for planning</text>
+
+  <!-- Arrow down -->
+  <line x1="550" y1="414" x2="550" y2="432" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aG)"/>
+
+  <!-- ================================================================ -->
+  <!-- STEP 4: FEATURE PLANNING                                         -->
+  <!-- ================================================================ -->
+
+  <circle cx="42" cy="495" r="20" fill="url(#gBlue)" filter="url(#sh)"/>
+  <text x="42" y="501" text-anchor="middle" font-size="13" font-weight="700" fill="white">4</text>
+
+  <rect x="72" y="436" width="1000" height="135" rx="10" fill="#EFF6FF" stroke="#BFDBFE" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="92" y="458" font-size="13" font-weight="700" fill="#2563EB">Feature Planning</text>
+  <text x="243" y="458" font-size="11" fill="#60A5FA">— LLM creates a structured FeaturePlan for each feature</text>
+
+  <!-- Plan cards -->
+  <rect x="92" y="470" width="300" height="90" rx="7" fill="white" stroke="#BFDBFE" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="110" y="487" font-size="10" font-weight="700" fill="#1E40AF">trial_phase</text>
+  <text x="110" y="501" font-size="9" fill="#3B82F6">type: {"value": categorical}</text>
+  <text x="110" y="514" font-size="9" fill="#3B82F6">values: ["Phase 1", "Phase 2", "Phase 3", "Phase 4"]</text>
+  <text x="110" y="527" font-size="9" fill="#3B82F6">sources: [current_trial_summary]</text>
+  <text x="110" y="540" font-size="9" fill="#3B82F6">instructions: "Look up phase from protocol section..."</text>
+
+  <rect x="407" y="470" width="300" height="90" rx="7" fill="white" stroke="#BFDBFE" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="425" y="487" font-size="10" font-weight="700" fill="#1E40AF">prior_drug_class_success</text>
+  <text x="425" y="501" font-size="9" fill="#3B82F6">type: {"value": boolean, "rate": float}</text>
+  <text x="425" y="514" font-size="9" fill="#3B82F6">values: {}</text>
+  <text x="425" y="527" font-size="9" fill="#3B82F6">sources: [related_clinical_trials, pubmed]</text>
+  <text x="425" y="540" font-size="9" fill="#3B82F6">instructions: "Search NCT for prior trials..."</text>
+
+  <rect x="722" y="470" width="338" height="90" rx="7" fill="white" stroke="#BFDBFE" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="740" y="487" font-size="10" font-weight="700" fill="#1E40AF">enrollment_count</text>
+  <text x="740" y="501" font-size="9" fill="#3B82F6">type: {"value": integer}</text>
+  <text x="740" y="514" font-size="9" fill="#3B82F6">values: {}</text>
+  <text x="740" y="527" font-size="9" fill="#3B82F6">sources: [current_trial_summary]</text>
+  <text x="740" y="540" font-size="9" fill="#3B82F6">instructions: "Extract target enrollment..."</text>
+
+  <!-- Arrow down -->
+  <line x1="550" y1="571" x2="550" y2="589" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aG)"/>
+
+  <!-- ================================================================ -->
+  <!-- STEP 5: FEATURE BUILDING                                         -->
+  <!-- ================================================================ -->
+
+  <circle cx="42" cy="660" r="20" fill="url(#gGreen)" filter="url(#sh)"/>
+  <text x="42" y="666" text-anchor="middle" font-size="13" font-weight="700" fill="white">5</text>
+
+  <rect x="72" y="593" width="1000" height="155" rx="10" fill="#F0FDF4" stroke="#BBF7D0" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="92" y="615" font-size="13" font-weight="700" fill="#16A34A">Feature Building</text>
+  <text x="236" y="615" font-size="11" fill="#22C55E">— For EVERY trial: LLM extracts values per feature plan via RAG</text>
+
+  <!-- Process flow -->
+  <rect x="92" y="630" width="155" height="50" rx="7" fill="url(#gSlate)" filter="url(#sh)"/>
+  <text x="169" y="650" text-anchor="middle" font-size="10" font-weight="600" fill="white">Each trial</text>
+  <text x="169" y="665" text-anchor="middle" font-size="8.5" fill="#CBD5E1">100-500 trials in parallel</text>
+  <text x="169" y="676" text-anchor="middle" font-size="8.5" fill="#CBD5E1">via ProcessPoolExecutor</text>
+
+  <text x="258" y="658" font-size="14" fill="#22C55E">→</text>
+
+  <rect x="275" y="630" width="175" height="50" rx="7" fill="url(#gGreen)" filter="url(#sh)"/>
+  <text x="362" y="650" text-anchor="middle" font-size="10" font-weight="600" fill="white">FeatureBuilder (Research)</text>
+  <text x="362" y="665" text-anchor="middle" font-size="9" fill="#DCFCE7">ReAct agent gathers</text>
+  <text x="362" y="676" text-anchor="middle" font-size="9" fill="#DCFCE7">evidence via RAG tools</text>
+
+  <text x="462" y="658" font-size="14" fill="#22C55E">→</text>
+
+  <rect x="480" y="630" width="175" height="50" rx="7" fill="url(#gGreen)" filter="url(#sh)"/>
+  <text x="567" y="650" text-anchor="middle" font-size="10" font-weight="600" fill="white">FeatureBuilder (Construct)</text>
+  <text x="567" y="665" text-anchor="middle" font-size="9" fill="#DCFCE7">Converts evidence</text>
+  <text x="567" y="676" text-anchor="middle" font-size="9" fill="#DCFCE7">into structured JSON</text>
+
+  <text x="667" y="658" font-size="14" fill="#22C55E">→</text>
+
+  <rect x="685" y="625" width="375" height="68" rx="7" fill="white" stroke="#BBF7D0" stroke-width="2" filter="url(#sh)"/>
+  <text x="702" y="645" font-size="9.5" font-weight="700" fill="#166534">NCT00266799:</text>
+  <text x="702" y="660" font-size="9" fill="#16A34A" font-family="monospace">{"trial_phase": {"value": "Phase 2"},</text>
+  <text x="702" y="673" font-size="9" fill="#16A34A" font-family="monospace"> "enrollment_count": {"value": 450},</text>
+  <text x="702" y="686" font-size="9" fill="#16A34A" font-family="monospace"> "prior_success": {"value": true, "rate": 0.83}}</text>
+
+  <!-- RAG connection -->
+  <rect x="275" y="695" width="380" height="28" rx="6" fill="url(#gTeal)" filter="url(#sh)"/>
+  <text x="465" y="713" text-anchor="middle" font-size="10" font-weight="500" fill="white">LinearRAG: CTG + PubMed + ChEMBL + FAERS + AACT + PrimeKG + Drugs@FDA</text>
+
+  <line x1="362" y1="680" x2="362" y2="692" stroke="#14B8A6" stroke-width="1.5"/>
+
+  <text x="750" y="735" text-anchor="middle" font-size="9" fill="#166534">Repeated for every trial — cached with diskcache to avoid redundant LLM calls</text>
+
+  <!-- Arrow down -->
+  <line x1="550" y1="748" x2="550" y2="766" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#aG)"/>
+
+  <!-- ================================================================ -->
+  <!-- STEP 6: OUTPUT                                                   -->
+  <!-- ================================================================ -->
+
+  <circle cx="42" cy="810" r="20" fill="url(#gRose)" filter="url(#sh)"/>
+  <text x="42" y="816" text-anchor="middle" font-size="13" font-weight="700" fill="white">6</text>
+
+  <rect x="72" y="770" width="1000" height="95" rx="10" fill="#FFF1F2" stroke="#FECDD3" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="92" y="792" font-size="13" font-weight="700" fill="#E11D48">Output: Tabular DataFrame</text>
+  <text x="316" y="792" font-size="11" fill="#FB7185">— features_to_df() → ready for XGBoost / TabPFN</text>
+
+  <!-- Table header -->
+  <rect x="92" y="803" width="968" height="20" rx="4" fill="#FFF1F2" stroke="#FECDD3" stroke-width="1"/>
+  <text x="120" y="817" font-size="9" font-weight="700" fill="#9F1239">id</text>
+  <text x="230" y="817" font-size="9" font-weight="700" fill="#9F1239">trial_phase--value</text>
+  <text x="400" y="817" font-size="9" font-weight="700" fill="#9F1239">enrollment--value</text>
+  <text x="560" y="817" font-size="9" font-weight="700" fill="#9F1239">prior_success--value</text>
+  <text x="730" y="817" font-size="9" font-weight="700" fill="#9F1239">prior_success--rate</text>
+  <text x="890" y="817" font-size="9" font-weight="700" fill="#9F1239">drug_mech--type</text>
+  <text x="1030" y="817" font-size="9" font-weight="700" fill="#9F1239">...</text>
+
+  <!-- Table data rows -->
+  <rect x="92" y="823" width="968" height="17" rx="0" fill="white" stroke="#FECDD3" stroke-width="0.5"/>
+  <text x="120" y="835" font-size="8.5" fill="#64748B">NCT00266799</text>
+  <text x="230" y="835" font-size="8.5" fill="#64748B">Phase 2</text>
+  <text x="400" y="835" font-size="8.5" fill="#64748B">450</text>
+  <text x="560" y="835" font-size="8.5" fill="#64748B">True</text>
+  <text x="730" y="835" font-size="8.5" fill="#64748B">0.83</text>
+  <text x="890" y="835" font-size="8.5" fill="#64748B">small_molecule</text>
+  <text x="1030" y="835" font-size="8.5" fill="#64748B">...</text>
+
+  <rect x="92" y="840" width="968" height="17" rx="0" fill="#FEFCE8" stroke="#FECDD3" stroke-width="0.5"/>
+  <text x="120" y="852" font-size="8.5" fill="#64748B">NCT00471692</text>
+  <text x="230" y="852" font-size="8.5" fill="#64748B">Phase 3</text>
+  <text x="400" y="852" font-size="8.5" fill="#64748B">200</text>
+  <text x="560" y="852" font-size="8.5" fill="#64748B">False</text>
+  <text x="730" y="852" font-size="8.5" fill="#64748B">0.42</text>
+  <text x="890" y="852" font-size="8.5" fill="#64748B">biologic</text>
+  <text x="1030" y="852" font-size="8.5" fill="#64748B">...</text>
+
+  <!-- ================================================================ -->
+  <!-- Footer                                                           -->
+  <!-- ================================================================ -->
+
+  <text x="550" y="905" text-anchor="middle" font-size="11" fill="#94A3B8">CTRA — Clinical Trial Risk Assessment | Feature Generation Pipeline (Initial)</text>
+  <text x="550" y="922" text-anchor="middle" font-size="10" fill="#CBD5E1">Steps 1-7 run once at MCTS root node (iteration 0)</text>
+
+  <!-- Legend -->
+  <rect x="190" y="945" width="10" height="10" rx="2" fill="#8B5CF6"/>
+  <text x="205" y="955" font-size="9" fill="#64748B">Zero-shot</text>
+  <rect x="278" y="945" width="10" height="10" rx="2" fill="#F59E0B"/>
+  <text x="293" y="955" font-size="9" fill="#64748B">Factor Analysis</text>
+  <rect x="400" y="945" width="10" height="10" rx="2" fill="#6366F1"/>
+  <text x="415" y="955" font-size="9" fill="#64748B">Combine</text>
+  <rect x="488" y="945" width="10" height="10" rx="2" fill="#3B82F6"/>
+  <text x="503" y="955" font-size="9" fill="#64748B">Planning</text>
+  <rect x="575" y="945" width="10" height="10" rx="2" fill="#22C55E"/>
+  <text x="590" y="955" font-size="9" fill="#64748B">Building</text>
+  <rect x="655" y="945" width="10" height="10" rx="2" fill="#14B8A6"/>
+  <text x="670" y="955" font-size="9" fill="#64748B">RAG</text>
+  <rect x="715" y="945" width="10" height="10" rx="2" fill="#F43F5E"/>
+  <text x="730" y="955" font-size="9" fill="#64748B">Output</text>
+  <rect x="780" y="945" width="10" height="10" rx="2" fill="#475569"/>
+  <text x="795" y="955" font-size="9" fill="#64748B">Data</text>
+</svg>
