@@ -1,7 +1,7 @@
 
 # CTRA — Clinical Trial Risk Assessment
 
-An implementation project for clinical trial outcome prediction (success/failure), built on published state-of-the-art research. The primary approach is AutoCT — LLM agents that autonomously engineer interpretable tabular features, evaluated with classical ML (XGBoost, TabPFN) and explained via SHAP. The LLM backbone will be Claude Opus 4.6 with LinearRAG for multi-hop retrieval across 7 data sources: ClinicalTrials.gov, PubMed, ChEMBL, FAERS, AACT, PrimeKG, and Drugs@FDA. Named entity recognition uses GLiNER-BioMed [[34]](#ref-34) for zero-shot biomedical NER with 16 entity types. Other published models (HINT, MEXA-CTP, LIFTED, CLaDMoP) serve as research context and validation baselines.
+An implementation project for clinical trial outcome prediction (success/failure), built on published state-of-the-art research. The primary approach is AutoCT — LLM agents that autonomously engineer interpretable tabular features, evaluated with classical ML (XGBoost, TabPFN) and explained via SHAP. The LLM backbone will be GLM 5.2 (z.ai) with LinearRAG for multi-hop retrieval across 7 data sources: ClinicalTrials.gov, PubMed, ChEMBL, FAERS, AACT, PrimeKG, and Drugs@FDA. Named entity recognition uses GLiNER-BioMed [[34]](#ref-34) for zero-shot biomedical NER with 16 entity types. Other published models (HINT, MEXA-CTP, LIFTED, CLaDMoP) serve as research context and validation baselines.
 
 ---
 
@@ -43,7 +43,7 @@ Recent research has demonstrated that trial outcomes (success/failure) can be pr
 
 \*AutoCT is evaluated on TrialBench (not TOP) — results are not directly comparable to the TOP benchmark models above. Additional metrics: ROC-AUC 0.753 / 0.639 / 0.702 and PR-AUC 0.710 / 0.512 / 0.697 for Phase I / II / III. Highest Phase I PR-AUC (0.710) on TrialBench. Full shapiq interaction-level interpretability via classical ML (XGBoost, TabPFN).
 
-**CTRA focuses on AutoCT** for its combination of interpretability, low infrastructure complexity, and competitive accuracy. Key enhancements over the published approach: LLM backbone upgrade from gpt-4o-mini to **Claude Opus 4.6**, **LinearRAG** for multi-hop retrieval (replacing pgvector/txtai), **TabPFN** as an additional classifier (100% win rate vs XGBoost on small datasets), and expanded data sources (**ChEMBL** for drug/target data, **FAERS/OpenFDA** for safety signals, **AACT** for population-level statistics, **PrimeKG** for biological knowledge, **Drugs@FDA** for approval history). The deep learning models above serve as performance baselines on the TOP benchmark.
+**CTRA focuses on AutoCT** for its combination of interpretability, low infrastructure complexity, and competitive accuracy. Key enhancements over the published approach: LLM backbone upgrade from gpt-4o-mini to **GLM 5.2** (z.ai), **LinearRAG** for multi-hop retrieval (replacing pgvector/txtai), **TabPFN** as an additional classifier (100% win rate vs XGBoost on small datasets), and expanded data sources (**ChEMBL** for drug/target data, **FAERS/OpenFDA** for safety signals, **AACT** for population-level statistics, **PrimeKG** for biological knowledge, **Drugs@FDA** for approval history). The deep learning models above serve as performance baselines on the TOP benchmark.
 
 These are not theoretical — the code is published, the benchmarks are reproducible, and the models run on standard hardware. **The gap is implementation, not research.**
 
@@ -215,7 +215,7 @@ curl -X POST http://localhost:8000/api/v1/predict/batch \
 - **Interpretability:** shapiq interaction values (k-SII for XGBoost, FSII for TabPFN) quantify both main effects and pairwise feature interactions — every prediction is auditable on human-readable features. BuilderDiagnostics attribute failures to Researcher (bad feature idea) vs Builder (bad execution) for targeted MCTS feedback
 - **Label leakage prevention:** Date-filtered retrieval ensures all evidence predates the trial's start date
 
-**LLM backbone:** Currently gpt-4o-mini. CTRA upgrades to **Claude Opus 4.6** (via AWS Bedrock) for stronger reasoning, better feature extraction, and more reliable structured output.
+**LLM backbone:** Currently gpt-4o-mini. CTRA upgrades to **GLM 5.2** (via the z.ai API) for stronger reasoning, better feature extraction, and more reliable structured output.
 
 **RAG backend:** The published implementation uses pgvector + txtai (PubMedBERT embeddings) with single-hop semantic search over PubMed and ClinicalTrials.gov. CTRA replaces this with **LinearRAG** [[22]](#ref-22) for multi-hop retrieval via Personalized PageRank over an entity co-occurrence graph. Zero LLM cost during indexing. Entity extraction uses **GLiNER-BioMed** [[34]](#ref-34) — a zero-shot biomedical NER model that extracts 16 entity types (Drug, Disease, Gene or protein, Mechanism of action, Clinical endpoint, Adverse event, Biomarker, etc.) specified at runtime. Drug synonym expansion at query time uses ChEMBL synonym tables to bridge brand/generic/research-code name fragmentation (e.g., "Keytruda" → seeds PPR from both the "Keytruda" and "Pembrolizumab" graph nodes).
 
@@ -331,7 +331,7 @@ CLIP-inspired two-branch architecture designed for generalization to unseen dise
 | **Complexity** | High | Medium | High | Medium | Low (classical ML) |
 
 **Implementation approach:**
-1. **AutoCT** (PRIMARY) — interpretable, low complexity, competitive accuracy; enhanced with Claude Opus 4.6, LinearRAG, XGBoost + TabPFN, Pareto MCTS, ChEMBL + FAERS + AACT + PrimeKG + Drugs@FDA data sources
+1. **AutoCT** (PRIMARY) — interpretable, low complexity, competitive accuracy; enhanced with GLM 5.2, LinearRAG, XGBoost + TabPFN, Pareto MCTS, ChEMBL + FAERS + AACT + PrimeKG + Drugs@FDA data sources
 2. **HINT** — reproduce as baseline for TOP benchmark comparison
 3. **MEXA-CTP** — TOP benchmark SOTA, validation baseline
 4. **LIFTED** — reference for maximum deep learning accuracy
@@ -597,6 +597,6 @@ Additional papers informing the approach (not direct implementations):
 - [MCTS Implementation Design](./research/mcts-implementation-design.md) — Pareto fitness MVP, head-to-head plan, augmentation stack, code-level design
 - [MCTS Validation Report](./research/mcts-validation-report.md) — Independent verification of all claims in the MCTS research notes
 - [LLM-FE Analysis](./research/llm-fe-analysis.md) — Deep dive into LLM-FE evolutionary feature engineering: 3-island model, Boltzmann sampling, 20-evaluation budget
-- [Implementation Plan](./research/implementation-plan.md) — Comprehensive 7-workstream implementation plan: notebook migration, XGBoost+TabPFN, LinearRAG, Opus 4.6, MCTS improvements, datasets, rollouts
+- [Implementation Plan](./research/implementation-plan.md) — Comprehensive 7-workstream implementation plan: notebook migration, XGBoost+TabPFN, LinearRAG, GLM 5.2, MCTS improvements, datasets, rollouts
 - [Feature Extraction Optimization](./research/feature-extraction-optimization.md) — Global feature value store for cross-branch reuse, optimization analysis
 - [Open Questions](./research/open-questions.md) — Internal data generalization, biologics, concept drift, interpretability, multi-document protocols
