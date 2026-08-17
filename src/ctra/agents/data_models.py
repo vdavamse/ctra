@@ -8,6 +8,7 @@ All agent modules import from this file to avoid circular dependencies.
 
 from __future__ import annotations
 
+import logging
 import sys
 from dataclasses import dataclass, field, fields, replace
 
@@ -24,6 +25,8 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 if TYPE_CHECKING:
     import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -325,5 +328,26 @@ class AgentOutput:
         return self.eval_outputs[best_name], self.test_eval_outputs[best_name]
 
     def get_next_suggestion(self) -> str:
-        """Return the suggestion at ``suggestion_index`` from the best model (AutoCT line 294)."""
-        return self.get_best_eval_output()[0].suggestions[self.suggestion_index]
+        """Return the suggestion at ``suggestion_index`` from the best model (AutoCT line 294).
+
+        Bounds-safe: if ``suggestion_index`` is out of range, clamp to [0, len-1]
+        and log a warning. Raise ``ValueError`` if there are no suggestions at all.
+        """
+        eval_output, _ = self.get_best_eval_output()
+        suggestions = eval_output.suggestions
+
+        if not suggestions:
+            raise ValueError("No suggestions available to advance")
+
+        # Clamp index to valid range [0, len-1]
+        clamped_index = max(0, min(self.suggestion_index, len(suggestions) - 1))
+
+        if clamped_index != self.suggestion_index:
+            logger.warning(
+                "suggestion_index=%d out of range [0, %d); clamping to %d",
+                self.suggestion_index,
+                len(suggestions),
+                clamped_index,
+            )
+
+        return suggestions[clamped_index]

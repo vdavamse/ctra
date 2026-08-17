@@ -26,7 +26,6 @@ from ctra.agents.data_models import (
     BuilderDiagnostics,
     EvalOutput,
     FeatureOp,
-    FeatureType,
     ModelEvalResult,
     ProposerOutput,
     Task,
@@ -36,7 +35,6 @@ from ctra.agents.feature_builder import compute_features
 from ctra.agents.feature_grouper import FeatureGrouper
 from ctra.agents.feature_planner import FeaturePlanner
 from ctra.agents.feature_proposer import FeatureProposer
-from ctra.agents.reward_fns import is_valid_planner, is_valid_proposer
 from ctra.agents.feature_utils import (
     build_feature_type_transformer,
     compute_shapiq_for_pipeline,
@@ -44,6 +42,20 @@ from ctra.agents.feature_utils import (
     features_to_df,
 )
 from ctra.agents.initializer import Initializer
+from ctra.agents.reward_fns import (
+    ResettingRefine,
+    is_valid_planner,
+    is_valid_proposer,
+)
+from ctra.agents.reward_fns import (
+    grouper_reward as _grouper_reward,
+)
+from ctra.agents.reward_fns import (
+    planner_reward as _planner_reward,
+)
+from ctra.agents.reward_fns import (
+    proposer_reward as _proposer_reward,
+)
 from ctra.config.settings import ClassifierType, get_settings
 from ctra.models.model_registry import ModelRegistry
 
@@ -84,103 +96,6 @@ def _merge_two_level_dicts(
         if key not in target:
             target[key] = {}
         target[key] |= val
-
-
-# ---------------------------------------------------------------------------
-# Reward functions for dspy.Refine wrappers (DSPy 3.x)
-# ---------------------------------------------------------------------------
-
-
-def _proposer_reward(kwargs: Any, result: Any) -> float:
-    """Reward function for DSPy Refine on FeatureProposer (MCTS reward signal).
-
-    Returns 1.0 if the proposed operation is valid:
-    - For ADD: proposed feature_name is not already in the feature set
-    - For REMOVE/REFINE: proposed feature_name exists in the feature set
-    Otherwise returns 0.0. Used in MCTS node expansion to guide which feature
-    operations are worth exploring deeper.
-
-    Args:
-        kwargs: Dict with "previous_output" containing current feature_plans.
-        result: The FeatureProposerSignature output with operation and feature_name.
-
-    Returns:
-        1.0 if valid operation, 0.0 otherwise.
-    """
-    try:
-        previous_output = kwargs["previous_output"]
-        existing = set(previous_output.feature_plans.keys())
-        if result.feature_operation.value == FeatureOp.ADD.value:
-            return 1.0 if result.feature_name not in existing else 0.0
-        return 1.0 if result.feature_name in existing else 0.0
-    except Exception:
-        return 0.0
-
-
-def _planner_reward(kwargs: Any, result: Any) -> float:
-    """Reward function for DSPy Refine on FeaturePlanner (MCTS reward signal).
-
-    Returns 1.0 if the feature plan is internally consistent:
-    - All keys in possible_values exist in feature_type
-    - All categorical/multicategorical features have possible_values defined
-    Otherwise returns 0.0. Ensures plans can be executed by FeatureBuilder without
-    ambiguity. Used in MCTS to filter out invalid plan specifications.
-
-    Args:
-        kwargs: Dict (not used, plan comes from result).
-        result: Tuple of (plan object, raw LLM output).
-
-    Returns:
-        1.0 if plan schema is valid, 0.0 otherwise.
-    """
-    try:
-        plan, _raw = result
-        pv_keys = set(plan.possible_values.keys())
-        ft_keys = set(plan.feature_type.keys())
-        if not pv_keys.issubset(ft_keys):
-            return 0.0
-        for key, keytype in plan.feature_type.items():
-            if (
-                keytype.value
-                in (
-                    FeatureType.MULTICATEGORICAL.value,
-                    FeatureType.CATEGORICAL.value,
-                )
-                and key not in plan.possible_values
-            ):
-                return 0.0
-        return 1.0
-    except Exception:
-        return 0.0
-
-
-def _grouper_reward(kwargs: Any, result: Any) -> float:
-    """Reward function for DSPy Refine on FeatureGrouper (MCTS reward signal).
-
-    Returns 1.0 if the grouping partitions all features exactly once:
-    - All features in feature_plans are assigned to a group
-    - No feature is missing or duplicated across groups
-    Otherwise returns 0.0. Ensures FeatureBuilder will have a complete assignment
-    and can parallelize feature construction efficiently. Used in MCTS to accept/reject
-    grouping proposals.
-
-    Args:
-        kwargs: Dict with "feature_plans" containing all features to be grouped.
-        result: List of groups, each a dict/set of feature names.
-
-    Returns:
-        1.0 if grouping covers all features exactly once, 0.0 otherwise.
-    """
-    try:
-        feature_plans = kwargs["feature_plans"]
-        if not result or len(result) == 0:
-            return 0.0
-        all_features = set()
-        for group in result:
-            all_features.update(group.keys())
-        return 1.0 if all_features == set(feature_plans.keys()) else 0.0
-    except Exception:
-        return 0.0
 
 
 def _build_builder_diagnostics(
@@ -294,26 +209,31 @@ class Agent(dspy.Module):  # type: ignore[misc]
         self.X_test = X_test
         self.y_test = y_test
 
-        self.initializer = Initializer(
-            task_description=self.task_description,
-            X_train=X_train,
-            y_train=y_train,
-        )
-        self.proposer = dspy.Refine(
+        # ResettingRefine, not dspy.Refine: these instances live for the whole MCTS
+        # run, and Refine's failure budget erodes permanently across calls.
+        self.proposer = ResettingRefine(
             module=FeatureProposer(self.task_description),
             N=3,
             reward_fn=_proposer_reward,
             threshold=1.0,
         )
-        self.planner = dspy.Refine(
+        self.planner = ResettingRefine(
             module=FeaturePlanner(self.task_description),
             N=3,
             reward_fn=_planner_reward,
             threshold=1.0,
         )
+        # Built after the planner so the Initializer can share it rather than
+        # constructing a second wrapper around the same FeaturePlanner.
+        self.initializer = Initializer(
+            task_description=self.task_description,
+            X_train=X_train,
+            y_train=y_train,
+            feature_planner=self.planner,
+        )
         self.evaluator = Evaluator(self.task_description)
-        self.grouper = dspy.Refine(
-            module=FeatureGrouper(),
+        self.grouper = ResettingRefine(
+            module=FeatureGrouper(self.task_description),
             N=3,
             reward_fn=_grouper_reward,
             threshold=1.0,

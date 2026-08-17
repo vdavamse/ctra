@@ -149,3 +149,56 @@ def test_grouper_feature_count_mismatch_no_raise():
         assert isinstance(result, list)
         assert len(result) == 1
         assert set(result[0].keys()) == {"feat_a", "feat_b"}
+
+
+def test_grouper_all_stray_group_is_dropped():
+    """A group consisting entirely of unknown names is dropped, not emitted empty.
+
+    Arranges: Mock the grouper to return one all-stray group and one real group.
+    Acts: Call forward().
+    Asserts: Only the real group survives -- no empty dict is emitted.
+    """
+    grouper = FeatureGrouper(task_description="Predict trial outcome")
+
+    feature_plans = {"feat_a": _make_plan("feat_a")}
+
+    with patch.object(grouper, "feature_grouper") as mock_grouper_module:
+        mock_result = MagicMock()
+        mock_result.groups = [
+            ["ghost_one", "ghost_two"],  # nothing here exists
+            ["feat_a"],
+        ]
+        mock_grouper_module.return_value = mock_result
+
+        result = grouper.forward(task="Predict trial outcome", feature_plans=feature_plans)
+
+    assert len(result) == 1
+    assert set(result[0].keys()) == {"feat_a"}
+    assert all(group for group in result), "no empty group should be emitted"
+
+
+def test_grouper_duplicate_feature_is_claimed_once():
+    """A feature listed in two groups is assigned to the first only.
+
+    Building the same feature twice wastes LLM calls and risks a double merge,
+    so ``forward()`` de-duplicates across groups.
+    """
+    grouper = FeatureGrouper(task_description="Predict trial outcome")
+
+    feature_plans = {"feat_a": _make_plan("feat_a"), "feat_b": _make_plan("feat_b")}
+
+    with patch.object(grouper, "feature_grouper") as mock_grouper_module:
+        mock_result = MagicMock()
+        mock_result.groups = [
+            ["feat_a", "feat_b"],
+            ["feat_a"],  # duplicate claim
+        ]
+        mock_grouper_module.return_value = mock_result
+
+        result = grouper.forward(task="Predict trial outcome", feature_plans=feature_plans)
+
+    # Second group becomes empty after de-duplication and is dropped.
+    assert len(result) == 1
+    assert set(result[0].keys()) == {"feat_a", "feat_b"}
+    total_assigned = sum(len(group) for group in result)
+    assert total_assigned == len(feature_plans)

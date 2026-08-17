@@ -23,9 +23,11 @@ import pandas as pd
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-from ctra.agents.data_models import FeaturePlan, FeatureType
+    from ctra.agents.data_models import FeaturePlan
+
 from ctra.agents.feature_planner import FeaturePlanner
-from ctra.agents.reward_fns import is_valid_planner
+from ctra.agents.reward_fns import ResettingRefine, is_valid_planner
+from ctra.agents.reward_fns import planner_reward as _planner_reward
 from ctra.agents.signatures import (
     FactorAnalystSignature,
     FeatureInitializerCombinedSignature,
@@ -64,29 +66,6 @@ try:
     _LLM_RUNTIME_EXCEPTIONS = (*_LLM_RUNTIME_EXCEPTIONS, _LiteLLMAPIError)
 except ImportError:
     logger.debug("litellm.exceptions.APIError not available")
-
-
-def _planner_reward(kwargs: Any, result: Any) -> float:
-    """Reward: 1.0 if plan schema is internally consistent."""
-    try:
-        plan, _raw = result
-        pv_keys = set(plan.possible_values.keys())
-        ft_keys = set(plan.feature_type.keys())
-        if not pv_keys.issubset(ft_keys):
-            return 0.0
-        for key, keytype in plan.feature_type.items():
-            if (
-                keytype.value
-                in (
-                    FeatureType.MULTICATEGORICAL.value,
-                    FeatureType.CATEGORICAL.value,
-                )
-                and key not in plan.possible_values
-            ):
-                return 0.0
-        return 1.0
-    except Exception:
-        return 0.0
 
 
 def _make_tools_for_trial(nct_info: dict[str, Any]) -> list[Any]:
@@ -139,6 +118,7 @@ class Initializer(dspy.Module):  # type: ignore[misc]
         y_train: pd.Series | NDArray[Any],
         seed: int = 42,
         num_examples: int = 3,
+        feature_planner: Any | None = None,
     ) -> None:
         super().__init__()
         self.task_description = task_description
@@ -154,7 +134,13 @@ class Initializer(dspy.Module):  # type: ignore[misc]
             FeatureInitializerWithFactorsSignature
         )
         self.feature_initializer_combined = dspy.ChainOfThought(FeatureInitializerCombinedSignature)
-        self.feature_planner = dspy.Refine(
+        # Reuse the caller's planner when given one, so ``Agent`` and its
+        # ``Initializer`` share a single wrapped planner rather than each keeping
+        # its own (and each eroding its own failure budget).
+        #
+        # ResettingRefine, not dspy.Refine: Refine's failure budget erodes
+        # permanently across calls, and Stage 5 calls this once per feature.
+        self.feature_planner = feature_planner or ResettingRefine(
             module=FeaturePlanner(task_description),
             N=3,
             reward_fn=_planner_reward,
@@ -294,7 +280,9 @@ class Initializer(dspy.Module):  # type: ignore[misc]
                 )
                 continue
             except Exception:
-                # Non-LLM error (e.g., attribute error in pipeline): propagate for debugging.
+                # Non-LLM error (e.g. attribute error in the pipeline): log with a
+                # traceback and skip this feature -- one bad plan must not abort
+                # initialization for every other feature.
                 logger.warning(
                     "Initializer Stage 5: unexpected error planning feature '%s', skipping",
                     feature_name,

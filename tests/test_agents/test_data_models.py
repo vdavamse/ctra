@@ -170,6 +170,47 @@ class TestAgentOutput:
         output2 = output._replace(suggestion_index=1)
         assert output2.get_next_suggestion() == "suggest_b"
 
+    # -- Bounds safety ---------------------------------------------------
+    #
+    # ``suggestion_index`` is a monotonic "dead suggestions burned" counter,
+    # not an array cursor: the orchestrator advances it past the end when a
+    # proposal is rejected, and MCTS replays that value on the next rollout.
+    # The read therefore has to tolerate an out-of-range index -- previously
+    # it raised IndexError and killed the whole agent subprocess.
+
+    def test_get_next_suggestion_clamps_index_past_end(self) -> None:
+        output = _make_output(suggestions=["suggest_a", "suggest_b"])
+        exhausted = output._replace(suggestion_index=7)
+        assert exhausted.get_next_suggestion() == "suggest_b"
+
+    def test_get_next_suggestion_clamps_single_suggestion(self) -> None:
+        """The exact shape the orchestrator skip path produces."""
+        output = _make_output(suggestions=["only_one"])
+        assert output._replace(suggestion_index=3).get_next_suggestion() == "only_one"
+
+    def test_get_next_suggestion_clamps_negative_index(self) -> None:
+        output = _make_output(suggestions=["suggest_a", "suggest_b"])
+        assert output._replace(suggestion_index=-5).get_next_suggestion() == "suggest_a"
+
+    def test_get_next_suggestion_warns_when_out_of_range(self, caplog) -> None:
+        output = _make_output(suggestions=["suggest_a"])._replace(suggestion_index=4)
+        with caplog.at_level("WARNING"):
+            output.get_next_suggestion()
+        assert "out of range" in caplog.text
+
+    def test_get_next_suggestion_no_suggestions_raises_value_error(self) -> None:
+        """Empty suggestions is unrecoverable -- but must not surface as IndexError."""
+        # Built explicitly: ``_make_output`` treats an empty list as "use the default".
+        output = _make_output()
+        empty = output._replace(
+            eval_outputs={
+                name: EvalOutput(model_eval_result=ev.model_eval_result, suggestions=[])
+                for name, ev in output.eval_outputs.items()
+            }
+        )
+        with pytest.raises(ValueError, match="No suggestions"):
+            empty.get_next_suggestion()
+
     def test_single_model(self) -> None:
         output = _make_output({"xgboost": 0.75})
         best_eval, _ = output.get_best_eval_output()

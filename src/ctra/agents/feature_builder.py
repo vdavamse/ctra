@@ -32,6 +32,7 @@ from ctra.agents.feature_store import (
 )
 from ctra.agents.feature_utils import dump_as_json, soft_assert
 from ctra.agents.lm_config import configure_budget_lm
+from ctra.agents.reward_fns import ResettingRefine, is_valid_grouper
 from ctra.agents.signatures import (
     FeatureBuilderConstructSignature,
     FeatureBuilderResearchMultiSignature,
@@ -364,7 +365,9 @@ class WrappedFeatureBuilder:
         # Build only the uncached subset
         try:
             fb = FeatureBuilder(task_description=self.task_description)
-            fb = dspy.Refine(
+            # Constructed per call, so Refine's failure budget cannot erode across
+            # calls here -- ResettingRefine for consistency with the other sites.
+            fb = ResettingRefine(
                 module=fb,
                 N=3,
                 reward_fn=_builder_reward,
@@ -438,7 +441,45 @@ def compute_features(
     if len(plans) == 1:
         grouped_feature_plans = [plans]
     else:
-        grouped_feature_plans = grouper(task=task_description, feature_plans=plans)
+        grouped_feature_plans = grouper(feature_plans=plans, task=task_description)
+
+    # Site 3 validation. ``FeatureGrouper.forward()`` no longer raises on a bad
+    # partition -- it filters and returns whatever survives -- so without a repair
+    # here any feature the grouper dropped would silently never be built.
+    #
+    # Repair rather than discard: rebuilding the whole partition as
+    # one-feature-per-group would undo the ~5x batching this module exists for
+    # (one missing feature out of 20 would cost 20 research passes instead of ~4,
+    # for every trial, every iteration). Keep the groups that came back and add
+    # the unassigned features as singletons.
+    if plans and not is_valid_grouper({"feature_plans": plans}, grouped_feature_plans):
+        assigned: set[str] = set()
+        repaired: list[dict[str, FeaturePlan]] = []
+        # The guard tolerates degenerate shapes (None, a bare list of names) so
+        # that they are *caught* here -- so the repair itself must not assume the
+        # output is well-formed. Anything unusable contributes nothing and every
+        # feature is recovered as a singleton below.
+        for group in grouped_feature_plans or []:
+            if not isinstance(group, dict):
+                continue
+            kept = {k: v for k, v in group.items() if k in plans and k not in assigned}
+            assigned.update(kept)
+            if kept:
+                repaired.append(kept)
+
+        missing = [k for k in plans if k not in assigned]
+        repaired.extend({k: plans[k]} for k in missing)
+
+        logger.warning(
+            "Grouper partition invalid: %d group(s), %d/%d features assigned, "
+            "missing=%s; repairing into %d group(s).",
+            len(grouped_feature_plans or []),
+            len(assigned),
+            len(plans),
+            missing,
+            len(repaired),
+        )
+        grouped_feature_plans = repaired
 
     agged: dict[str, dict[str, Any]] = defaultdict(dict)
     none_feature_reasons: dict[str, dict[str, str]] = defaultdict(dict)
