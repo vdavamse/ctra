@@ -75,6 +75,21 @@ def is_valid_proposer(kwargs: Any, result: Any) -> bool:
     - For ADD: proposed feature_name is not already in the feature set
     - For REMOVE/REFINE: proposed feature_name exists in the feature set
 
+    Invariant callers may rely on: a ``True`` result implies
+    ``result.feature_operation`` is a **recognised** ``FeatureOp`` value (enum
+    member or its raw ``str``). ``ProposerOutput`` is a plain ``NamedTuple`` with
+    no coercion, and ``FeatureProposer.forward`` keeps the raw value when
+    ``FeatureOp()`` cannot resolve it, so this predicate is the only thing
+    standing between an unrecognised operation and:
+
+    - ``Agent.forward``'s operation dispatch, whose REMOVE arm would otherwise
+      run for an op that is not REMOVE; and
+    - ``AgentOutput.operation``, which reaches persisted state (MLflow logging,
+      MCTS node serialization) and should never carry an unknown verb.
+
+    Relaxing this predicate re-arms both. Keep the ``_FEATURE_OP_VALUES``
+    membership check below.
+
     Args:
         kwargs: Dict with "previous_output" containing current feature_plans.
         result: The ProposerOutput (NamedTuple) with feature_operation and feature_name.
@@ -94,12 +109,12 @@ def is_valid_proposer(kwargs: Any, result: Any) -> bool:
         op_value = op.value if isinstance(op, FeatureOp) else op
 
         # An operation the enum does not recognise is never valid. Without this
-        # guard the REMOVE/REFINE branch below acts as a catch-all: an op like
-        # "Add" (wrong case, so FeatureOp() coercion failed in the proposer)
-        # would be judged valid whenever the feature already exists, skipping
-        # the caller's guard and reaching the REMOVE branch in the orchestrator
-        # -- which asserts the op *is* REMOVE, or under -O silently deletes the
-        # very feature the LLM asked to add.
+        # guard the REMOVE/REFINE branch below acts as a catch-all: an op the
+        # proposer's coercion could not resolve (an unknown verb, a non-string,
+        # or any raw value from a caller that does not normalise) would be
+        # judged valid whenever the feature already exists, skipping the
+        # caller's guard and reaching the REMOVE branch in the orchestrator
+        # -- which would then delete the very feature the LLM asked to add.
         if op_value not in _FEATURE_OP_VALUES:
             return False
 

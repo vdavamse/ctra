@@ -143,15 +143,20 @@ class TestIsValidProposer:
         )
         assert is_valid_proposer(kwargs, result) is True
 
-    @pytest.mark.parametrize("bogus_op", ["Add", "ADD", "delete", "", None, 3])
+    @pytest.mark.parametrize("bogus_op", ["Add", "ADD", "delete", "obliterate", "", None, 3])
     def test_unrecognized_operation_is_invalid(self, bogus_op) -> None:
         """An op the enum doesn't know must be rejected, never treated as REMOVE.
 
         The REMOVE/REFINE arm is a catch-all `return`, so without an explicit
-        membership check an op like "Add" on an *existing* feature would be
+        membership check an unrecognised op on an *existing* feature would be
         judged valid, skip the caller's guard, and reach the orchestrator's
-        REMOVE branch -- which asserts the op really is REMOVE, or under `-O`
-        silently deletes the feature the LLM asked to add.
+        REMOVE branch -- deleting a feature nobody asked to remove.
+
+        Note the cases are genuinely unresolvable ops, not merely miscased ones:
+        `FeatureProposer.forward` strips and lowercases before coercing, so
+        "Add"/"ADD" become `FeatureOp.ADD` and never reach this predicate. They
+        can still arrive from a caller that does not normalise, which is why the
+        membership check lives here rather than relying on the proposer.
         """
         kwargs = {"previous_output": _previous_output(["feat_a"])}
         result = ProposerOutput(

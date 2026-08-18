@@ -22,18 +22,27 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Maximum features per research batch. ``FeatureGroupingSignature`` instructs the
+# LLM to respect this ("There should be a maximum of 5 features in each group"),
+# but nothing downstream checked it: an oversized group was researched as a single
+# batch, which is what the grouping exists to avoid. ``forward()`` now enforces it.
+# Keep in sync with the prompt in ``signatures.py``.
+_MAX_GROUP_SIZE = 5
+
 
 class FeatureGrouper(dspy.Module):  # type: ignore[misc]
     """Group features by data dependency for batch research.
 
     Uses ``FeatureGroupingSignature`` to ask the LLM to cluster features
-    that rely on similar data.  Each group has at most 5 features.
+    that rely on similar data.  Each group has at most ``_MAX_GROUP_SIZE``
+    features — enforced here, not merely requested of the LLM.
 
     Filtering (``forward()`` does not raise, validated via ``is_valid_grouper``):
     1. Drops groups with names not in feature_plans.
     2. Drops features already claimed by an earlier group (de-duplication).
     3. Drops empty groups after filtering.
-    4. Returns the remaining valid groups (may be partial coverage).
+    4. Splits any group larger than ``_MAX_GROUP_SIZE`` into chunks of that size.
+    5. Returns the remaining valid groups (may be partial coverage).
     """
 
     def __init__(self, task_description: str | None = None) -> None:
@@ -56,10 +65,15 @@ class FeatureGrouper(dspy.Module):  # type: ignore[misc]
         - Features already claimed by an earlier group (de-duplication).
         - Empty groups after filtering.
 
+        Then splits any surviving group larger than ``_MAX_GROUP_SIZE``.
+
         Returns the remaining valid groups, which may have partial coverage
         if the LLM produced invalid assignments. Validation is deferred to the
         caller via ``is_valid_grouper`` (e.g., in orchestrator post-checks and
         Site 3 fallback).
+
+        Never raises: a missing task description is logged as an error and
+        returns ``[]``, which the caller repairs into one group per feature.
 
         Parameters:
             feature_plans: All feature plans keyed by name.
@@ -71,10 +85,29 @@ class FeatureGrouper(dspy.Module):  # type: ignore[misc]
         """
         task_text = task if task is not None else self.task_description
         if task_text is None:
-            raise ValueError(
-                "FeatureGrouper needs a task description: pass task= to forward() "
-                "or task_description= to __init__."
+            # Degrade rather than raise. This is a wiring error, not bad LLM
+            # output, but ``forward()`` runs inside a ``Refine`` wrapper that
+            # deepcopies the module and retries three times before re-raising,
+            # burying the real message under three "Attempt failed" lines.
+            # Returning an empty grouping is judged invalid by
+            # ``is_valid_grouper``, so ``compute_features`` repairs it into
+            # one-feature-per-group: every feature still gets built.
+            #
+            # What this trade actually costs, measured against a DummyLM: the
+            # error is logged once per Refine attempt (three times, not once),
+            # and because ``forward()`` no longer raises, Refine reaches its
+            # feedback block -- ``dict([])`` succeeds where a non-empty
+            # ``list[dict]`` would not -- spending 2 ``OfferFeedback`` LM calls
+            # the raise-path skipped. So a misconfiguration is now a recurring
+            # cost (those calls, plus permanently losing ~5x batching) instead
+            # of a fail-fast. Reachability is low: ``compute_features`` always
+            # passes ``task=``, and it is the only caller.
+            logger.error(
+                "FeatureGrouper has no task description (pass task= to forward() or "
+                "task_description= to __init__); returning an empty grouping, which "
+                "the caller will repair into one group per feature."
             )
+            return []
 
         serialized_feature_plans = {
             feature_name: json.loads(dump_as_json(plan))
@@ -99,9 +132,15 @@ class FeatureGrouper(dspy.Module):  # type: ignore[misc]
                     filtered_group[feature_name] = feature_plans[feature_name]
                     claimed_features.add(feature_name)
 
-            # Only append non-empty groups
-            if filtered_group:
-                grouped_feature_plans.append(filtered_group)
+            # Enforce the size cap. The LLM is asked for it but does not always
+            # comply, and neither ``is_valid_grouper`` nor the caller's repair
+            # would catch a violation. Chunking preserves coverage *and* total
+            # count, so it cannot turn a valid partition invalid. Empty groups
+            # fall out here naturally: the range below yields nothing.
+            names = list(filtered_group)
+            for start in range(0, len(names), _MAX_GROUP_SIZE):
+                chunk = names[start : start + _MAX_GROUP_SIZE]
+                grouped_feature_plans.append({name: filtered_group[name] for name in chunk})
 
         logger.info(
             "Grouped %d features into %d groups (claimed %d, valid %d)",

@@ -202,3 +202,94 @@ def test_grouper_duplicate_feature_is_claimed_once():
     assert set(result[0].keys()) == {"feat_a", "feat_b"}
     total_assigned = sum(len(group) for group in result)
     assert total_assigned == len(feature_plans)
+
+
+def test_grouper_missing_task_description_degrades_instead_of_raising(caplog):
+    """A missing task description is logged and yields ``[]``, never a raise.
+
+    ``forward()`` runs inside a ``Refine`` wrapper that deepcopies the module
+    and retries three times before re-raising, so a raise here surfaced as three
+    "Attempt failed" lines with the real cause buried. Returning ``[]`` is judged
+    invalid by ``is_valid_grouper``, and ``compute_features`` repairs it into
+    one group per feature -- every feature still gets built.
+    """
+    grouper = FeatureGrouper()  # no task_description, and none passed to forward()
+
+    feature_plans = {"feat_a": _make_plan("feat_a"), "feat_b": _make_plan("feat_b")}
+
+    with patch.object(grouper, "feature_grouper") as mock_grouper_module, caplog.at_level("ERROR"):
+        result = grouper.forward(feature_plans=feature_plans)
+
+    assert result == []
+    assert "task description" in caplog.text
+    assert not mock_grouper_module.called, "must not spend an LM call when misconfigured"
+
+
+def test_grouper_splits_oversized_group():
+    """A group larger than the cap is chunked, not researched as one batch.
+
+    ``FeatureGroupingSignature`` asks the LLM for at most 5 per group, but the
+    LLM does not always comply and nothing downstream checked it -- so a single
+    oversized group silently undid the batching this module exists to provide.
+    """
+    from ctra.agents.feature_grouper import _MAX_GROUP_SIZE
+
+    grouper = FeatureGrouper(task_description="Predict trial outcome")
+
+    names = [f"feat_{i:02d}" for i in range(12)]
+    feature_plans = {n: _make_plan(n) for n in names}
+
+    with patch.object(grouper, "feature_grouper") as mock_grouper_module:
+        mock_result = MagicMock()
+        mock_result.groups = [names]  # one 12-feature group
+        mock_grouper_module.return_value = mock_result
+
+        result = grouper.forward(task="Predict trial outcome", feature_plans=feature_plans)
+
+    assert len(result) == 3, "12 features at a cap of 5 must split into 5 + 5 + 2"
+    assert all(len(group) <= _MAX_GROUP_SIZE for group in result)
+
+    # Chunking must preserve coverage *and* count, or it could turn a valid
+    # partition invalid -- which would send compute_features into its repair path.
+    assigned = [name for group in result for name in group]
+    assert sorted(assigned) == sorted(names)
+    assert len(assigned) == len(set(assigned)) == len(feature_plans)
+
+
+def test_grouper_chunked_output_stays_valid():
+    """The chunked partition must still satisfy ``is_valid_grouper``."""
+    from ctra.agents.reward_fns import is_valid_grouper
+
+    grouper = FeatureGrouper(task_description="Predict trial outcome")
+
+    names = [f"feat_{i:02d}" for i in range(7)]
+    feature_plans = {n: _make_plan(n) for n in names}
+
+    with patch.object(grouper, "feature_grouper") as mock_grouper_module:
+        mock_result = MagicMock()
+        mock_result.groups = [names]
+        mock_grouper_module.return_value = mock_result
+
+        result = grouper.forward(task="Predict trial outcome", feature_plans=feature_plans)
+
+    assert is_valid_grouper({"feature_plans": feature_plans}, result) is True
+
+
+def test_grouper_group_at_cap_is_not_split():
+    """Exactly ``_MAX_GROUP_SIZE`` is within the cap -- an off-by-one guard."""
+    from ctra.agents.feature_grouper import _MAX_GROUP_SIZE
+
+    grouper = FeatureGrouper(task_description="Predict trial outcome")
+
+    names = [f"feat_{i}" for i in range(_MAX_GROUP_SIZE)]
+    feature_plans = {n: _make_plan(n) for n in names}
+
+    with patch.object(grouper, "feature_grouper") as mock_grouper_module:
+        mock_result = MagicMock()
+        mock_result.groups = [names]
+        mock_grouper_module.return_value = mock_result
+
+        result = grouper.forward(task="Predict trial outcome", feature_plans=feature_plans)
+
+    assert len(result) == 1
+    assert set(result[0]) == set(names)

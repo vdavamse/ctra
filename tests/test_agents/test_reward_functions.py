@@ -20,10 +20,10 @@ try:
         ProposerOutput,
     )
     from ctra.agents.feature_builder import _builder_reward
-    from ctra.agents.orchestrator import (
-        _grouper_reward,
-        _planner_reward,
-        _proposer_reward,
+    from ctra.agents.reward_fns import (
+        grouper_reward,
+        planner_reward,
+        proposer_reward,
     )
 
     _HAS_DSPY = True
@@ -46,7 +46,7 @@ def _make_plan(name: str, ftype: FeatureType = FeatureType.FLOAT) -> FeaturePlan
 
 
 # ======================================================================
-# _proposer_reward
+# proposer_reward
 # ======================================================================
 
 
@@ -63,7 +63,7 @@ class TestProposerReward:
             feature_name="feat_b",
             feature_explanation="new feature",
         )
-        assert _proposer_reward(kwargs, result) == 1.0
+        assert proposer_reward(kwargs, result) == 1.0
 
     def test_add_duplicate_name_invalid(self) -> None:
         kwargs = {"previous_output": self._make_previous_output(["feat_a"])}
@@ -72,7 +72,7 @@ class TestProposerReward:
             feature_name="feat_a",
             feature_explanation="duplicate",
         )
-        assert _proposer_reward(kwargs, result) == 0.0
+        assert proposer_reward(kwargs, result) == 0.0
 
     def test_remove_existing_name_valid(self) -> None:
         kwargs = {"previous_output": self._make_previous_output(["feat_a", "feat_b"])}
@@ -81,7 +81,7 @@ class TestProposerReward:
             feature_name="feat_a",
             feature_explanation="remove",
         )
-        assert _proposer_reward(kwargs, result) == 1.0
+        assert proposer_reward(kwargs, result) == 1.0
 
     def test_remove_nonexistent_name_invalid(self) -> None:
         kwargs = {"previous_output": self._make_previous_output(["feat_a"])}
@@ -90,7 +90,7 @@ class TestProposerReward:
             feature_name="feat_z",
             feature_explanation="remove nonexistent",
         )
-        assert _proposer_reward(kwargs, result) == 0.0
+        assert proposer_reward(kwargs, result) == 0.0
 
     def test_refine_existing_name_valid(self) -> None:
         kwargs = {"previous_output": self._make_previous_output(["feat_a"])}
@@ -99,14 +99,14 @@ class TestProposerReward:
             feature_name="feat_a",
             feature_explanation="improve",
         )
-        assert _proposer_reward(kwargs, result) == 1.0
+        assert proposer_reward(kwargs, result) == 1.0
 
     def test_exception_returns_zero(self) -> None:
-        assert _proposer_reward({}, None) == 0.0
+        assert proposer_reward({}, None) == 0.0
 
 
 # ======================================================================
-# _planner_reward
+# planner_reward
 # ======================================================================
 
 
@@ -122,7 +122,7 @@ class TestPlannerReward:
             feature_instructions="test",
         )
         result = (plan, MagicMock())
-        assert _planner_reward({}, result) == 1.0
+        assert planner_reward({}, result) == 1.0
 
     def test_possible_values_key_not_in_feature_type(self) -> None:
         plan = FeaturePlan(
@@ -135,7 +135,7 @@ class TestPlannerReward:
             feature_instructions="test",
         )
         result = (plan, MagicMock())
-        assert _planner_reward({}, result) == 0.0
+        assert planner_reward({}, result) == 0.0
 
     def test_categorical_without_possible_values(self) -> None:
         plan = FeaturePlan(
@@ -148,7 +148,7 @@ class TestPlannerReward:
             feature_instructions="test",
         )
         result = (plan, MagicMock())
-        assert _planner_reward({}, result) == 0.0
+        assert planner_reward({}, result) == 0.0
 
     def test_multicategorical_without_possible_values(self) -> None:
         plan = FeaturePlan(
@@ -161,14 +161,14 @@ class TestPlannerReward:
             feature_instructions="test",
         )
         result = (plan, MagicMock())
-        assert _planner_reward({}, result) == 0.0
+        assert planner_reward({}, result) == 0.0
 
     def test_exception_returns_zero(self) -> None:
-        assert _planner_reward({}, "not a tuple") == 0.0
+        assert planner_reward({}, "not a tuple") == 0.0
 
 
 # ======================================================================
-# _grouper_reward
+# grouper_reward
 # ======================================================================
 
 
@@ -176,24 +176,24 @@ class TestGrouperReward:
     def test_valid_grouping(self) -> None:
         plans = {"feat_a": _make_plan("feat_a"), "feat_b": _make_plan("feat_b")}
         result = [{"feat_a": plans["feat_a"]}, {"feat_b": plans["feat_b"]}]
-        assert _grouper_reward({"feature_plans": plans}, result) == 1.0
+        assert grouper_reward({"feature_plans": plans}, result) == 1.0
 
     def test_single_group_valid(self) -> None:
         plans = {"feat_a": _make_plan("feat_a"), "feat_b": _make_plan("feat_b")}
         result = [{"feat_a": plans["feat_a"], "feat_b": plans["feat_b"]}]
-        assert _grouper_reward({"feature_plans": plans}, result) == 1.0
+        assert grouper_reward({"feature_plans": plans}, result) == 1.0
 
     def test_empty_grouping_invalid(self) -> None:
         plans = {"feat_a": _make_plan("feat_a")}
-        assert _grouper_reward({"feature_plans": plans}, []) == 0.0
+        assert grouper_reward({"feature_plans": plans}, []) == 0.0
 
     def test_missing_feature_invalid(self) -> None:
         plans = {"feat_a": _make_plan("feat_a"), "feat_b": _make_plan("feat_b")}
         result = [{"feat_a": plans["feat_a"]}]  # missing feat_b
-        assert _grouper_reward({"feature_plans": plans}, result) == 0.0
+        assert grouper_reward({"feature_plans": plans}, result) == 0.0
 
     def test_exception_returns_zero(self) -> None:
-        assert _grouper_reward({}, None) == 0.0
+        assert grouper_reward({}, None) == 0.0
 
 
 # ======================================================================

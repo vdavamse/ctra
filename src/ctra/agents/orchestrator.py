@@ -44,17 +44,11 @@ from ctra.agents.feature_utils import (
 from ctra.agents.initializer import Initializer
 from ctra.agents.reward_fns import (
     ResettingRefine,
+    grouper_reward,
     is_valid_planner,
     is_valid_proposer,
-)
-from ctra.agents.reward_fns import (
-    grouper_reward as _grouper_reward,
-)
-from ctra.agents.reward_fns import (
-    planner_reward as _planner_reward,
-)
-from ctra.agents.reward_fns import (
-    proposer_reward as _proposer_reward,
+    planner_reward,
+    proposer_reward,
 )
 from ctra.config.settings import ClassifierType, get_settings
 from ctra.models.model_registry import ModelRegistry
@@ -214,13 +208,13 @@ class Agent(dspy.Module):  # type: ignore[misc]
         self.proposer = ResettingRefine(
             module=FeatureProposer(self.task_description),
             N=3,
-            reward_fn=_proposer_reward,
+            reward_fn=proposer_reward,
             threshold=1.0,
         )
         self.planner = ResettingRefine(
             module=FeaturePlanner(self.task_description),
             N=3,
-            reward_fn=_planner_reward,
+            reward_fn=planner_reward,
             threshold=1.0,
         )
         # Built after the planner so the Initializer can share it rather than
@@ -235,7 +229,7 @@ class Agent(dspy.Module):  # type: ignore[misc]
         self.grouper = ResettingRefine(
             module=FeatureGrouper(self.task_description),
             N=3,
-            reward_fn=_grouper_reward,
+            reward_fn=grouper_reward,
             threshold=1.0,
         )
 
@@ -323,6 +317,39 @@ class Agent(dspy.Module):  # type: ignore[misc]
         # Iteration N: Propose → Dispatch → Compute changed features only
         # =================================================================
         else:
+            # Nothing left to follow. ``get_next_suggestion`` would clamp and hand
+            # the proposer a suggestion already tried and rejected, so the N=3
+            # ``Refine`` attempts cannot make progress. Skip before spending them.
+            #
+            # Reachability, measured — this is defensive scaffolding, not a live
+            # optimization. Exhaustion requires ``suggestion_index >= len(...)``,
+            # and ``_expand`` only ever assigns ``suggestion_index=i`` with
+            # ``i < len(candidates) <= len(suggestions)`` (``mcts.py:417``). The
+            # sole route past the end is ``mcts.py:691`` advancing the counter and
+            # the *same node* being evaluated again — and it is not, because
+            # ``search()`` re-expands any visited leaf (``mcts.py:297``) and
+            # ``_simulate_deep`` expands whenever ``current`` is a leaf
+            # (``mcts.py:488``), so the unvisited frontier outgrows the rollouts.
+            # A 200-rollout run across all four deep/adaptive combinations hit
+            # this branch zero times. It becomes live with issue #7, which fixes
+            # the MCTS side; until then it guarantees that an exhausted output
+            # cannot silently replay, and it is what makes that state nameable.
+            #
+            # Cost note: the deepcopy below is not cheaper than the branch it
+            # skips — it copies all of ``AgentOutput`` (fitted pipelines and
+            # DataFrames included) where the normal path copies only six dicts.
+            # It matches the existing invalid-proposer skip, so it is not a
+            # regression, but this path saves LM calls, not memory.
+            if previous_output.suggestions_exhausted:
+                logger.warning(
+                    "suggestion_index=%d is past the evaluator's suggestions; "
+                    "skipping iteration without calling the proposer (see issue #7).",
+                    previous_output.suggestion_index,
+                )
+                # Index is left where it is: no suggestion was consumed here, so
+                # advancing would inflate the "burned" count for work never done.
+                return deepcopy(previous_output)
+
             current_feature_values = deepcopy(previous_output.raw_features)
             current_val_feature_values = deepcopy(previous_output.raw_val_features)
             current_test_feature_values = deepcopy(previous_output.raw_test_features)
@@ -431,9 +458,8 @@ class Agent(dspy.Module):  # type: ignore[misc]
 
                     none_explanations = current_none_explanations
 
-            else:
+            elif proposer_result.feature_operation == FeatureOp.REMOVE:
                 # --- REMOVE ---
-                assert proposer_result.feature_operation == FeatureOp.REMOVE
                 removed = proposer_result.feature_name
 
                 current_feature_values = {
@@ -457,6 +483,23 @@ class Agent(dspy.Module):  # type: ignore[misc]
                     nctid_meta.pop(removed, None)
 
                 none_explanations = current_none_explanations
+
+            else:
+                # Unreachable while ``is_valid_proposer`` guards the dispatch above:
+                # it rejects any operation outside ``FeatureOp``. Kept as a real
+                # branch rather than an ``assert`` so that relaxing that predicate
+                # (or reaching here from a future caller) degrades to a skipped
+                # iteration instead of running the REMOVE arm -- or, under ``-O``,
+                # silently deleting the feature the LLM asked to add.
+                logger.error(
+                    "Unhandled feature operation %r for %r; skipping iteration.",
+                    getattr(proposer_result, "feature_operation", None),
+                    getattr(proposer_result, "feature_name", None),
+                )
+                safe_prev = deepcopy(previous_output)
+                return safe_prev._replace(
+                    suggestion_index=safe_prev.suggestion_index + 1,
+                )
 
         # =================================================================
         # Common: Convert to DataFrames, train, evaluate

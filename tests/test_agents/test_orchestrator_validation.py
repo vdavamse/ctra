@@ -96,13 +96,21 @@ def _make_output(
     feature_plans: dict[str, FeaturePlan] | None = None,
     builder_meta: dict[str, dict[str, Any]] | None = None,
     suggestion_index: int = 0,
+    suggestions: list[str] | None = None,
 ) -> AgentOutput:
     plans = feature_plans or {"feat_a": _make_plan("feat_a")}
     er = _make_eval_result()
+    # Enough suggestions that the default indices used below are in range.
+    # ``Agent.forward`` short-circuits before calling the proposer once
+    # ``suggestion_index`` runs past this list (see the exhaustion tests), so a
+    # one-element list would silently reroute the Site 1 tests to that path
+    # instead of the proposer-validation path they mean to exercise.
     eval_outputs = {
         "xgboost": EvalOutput(
             model_eval_result=er,
-            suggestions=["Add a new feature"],
+            suggestions=suggestions
+            if suggestions is not None
+            else [f"Add feature idea {i}" for i in range(5)],
         ),
     }
     return AgentOutput(
@@ -192,6 +200,93 @@ def test_invalid_proposer_two_consecutive_failures(caplog):
         # Second call with result from first
         result2 = agent.forward(previous_output=result1)
         assert result2.suggestion_index == 2
+
+
+def test_exhausted_suggestions_skip_before_calling_proposer(caplog):
+    """Once the suggestions run out, skip *without* spending N=3 LM calls.
+
+    ``get_next_suggestion`` clamps, so past the end the proposer would be handed
+    the same final suggestion on every rollout, re-propose against it, be
+    rejected, and repeat -- three LM calls per rollout for no forward progress.
+    """
+    previous_output = _make_output(
+        suggestions=["only_one"],
+        suggestion_index=1,  # == len(suggestions): already past the last cursor
+    )
+
+    with patch("ctra.agents.orchestrator.get_settings"):
+        agent = _make_agent()
+        mock_proposer = MagicMock()
+        agent.proposer = mock_proposer
+
+        with caplog.at_level("WARNING"):
+            result = agent.forward(previous_output=previous_output)
+
+        mock_proposer.assert_not_called()
+        assert "past the evaluator's suggestions" in caplog.text
+
+    # Index is left alone: no suggestion was consumed, so advancing would
+    # inflate the "burned" counter for work that was never attempted.
+    assert result.suggestion_index == previous_output.suggestion_index
+
+    # Still a deepcopy, so the returned output cannot alias the parent's dicts
+    # across sibling MCTS nodes.
+    assert result.feature_plans is not previous_output.feature_plans
+    assert result.feature_plans == previous_output.feature_plans
+
+
+def test_last_valid_suggestion_still_runs_the_proposer():
+    """Off-by-one guard: index == len-1 is the final valid cursor, not exhaustion."""
+    previous_output = _make_output(suggestions=["first", "last"], suggestion_index=1)
+
+    with patch("ctra.agents.orchestrator.get_settings"):
+        agent = _make_agent()
+        mock_proposer = MagicMock()
+        mock_proposer.return_value = ProposerOutput(
+            feature_name="feat_a",  # exists -> invalid ADD, so we skip after proposing
+            feature_explanation="explanation",
+            feature_operation=FeatureOp.ADD,
+        )
+        agent.proposer = mock_proposer
+
+        result = agent.forward(previous_output=previous_output)
+
+        mock_proposer.assert_called_once()
+
+    # Proposed, rejected, burned -> the index advances on this path.
+    assert result.suggestion_index == 2
+
+
+def test_unhandled_operation_skips_instead_of_removing(caplog):
+    """An operation outside ``FeatureOp`` must never reach the REMOVE arm.
+
+    ``is_valid_proposer`` rejects unrecognised ops, so this is unreachable
+    today -- but it used to be held only by a bare ``assert``, which ``python -O``
+    strips, turning a malformed op into a silent deletion of an existing feature.
+    Patching the predicate to accept simulates that predicate being relaxed.
+    """
+    previous_output = _make_output(feature_plans={"feat_a": _make_plan("feat_a")})
+
+    with patch("ctra.agents.orchestrator.get_settings"), patch(
+        "ctra.agents.orchestrator.is_valid_proposer", return_value=True
+    ):
+        agent = _make_agent()
+        mock_proposer = MagicMock()
+        mock_proposer.return_value = ProposerOutput(
+            feature_name="feat_a",
+            feature_explanation="malformed",
+            feature_operation="obliterate",  # type: ignore[arg-type]
+        )
+        agent.proposer = mock_proposer
+
+        with caplog.at_level("ERROR"):
+            result = agent.forward(previous_output=previous_output)
+
+    assert "Unhandled feature operation" in caplog.text
+    # The feature the op named must survive -- this is the -O hazard.
+    assert "feat_a" in result.feature_plans
+    assert result.feature_plans == previous_output.feature_plans
+    assert result.suggestion_index == previous_output.suggestion_index + 1
 
 
 # ======================================================================

@@ -26,8 +26,7 @@ if TYPE_CHECKING:
     from ctra.agents.data_models import FeaturePlan
 
 from ctra.agents.feature_planner import FeaturePlanner
-from ctra.agents.reward_fns import ResettingRefine, is_valid_planner
-from ctra.agents.reward_fns import planner_reward as _planner_reward
+from ctra.agents.reward_fns import ResettingRefine, is_valid_planner, planner_reward
 from ctra.agents.signatures import (
     FactorAnalystSignature,
     FeatureInitializerCombinedSignature,
@@ -118,7 +117,7 @@ class Initializer(dspy.Module):  # type: ignore[misc]
         y_train: pd.Series | NDArray[Any],
         seed: int = 42,
         num_examples: int = 3,
-        feature_planner: Any | None = None,
+        feature_planner: dspy.Module | None = None,
     ) -> None:
         super().__init__()
         self.task_description = task_description
@@ -138,14 +137,20 @@ class Initializer(dspy.Module):  # type: ignore[misc]
         # ``Initializer`` share a single wrapped planner rather than each keeping
         # its own (and each eroding its own failure budget).
         #
-        # ResettingRefine, not dspy.Refine: Refine's failure budget erodes
-        # permanently across calls, and Stage 5 calls this once per feature.
-        self.feature_planner = feature_planner or ResettingRefine(
-            module=FeaturePlanner(task_description),
-            N=3,
-            reward_fn=_planner_reward,
-            threshold=1.0,
-        )
+        # Explicit ``is None``, not truthiness: a ``dspy.Module`` subclass
+        # defining ``__bool__``/``__len__`` would otherwise be discarded and
+        # replaced with a second wrapper, silently undoing the shared-planner
+        # contract while the identity test still passed on a truthy MagicMock.
+        if feature_planner is None:
+            # ResettingRefine, not dspy.Refine: Refine's failure budget erodes
+            # permanently across calls, and Stage 5 calls this once per feature.
+            feature_planner = ResettingRefine(
+                module=FeaturePlanner(task_description),
+                N=3,
+                reward_fn=planner_reward,
+                threshold=1.0,
+            )
+        self.feature_planner = feature_planner
 
     def _get_nctids(self) -> pd.Series:
         """Extract NCT IDs from X_train."""
