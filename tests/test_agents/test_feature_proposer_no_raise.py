@@ -138,3 +138,99 @@ def test_proposer_remove_nonexistent_name_no_raise():
         assert isinstance(result, ProposerOutput)
         assert result.feature_name == "nonexistent_feature"
         assert result.feature_operation == FeatureOp.REMOVE
+
+
+# ======================================================================
+# Operation normalisation
+# ======================================================================
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("add", FeatureOp.ADD),
+        ("Add", FeatureOp.ADD),
+        ("ADD", FeatureOp.ADD),
+        ("  add  ", FeatureOp.ADD),
+        ("Remove", FeatureOp.REMOVE),
+        ("REFINE", FeatureOp.REFINE),
+        (FeatureOp.ADD, FeatureOp.ADD),
+    ],
+)
+def test_proposer_normalises_operation_case_and_whitespace(raw, expected):
+    """A miscased/padded op is recovered rather than left as a raw string.
+
+    Without this, ``FeatureOp()`` coercion fails, the raw string survives into
+    ``ProposerOutput``, ``is_valid_proposer`` rejects it as unrecognised, and the
+    iteration is skipped -- burning three LM calls over a formatting slip.
+    """
+    proposer = FeatureProposer(task_description="Predict trial outcome")
+    previous = _make_output()
+
+    with patch.object(proposer, "proposer") as mock_proposer_module:
+        mock_result = MagicMock()
+        mock_result.operation = raw
+        mock_result.feature_name = "feat_new"
+        mock_result.operation_description = "explanation"
+        mock_proposer_module.return_value = mock_result
+
+        result = proposer.forward(previous_output=previous)
+
+    assert result.feature_operation is expected
+
+
+def test_proposer_keeps_unrecognisable_operation_as_raw_value():
+    """A genuinely unknown op is passed through, not raised on.
+
+    ``forward()`` must stay non-raising; ``is_valid_proposer`` is what rejects it.
+    """
+    proposer = FeatureProposer(task_description="Predict trial outcome")
+    previous = _make_output()
+
+    with patch.object(proposer, "proposer") as mock_proposer_module:
+        mock_result = MagicMock()
+        mock_result.operation = "obliterate"
+        mock_result.feature_name = "feat_a"
+        mock_result.operation_description = "explanation"
+        mock_proposer_module.return_value = mock_result
+
+        result = proposer.forward(previous_output=previous)
+
+    assert result.feature_operation == "obliterate"
+
+
+# ======================================================================
+# Empty-suggestion degradation (must not raise inside dspy.Refine)
+# ======================================================================
+
+
+def test_proposer_with_no_suggestions_does_not_raise():
+    """``get_next_suggestion()`` raising must not escape ``forward()``.
+
+    ``evaluator`` returns ``suggestions=[]`` when every analysis step fails. A
+    raise here propagates through ``dspy.Refine`` past the caller's
+    ``is_valid_proposer`` guard -- the dead-skip-branch failure this package was
+    fixed to eliminate. Degrade to an empty suggestion instead.
+    """
+    proposer = FeatureProposer(task_description="Predict trial outcome")
+
+    base = _make_output()
+    empty = base._replace(
+        eval_outputs={
+            name: EvalOutput(model_eval_result=ev.model_eval_result, suggestions=[])
+            for name, ev in base.eval_outputs.items()
+        }
+    )
+
+    with patch.object(proposer, "proposer") as mock_proposer_module:
+        mock_result = MagicMock()
+        mock_result.operation = FeatureOp.ADD.value
+        mock_result.feature_name = "feat_new"
+        mock_result.operation_description = "explanation"
+        mock_proposer_module.return_value = mock_result
+
+        result = proposer.forward(previous_output=empty)
+
+    assert isinstance(result, ProposerOutput)
+    # The inner predictor still ran, with an empty suggestion.
+    assert mock_proposer_module.call_args.kwargs["suggestion"] == ""

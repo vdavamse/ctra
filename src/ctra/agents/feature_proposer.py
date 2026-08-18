@@ -1,11 +1,15 @@
 """DSPy ChainOfThought agent for feature proposal.
 
 **FeatureProposer**: Takes an evaluator suggestion from ``AgentOutput`` and
-proposes a single ADD/REMOVE/REFINE operation with ``ValueError``
-validation (retried via ``dspy.Refine``).
+proposes a single ADD/REMOVE/REFINE operation, validated via ``is_valid_proposer``
+predicate.
 
 The proposer uses the primary LM (Claude Opus 4.6) configured via
 :func:`ctra.agents.lm_config.configure_lm`.
+
+Note: ``forward()`` does not raise on invalid LLM output; instead it returns
+the best-effort proposal. Validation is deferred to the caller (e.g., ``dspy.Refine``
+rewards and post-checks in the orchestrator).
 """
 
 from __future__ import annotations
@@ -32,8 +36,7 @@ class FeatureProposer(dspy.Module):  # type: ignore[misc]
     Takes the best suggestion from ``AgentOutput`` and proposes exactly one operation:
     ADD (new feature), REMOVE (drop feature), or REFINE (improve feature).
 
-    Validation (``ValueError`` on failure, retried via ``dspy.Refine``
-    in the orchestrator):
+    Validation via ``is_valid_proposer`` (does not raise):
     - ADD: ``feature_name`` must not already exist in current features.
     - REMOVE / REFINE: ``feature_name`` must exist in current features.
 
@@ -55,36 +58,60 @@ class FeatureProposer(dspy.Module):  # type: ignore[misc]
         Returns:
             ``ProposerOutput`` with operation type, feature name, and explanation.
         """
-        existing_names = set(previous_output.feature_plans.keys())
-
         current_features_with_plan = [
             (fp.feature_name, dump_as_json(fp, pretty=False))
             for fp in previous_output.feature_plans.values()
         ]
 
+        # ``get_next_suggestion()`` raises when the evaluator produced no
+        # suggestions at all (reachable: ``evaluator.py`` returns ``[]`` when every
+        # analysis step fails). This runs inside a ``dspy.Refine`` wrapper, where a
+        # raise is retried N times and then re-raised past the caller's
+        # ``is_valid_proposer`` guard -- the dead-skip-branch failure this module
+        # was fixed to avoid. Degrade to an empty suggestion instead and let the
+        # proposal be judged on its merits.
+        # KeyError as well as ValueError: get_best_eval_output() indexes
+        # test_eval_outputs by the best val model's name, which raises KeyError if
+        # the two dicts ever disagree.
+        try:
+            suggestion = previous_output.get_next_suggestion()
+        except (ValueError, KeyError):
+            logger.warning(
+                "No evaluator suggestions available; proposing without one.",
+                exc_info=True,
+            )
+            suggestion = ""
+
         proposer_result = self.proposer(
             task=self.task_description,
             current_features_with_plan=current_features_with_plan,
-            suggestion=previous_output.get_next_suggestion(),
+            suggestion=suggestion,
         )
 
-        # --- Validation: check operation against current feature set ---
-        if proposer_result.operation.value == FeatureOp.ADD.value:
-            if proposer_result.feature_name in existing_names:
-                raise ValueError(
-                    f"ADD: feature_name '{proposer_result.feature_name}' "
-                    f"already exists. Pick a different name."
-                )
-        else:
-            if proposer_result.feature_name not in existing_names:
-                raise ValueError(
-                    f"REMOVE/REFINE: feature_name "
-                    f"'{proposer_result.feature_name}' not in existing "
-                    f"features {existing_names}"
-                )
+        # Coerce operation to FeatureOp defensively; fall back to the raw value if
+        # coercion fails so forward() stays non-raising and is_valid_proposer can
+        # reject it. Case/whitespace are normalised too: "Add " is a recoverable
+        # formatting slip, not a different operation, and retrying it would burn
+        # three LM calls to arrive at the same string.
+        #
+        # Note the normalised candidate goes through ``.value`` rather than
+        # ``str(op)``: on Python 3.10 ``data_models`` uses a ``StrEnum(str, Enum)``
+        # backport where ``str(FeatureOp.ADD)`` is "FeatureOp.ADD", not "add".
+        raw_operation = proposer_result.operation
+        normalised = getattr(raw_operation, "value", raw_operation)
+        if isinstance(normalised, str):
+            normalised = normalised.strip().lower()
+
+        operation = raw_operation
+        for candidate in (raw_operation, normalised):
+            try:
+                operation = FeatureOp(candidate)
+                break
+            except (ValueError, TypeError):
+                continue
 
         return ProposerOutput(
             feature_name=proposer_result.feature_name,
             feature_explanation=proposer_result.operation_description,
-            feature_operation=proposer_result.operation,
+            feature_operation=operation,
         )

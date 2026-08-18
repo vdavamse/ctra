@@ -161,7 +161,7 @@ class TestCacheMissException:
         with (
             patch("ctra.agents.feature_builder.FeatureBuilder") as mock_builder_cls,
             patch(
-                "ctra.agents.feature_builder.dspy.Refine",
+                "ctra.agents.feature_builder.ResettingRefine",
                 side_effect=lambda module, **kw: module,
             ),
         ):
@@ -200,7 +200,7 @@ class TestCacheMissException:
         with (
             patch("ctra.agents.feature_builder.FeatureBuilder") as mock_builder_cls,
             patch(
-                "ctra.agents.feature_builder.dspy.Refine",
+                "ctra.agents.feature_builder.ResettingRefine",
                 side_effect=lambda module, **kw: module,
             ),
         ):

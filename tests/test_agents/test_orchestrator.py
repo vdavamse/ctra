@@ -158,7 +158,7 @@ class TestExtractNctids:
 class TestAgentTaskParam:
     """Tests for Agent accepting Task enum or plain string."""
 
-    @patch("dspy.Refine", side_effect=lambda module, **kw: module)
+    @patch("ctra.agents.orchestrator.ResettingRefine", side_effect=lambda module, **kw: module)
     @patch("ctra.agents.orchestrator.Initializer")
     @patch("ctra.agents.orchestrator.FeatureProposer")
     @patch("ctra.agents.orchestrator.FeaturePlanner")
@@ -184,7 +184,7 @@ class TestAgentTaskParam:
         assert agent.task_description == task.description
         assert "Phase 2" in agent.task_description
 
-    @patch("dspy.Refine", side_effect=lambda module, **kw: module)
+    @patch("ctra.agents.orchestrator.ResettingRefine", side_effect=lambda module, **kw: module)
     @patch("ctra.agents.orchestrator.Initializer")
     @patch("ctra.agents.orchestrator.FeatureProposer")
     @patch("ctra.agents.orchestrator.FeaturePlanner")
@@ -226,8 +226,10 @@ class TestForwardIteration0:
         mock_settings.model.classifiers = []  # Skip model training
         monkeypatch.setattr("ctra.agents.orchestrator.get_settings", lambda: mock_settings)
 
-        # Bypass dspy.Refine — return the module unchanged
-        monkeypatch.setattr("dspy.Refine", lambda module, **kw: module)
+        # Bypass the Refine wrapper — return the module unchanged
+        monkeypatch.setattr(
+            "ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module
+        )
 
         # Mock sub-agent constructors
         with (
@@ -316,8 +318,10 @@ class TestForwardIterationN:
         mock_settings.model.classifiers = []
         monkeypatch.setattr("ctra.agents.orchestrator.get_settings", lambda: mock_settings)
 
-        # Bypass dspy.Refine — return the module unchanged
-        monkeypatch.setattr("dspy.Refine", lambda module, **kw: module)
+        # Bypass the Refine wrapper — return the module unchanged
+        monkeypatch.setattr(
+            "ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module
+        )
 
         with (
             patch("ctra.agents.orchestrator.Initializer") as mock_init_cls,
@@ -489,7 +493,9 @@ class TestTaskNamespaceResolution:
         mock_settings.mcts.feature_store_enabled = True
         mock_settings.model.classifiers = []
         monkeypatch.setattr("ctra.agents.orchestrator.get_settings", lambda: mock_settings)
-        monkeypatch.setattr("dspy.Refine", lambda module, **kw: module)
+        monkeypatch.setattr(
+            "ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module
+        )
 
         with (
             patch("ctra.agents.orchestrator.Initializer") as mock_init_cls,

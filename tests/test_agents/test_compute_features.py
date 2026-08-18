@@ -132,7 +132,7 @@ class TestMultiplePlansCallGrouper:
             )
 
         # Grouper should have been called
-        grouper.assert_called_once_with(task="test task", feature_plans=plans)
+        grouper.assert_called_once_with(feature_plans=plans, task="test task")
 
     def test_grouper_splits_into_two_groups(self, tmp_path: Path) -> None:
         """When grouper splits plans into two groups, both groups are processed."""
@@ -166,6 +166,116 @@ class TestMultiplePlansCallGrouper:
 
         # Should have been called twice (1 nctid x 2 groups)
         assert call_count["n"] == 2
+
+
+# ======================================================================
+# Site 3 — grouper partition fallback
+#
+# ``FeatureGrouper.forward()` no longer raises on a bad partition; it filters
+# and returns whatever survives. Without a fallback here, an empty or partial
+# partition would silently drop features from the build entirely.
+# ======================================================================
+
+
+class TestGrouperPartitionFallback:
+    def _run(self, grouper, plans, nctids):
+        """Returns (raw_features, built_feature_names, group_count).
+
+        ``group_count`` is the number of builder invocations per trial, i.e. how
+        many groups the build actually ran -- the signal that distinguishes a
+        repaired partition from one rebuilt as one-feature-per-group.
+        """
+        built: list[str] = []
+        groups_seen: list[tuple[str, ...]] = []
+
+        def mock_call(arg):
+            nctid, plan_group = arg
+            built.extend(plan_group)
+            groups_seen.append(tuple(sorted(plan_group)))
+            return (nctid, {name: {"value": 1.0} for name in plan_group}, {})
+
+        with patch("ctra.agents.feature_builder.WrappedFeatureBuilder") as mock_cls:
+            mock_cls.return_value = MagicMock(side_effect=mock_call)
+            raw_features, _, _ = compute_features(
+                grouper=grouper,
+                nctids=nctids,
+                task_description="test task",
+                plans=plans,
+            )
+        return raw_features, built, groups_seen
+
+    def test_empty_partition_still_builds_every_feature(self) -> None:
+        """Grouper returning [] must not silently drop every feature."""
+        plans = {"feat_a": _make_plan("feat_a"), "feat_b": _make_plan("feat_b")}
+        grouper = MagicMock(return_value=[])
+
+        raw_features, built, _groups = self._run(grouper, plans, ["NCT001"])
+
+        assert sorted(built) == ["feat_a", "feat_b"]
+        assert set(raw_features["NCT001"]) == {"feat_a", "feat_b"}
+
+    def test_partial_partition_is_repaired_not_rebuilt(self) -> None:
+        """A partition missing feat_c gains feat_c -- it does not lose its batching.
+
+        Rebuilding as one-feature-per-group would cost 3 research passes here
+        instead of 2, and ~5x at realistic feature counts.
+        """
+        plans = {
+            "feat_a": _make_plan("feat_a"),
+            "feat_b": _make_plan("feat_b"),
+            "feat_c": _make_plan("feat_c"),
+        }
+        grouper = MagicMock(return_value=[{"feat_a": plans["feat_a"], "feat_b": plans["feat_b"]}])
+
+        raw_features, built, groups = self._run(grouper, plans, ["NCT001"])
+
+        assert sorted(built) == ["feat_a", "feat_b", "feat_c"]
+        assert set(raw_features["NCT001"]) == {"feat_a", "feat_b", "feat_c"}
+        # The good group survives intact; feat_c is appended as a singleton.
+        assert groups == [("feat_a", "feat_b"), ("feat_c",)]
+
+    def test_duplicate_partition_builds_nothing_twice(self) -> None:
+        """A feature assigned to two groups must not be built twice."""
+        plans = {"feat_a": _make_plan("feat_a"), "feat_b": _make_plan("feat_b")}
+        grouper = MagicMock(
+            return_value=[
+                {"feat_a": plans["feat_a"], "feat_b": plans["feat_b"]},
+                {"feat_a": plans["feat_a"]},
+            ]
+        )
+
+        _raw_features, built, groups = self._run(grouper, plans, ["NCT001"])
+
+        assert sorted(built) == ["feat_a", "feat_b"]
+        assert groups == [("feat_a", "feat_b")]
+
+    def test_stray_name_in_partition_is_dropped(self) -> None:
+        """A name the grouper invented is not passed to the builder."""
+        plans = {"feat_a": _make_plan("feat_a"), "feat_b": _make_plan("feat_b")}
+        grouper = MagicMock(
+            return_value=[{"feat_a": plans["feat_a"], "ghost": _make_plan("ghost")}]
+        )
+
+        _raw_features, built, groups = self._run(grouper, plans, ["NCT001"])
+
+        assert "ghost" not in built
+        assert sorted(built) == ["feat_a", "feat_b"]
+        assert groups == [("feat_a",), ("feat_b",)]
+
+    def test_valid_partition_keeps_its_grouping(self) -> None:
+        """A well-formed partition must not be touched.
+
+        Asserted on the group shape, not just the feature set: if the fallback
+        fired, the same two features would arrive as two groups of one and the
+        ~5x batching saving would be silently gone.
+        """
+        plans = {"feat_a": _make_plan("feat_a"), "feat_b": _make_plan("feat_b")}
+        grouper = MagicMock(return_value=[{"feat_a": plans["feat_a"], "feat_b": plans["feat_b"]}])
+
+        _raw_features, built, groups = self._run(grouper, plans, ["NCT001"])
+
+        assert sorted(built) == ["feat_a", "feat_b"]
+        assert groups == [("feat_a", "feat_b")], "fallback fired on a valid partition"
 
 
 # ======================================================================

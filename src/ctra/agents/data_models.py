@@ -8,6 +8,7 @@ All agent modules import from this file to avoid circular dependencies.
 
 from __future__ import annotations
 
+import logging
 import sys
 from dataclasses import dataclass, field, fields, replace
 
@@ -24,6 +25,8 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 if TYPE_CHECKING:
     import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -324,6 +327,58 @@ class AgentOutput:
         )
         return self.eval_outputs[best_name], self.test_eval_outputs[best_name]
 
+    @property
+    def suggestions_exhausted(self) -> bool:
+        """True once ``suggestion_index`` has run past the best model's suggestions.
+
+        ``suggestion_index`` is a monotonic "dead suggestions burned" counter, not
+        an array cursor: ``Agent.forward`` advances it on every skipped iteration
+        and deliberately never bounds it. ``get_next_suggestion`` therefore clamps,
+        which means that once the counter passes the end it replays the *same* final
+        suggestion forever — the proposer re-proposes against a suggestion already
+        rejected, ``is_valid_proposer`` rejects it again, the counter advances, and
+        the cycle repeats at ``N=3`` LM calls per rollout with zero forward progress.
+        The clamp warning fires each time, but nothing downstream can distinguish a
+        fresh suggestion from a replay without this flag.
+
+        Callers should check it before spending those calls. ``Agent.forward`` does.
+
+        Empty suggestions are **not** exhaustion: ``FeatureProposer.forward``
+        deliberately degrades to an empty suggestion so the proposal is still judged
+        on its merits, and short-circuiting here would undo that.
+
+        Returns ``False`` when the underlying state cannot be read (no eval outputs,
+        or ``eval_outputs``/``test_eval_outputs`` disagreeing), so a diagnostic
+        failure never silently halts the search.
+        """
+        try:
+            eval_output, _ = self.get_best_eval_output()
+        except (ValueError, KeyError):
+            return False
+        suggestions = eval_output.suggestions
+        return bool(suggestions) and self.suggestion_index >= len(suggestions)
+
     def get_next_suggestion(self) -> str:
-        """Return the suggestion at ``suggestion_index`` from the best model (AutoCT line 294)."""
-        return self.get_best_eval_output()[0].suggestions[self.suggestion_index]
+        """Return the suggestion at ``suggestion_index`` from the best model (AutoCT line 294).
+
+        Bounds-safe: if ``suggestion_index`` is out of range, clamp to [0, len-1]
+        and log a warning. Raise ``ValueError`` if there are no suggestions at all.
+        """
+        eval_output, _ = self.get_best_eval_output()
+        suggestions = eval_output.suggestions
+
+        if not suggestions:
+            raise ValueError("No suggestions available to advance")
+
+        # Clamp index to valid range [0, len-1]
+        clamped_index = max(0, min(self.suggestion_index, len(suggestions) - 1))
+
+        if clamped_index != self.suggestion_index:
+            logger.warning(
+                "suggestion_index=%d out of range [0, %d); clamping to %d",
+                self.suggestion_index,
+                len(suggestions),
+                clamped_index,
+            )
+
+        return suggestions[clamped_index]

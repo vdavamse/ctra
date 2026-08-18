@@ -14,7 +14,6 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -31,7 +30,6 @@ try:
         Task,
     )
     from ctra.agents.orchestrator import Agent
-    from ctra.config.settings import ClassifierType
 
     _HAS_DSPY = True
 except ImportError:
@@ -70,17 +68,49 @@ def _make_eval_result(roc_auc: float = 0.8) -> ModelEvalResult:
     )
 
 
+def _make_agent() -> Agent:
+    """Construct a real ``Agent`` with the collaborators stubbed out.
+
+    ``proposer``/``planner``/``grouper``/``evaluator``/``initializer`` are set as
+    *instance* attributes in ``Agent.__init__``, so they cannot be reached with
+    ``patch("...Agent.proposer")`` -- mock resolves that against the class and
+    raises AttributeError. Build the agent, then override the instances. The
+    constructor needs no LM: it only builds ``dspy`` module wrappers.
+    """
+    agent = Agent(
+        task=Task.TRIAL_OUTCOME_PHASE_2,
+        X_train=pd.Series(["NCT001", "NCT002"]),
+        y_train=pd.Series([1, 0]),
+        X_val=pd.Series(["NCT003"]),
+        y_val=pd.Series([1]),
+        X_test=pd.Series(["NCT004"]),
+        y_test=pd.Series([0]),
+    )
+    agent.initializer = MagicMock()
+    agent.grouper = MagicMock()
+    agent.evaluator = MagicMock()
+    return agent
+
+
 def _make_output(
     feature_plans: dict[str, FeaturePlan] | None = None,
     builder_meta: dict[str, dict[str, Any]] | None = None,
     suggestion_index: int = 0,
+    suggestions: list[str] | None = None,
 ) -> AgentOutput:
     plans = feature_plans or {"feat_a": _make_plan("feat_a")}
     er = _make_eval_result()
+    # Enough suggestions that the default indices used below are in range.
+    # ``Agent.forward`` short-circuits before calling the proposer once
+    # ``suggestion_index`` runs past this list (see the exhaustion tests), so a
+    # one-element list would silently reroute the Site 1 tests to that path
+    # instead of the proposer-validation path they mean to exercise.
     eval_outputs = {
         "xgboost": EvalOutput(
             model_eval_result=er,
-            suggestions=["Add a new feature"],
+            suggestions=suggestions
+            if suggestions is not None
+            else [f"Add feature idea {i}" for i in range(5)],
         ),
     }
     return AgentOutput(
@@ -116,27 +146,11 @@ def test_invalid_proposer_skips_iteration_with_warning(caplog):
     """
     previous_output = _make_output(suggestion_index=2)
 
-    with patch("ctra.agents.orchestrator.Agent.proposer") as mock_proposer, patch(
-        "ctra.agents.orchestrator.Agent.initializer"
-    ), patch(
-        "ctra.agents.orchestrator.Agent.grouper"
-    ), patch(
-        "ctra.agents.orchestrator.Agent.planner"
-    ), patch(
-        "ctra.agents.orchestrator.Agent.evaluator"
-    ), patch(
-        "ctra.agents.orchestrator.get_settings"
-    ) as mock_settings:
-        # Setup mocks
-        agent = Agent(
-            task=Task.TRIAL_OUTCOME_PHASE_2,
-            X_train=pd.Series(["NCT001", "NCT002"]),
-            y_train=pd.Series([1, 0]),
-            X_val=pd.Series(["NCT003"]),
-            y_val=pd.Series([1]),
-        )
+    with patch("ctra.agents.orchestrator.get_settings"):
+        agent = _make_agent()
 
         # Mock proposer to return invalid output (ADD with existing feature name)
+        mock_proposer = MagicMock()
         mock_proposer.return_value = ProposerOutput(
             feature_name="feat_a",  # Already exists in previous_output
             feature_explanation="Some explanation",
@@ -146,7 +160,7 @@ def test_invalid_proposer_skips_iteration_with_warning(caplog):
 
         # Call forward with iteration N
         with caplog.at_level("WARNING"):
-            result = agent.forward(previous_output=previous_output, iteration=1)
+            result = agent.forward(previous_output=previous_output)
 
         # Assert suggestion_index advanced
         assert result.suggestion_index == 3  # Was 2, now 3
@@ -166,28 +180,12 @@ def test_invalid_proposer_two_consecutive_failures(caplog):
     proposer call sees suggestion_index == original + 2, not original + 1 replayed.
     """
     prev1 = _make_output(suggestion_index=0)
-    prev2 = _make_output(suggestion_index=1)  # Result of first failure
 
-    with patch("ctra.agents.orchestrator.Agent.proposer") as mock_proposer, patch(
-        "ctra.agents.orchestrator.Agent.initializer"
-    ), patch(
-        "ctra.agents.orchestrator.Agent.grouper"
-    ), patch(
-        "ctra.agents.orchestrator.Agent.planner"
-    ), patch(
-        "ctra.agents.orchestrator.Agent.evaluator"
-    ), patch(
-        "ctra.agents.orchestrator.get_settings"
-    ):
-        agent = Agent(
-            task=Task.TRIAL_OUTCOME_PHASE_2,
-            X_train=pd.Series(["NCT001", "NCT002"]),
-            y_train=pd.Series([1, 0]),
-            X_val=pd.Series(["NCT003"]),
-            y_val=pd.Series([1]),
-        )
+    with patch("ctra.agents.orchestrator.get_settings"):
+        agent = _make_agent()
 
         # Mock proposer to always return invalid output
+        mock_proposer = MagicMock()
         mock_proposer.return_value = ProposerOutput(
             feature_name="feat_a",
             feature_explanation="explanation",
@@ -196,12 +194,99 @@ def test_invalid_proposer_two_consecutive_failures(caplog):
         agent.proposer = mock_proposer
 
         # First call
-        result1 = agent.forward(previous_output=prev1, iteration=1)
+        result1 = agent.forward(previous_output=prev1)
         assert result1.suggestion_index == 1
 
         # Second call with result from first
-        result2 = agent.forward(previous_output=result1, iteration=2)
+        result2 = agent.forward(previous_output=result1)
         assert result2.suggestion_index == 2
+
+
+def test_exhausted_suggestions_skip_before_calling_proposer(caplog):
+    """Once the suggestions run out, skip *without* spending N=3 LM calls.
+
+    ``get_next_suggestion`` clamps, so past the end the proposer would be handed
+    the same final suggestion on every rollout, re-propose against it, be
+    rejected, and repeat -- three LM calls per rollout for no forward progress.
+    """
+    previous_output = _make_output(
+        suggestions=["only_one"],
+        suggestion_index=1,  # == len(suggestions): already past the last cursor
+    )
+
+    with patch("ctra.agents.orchestrator.get_settings"):
+        agent = _make_agent()
+        mock_proposer = MagicMock()
+        agent.proposer = mock_proposer
+
+        with caplog.at_level("WARNING"):
+            result = agent.forward(previous_output=previous_output)
+
+        mock_proposer.assert_not_called()
+        assert "past the evaluator's suggestions" in caplog.text
+
+    # Index is left alone: no suggestion was consumed, so advancing would
+    # inflate the "burned" counter for work that was never attempted.
+    assert result.suggestion_index == previous_output.suggestion_index
+
+    # Still a deepcopy, so the returned output cannot alias the parent's dicts
+    # across sibling MCTS nodes.
+    assert result.feature_plans is not previous_output.feature_plans
+    assert result.feature_plans == previous_output.feature_plans
+
+
+def test_last_valid_suggestion_still_runs_the_proposer():
+    """Off-by-one guard: index == len-1 is the final valid cursor, not exhaustion."""
+    previous_output = _make_output(suggestions=["first", "last"], suggestion_index=1)
+
+    with patch("ctra.agents.orchestrator.get_settings"):
+        agent = _make_agent()
+        mock_proposer = MagicMock()
+        mock_proposer.return_value = ProposerOutput(
+            feature_name="feat_a",  # exists -> invalid ADD, so we skip after proposing
+            feature_explanation="explanation",
+            feature_operation=FeatureOp.ADD,
+        )
+        agent.proposer = mock_proposer
+
+        result = agent.forward(previous_output=previous_output)
+
+        mock_proposer.assert_called_once()
+
+    # Proposed, rejected, burned -> the index advances on this path.
+    assert result.suggestion_index == 2
+
+
+def test_unhandled_operation_skips_instead_of_removing(caplog):
+    """An operation outside ``FeatureOp`` must never reach the REMOVE arm.
+
+    ``is_valid_proposer`` rejects unrecognised ops, so this is unreachable
+    today -- but it used to be held only by a bare ``assert``, which ``python -O``
+    strips, turning a malformed op into a silent deletion of an existing feature.
+    Patching the predicate to accept simulates that predicate being relaxed.
+    """
+    previous_output = _make_output(feature_plans={"feat_a": _make_plan("feat_a")})
+
+    with patch("ctra.agents.orchestrator.get_settings"), patch(
+        "ctra.agents.orchestrator.is_valid_proposer", return_value=True
+    ):
+        agent = _make_agent()
+        mock_proposer = MagicMock()
+        mock_proposer.return_value = ProposerOutput(
+            feature_name="feat_a",
+            feature_explanation="malformed",
+            feature_operation="obliterate",  # type: ignore[arg-type]
+        )
+        agent.proposer = mock_proposer
+
+        with caplog.at_level("ERROR"):
+            result = agent.forward(previous_output=previous_output)
+
+    assert "Unhandled feature operation" in caplog.text
+    # The feature the op named must survive -- this is the -O hazard.
+    assert "feat_a" in result.feature_plans
+    assert result.feature_plans == previous_output.feature_plans
+    assert result.suggestion_index == previous_output.suggestion_index + 1
 
 
 # ======================================================================
@@ -221,34 +306,21 @@ def test_invalid_planner_skips_planning_with_warning(caplog):
     """
     previous_output = _make_output(feature_plans={"feat_a": _make_plan("feat_a")})
 
-    with patch("ctra.agents.orchestrator.Agent.proposer") as mock_proposer, patch(
-        "ctra.agents.orchestrator.Agent.planner"
-    ) as mock_planner, patch(
-        "ctra.agents.orchestrator.Agent.initializer"
-    ), patch(
-        "ctra.agents.orchestrator.Agent.grouper"
-    ), patch(
-        "ctra.agents.orchestrator.Agent.evaluator"
-    ), patch(
-        "ctra.agents.orchestrator.get_settings"
-    ), patch(
+    with patch("ctra.agents.orchestrator.get_settings"), patch(
         "ctra.agents.orchestrator.compute_features"
     ):
-        agent = Agent(
-            task=Task.TRIAL_OUTCOME_PHASE_2,
-            X_train=pd.Series(["NCT001", "NCT002"]),
-            y_train=pd.Series([1, 0]),
-            X_val=pd.Series(["NCT003"]),
-            y_val=pd.Series([1]),
-        )
+        agent = _make_agent()
 
         # Mock proposer to return ADD
+        mock_proposer = MagicMock()
         mock_proposer.return_value = ProposerOutput(
             feature_name="feat_b",
             feature_explanation="New feature idea",
             feature_operation=FeatureOp.ADD,
         )
         agent.proposer = mock_proposer
+
+        mock_planner = MagicMock()
 
         # Mock planner to return invalid plan (categorical without possible_values)
         invalid_plan = FeaturePlan(
@@ -264,7 +336,7 @@ def test_invalid_planner_skips_planning_with_warning(caplog):
         agent.planner = mock_planner
 
         with caplog.at_level("WARNING"):
-            result = agent.forward(previous_output=previous_output, iteration=1)
+            result = agent.forward(previous_output=previous_output)
 
         # Assert feature_plans unchanged (feat_b not added)
         assert "feat_b" not in result.feature_plans
@@ -279,10 +351,6 @@ def test_invalid_planner_skips_planning_with_warning(caplog):
 # ======================================================================
 
 
-def test_invalid_grouper_falls_back_to_one_per_group():
-    """Site 3: Invalid grouper result → fall back to one-feature-per-group partition.
-
-    This test is deferred to test_compute_features.py since Site 3 is in feature_builder.py.
-    The grouper fallback is integration-tested via compute_features tests.
-    """
-    pass  # See test_compute_features.py for Site 3 coverage
+# Site 3 lives in ``feature_builder.compute_features`` and is covered by
+# ``test_compute_features.py::TestGrouperPartitionFallback``. No placeholder
+# test here: an empty test body asserts nothing but counts as a pass.

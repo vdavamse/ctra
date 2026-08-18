@@ -11,7 +11,7 @@ authors = [
 
 dependencies = [
     # LLM orchestration
-    "dspy-ai>=2.5",
+    "dspy-ai>=3.0",
     # Classical ML
     "xgboost>=2.0",
     "shap>=0.44",

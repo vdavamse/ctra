@@ -170,6 +170,101 @@ class TestAgentOutput:
         output2 = output._replace(suggestion_index=1)
         assert output2.get_next_suggestion() == "suggest_b"
 
+    # -- Bounds safety ---------------------------------------------------
+    #
+    # ``suggestion_index`` is a monotonic "dead suggestions burned" counter,
+    # not an array cursor: the orchestrator advances it past the end when a
+    # proposal is rejected, and MCTS replays that value on the next rollout.
+    # The read therefore has to tolerate an out-of-range index -- previously
+    # it raised IndexError and killed the whole agent subprocess.
+
+    def test_get_next_suggestion_clamps_index_past_end(self) -> None:
+        output = _make_output(suggestions=["suggest_a", "suggest_b"])
+        exhausted = output._replace(suggestion_index=7)
+        assert exhausted.get_next_suggestion() == "suggest_b"
+
+    def test_get_next_suggestion_clamps_single_suggestion(self) -> None:
+        """The exact shape the orchestrator skip path produces."""
+        output = _make_output(suggestions=["only_one"])
+        assert output._replace(suggestion_index=3).get_next_suggestion() == "only_one"
+
+    def test_get_next_suggestion_clamps_negative_index(self) -> None:
+        output = _make_output(suggestions=["suggest_a", "suggest_b"])
+        assert output._replace(suggestion_index=-5).get_next_suggestion() == "suggest_a"
+
+    def test_get_next_suggestion_warns_when_out_of_range(self, caplog) -> None:
+        output = _make_output(suggestions=["suggest_a"])._replace(suggestion_index=4)
+        with caplog.at_level("WARNING"):
+            output.get_next_suggestion()
+        assert "out of range" in caplog.text
+
+    # -- Exhaustion ------------------------------------------------------
+    #
+    # The clamp above keeps the read safe but makes exhaustion invisible: the
+    # last suggestion is replayed forever, so the proposer burns N=3 LM calls
+    # per rollout re-proposing against a suggestion already rejected. This flag
+    # is what lets ``Agent.forward`` tell a replay from a fresh suggestion.
+
+    def test_not_exhausted_within_range(self) -> None:
+        output = _make_output(suggestions=["suggest_a", "suggest_b"])
+        assert output.suggestions_exhausted is False
+        assert output._replace(suggestion_index=1).suggestions_exhausted is False
+
+    def test_exhausted_at_and_past_end(self) -> None:
+        """Index == len is already past the last valid cursor (0-based)."""
+        output = _make_output(suggestions=["suggest_a", "suggest_b"])
+        assert output._replace(suggestion_index=2).suggestions_exhausted is True
+        assert output._replace(suggestion_index=9).suggestions_exhausted is True
+
+    def test_exhaustion_agrees_with_the_clamp(self) -> None:
+        """The flag must be True exactly when the read starts replaying.
+
+        Without this pairing the two could drift, which is the failure mode the
+        whole reward/check-drift refactor exists to prevent.
+        """
+        output = _make_output(suggestions=["suggest_a", "suggest_b"])
+        for idx in range(6):
+            at = output._replace(suggestion_index=idx)
+            replaying = at.get_next_suggestion() == "suggest_b" and idx != 1
+            assert at.suggestions_exhausted is replaying
+
+    def test_empty_suggestions_is_not_exhaustion(self) -> None:
+        """Empty != exhausted.
+
+        ``FeatureProposer.forward`` deliberately degrades an empty suggestion
+        list to ``""`` so the proposal is still judged on its merits. Reporting
+        exhaustion here would short-circuit that and skip the iteration instead.
+        """
+        output = _make_output()
+        empty = output._replace(
+            eval_outputs={
+                name: EvalOutput(model_eval_result=ev.model_eval_result, suggestions=[])
+                for name, ev in output.eval_outputs.items()
+            },
+            suggestion_index=5,
+        )
+        assert empty.suggestions_exhausted is False
+
+    def test_unreadable_state_is_not_exhaustion(self) -> None:
+        """A diagnostic failure must never silently halt the search."""
+        output = _make_output(suggestions=["suggest_a"])
+        assert output._replace(eval_outputs={}).suggestions_exhausted is False
+        # eval_outputs / test_eval_outputs disagreeing -> KeyError, not a crash.
+        assert output._replace(test_eval_outputs={}).suggestions_exhausted is False
+
+    def test_get_next_suggestion_no_suggestions_raises_value_error(self) -> None:
+        """Empty suggestions is unrecoverable -- but must not surface as IndexError."""
+        # Built explicitly: ``_make_output`` treats an empty list as "use the default".
+        output = _make_output()
+        empty = output._replace(
+            eval_outputs={
+                name: EvalOutput(model_eval_result=ev.model_eval_result, suggestions=[])
+                for name, ev in output.eval_outputs.items()
+            }
+        )
+        with pytest.raises(ValueError, match="No suggestions"):
+            empty.get_next_suggestion()
+
     def test_single_model(self) -> None:
         output = _make_output({"xgboost": 0.75})
         best_eval, _ = output.get_best_eval_output()

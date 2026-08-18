@@ -137,8 +137,10 @@ class TestEmptyEvalOutputs:
         but return an AgentOutput with empty eval_outputs and a clear warning."""
         from ctra.agents.orchestrator import Agent
 
-        # Bypass dspy.Refine
-        monkeypatch.setattr("dspy.Refine", lambda module, **kw: module)
+        # Bypass the Refine wrapper
+        monkeypatch.setattr(
+            "ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module
+        )
 
         mock_orchestrator_settings = MagicMock()
         mock_orchestrator_settings.mcts.feature_cache_dir = "/tmp/test_cache"
@@ -197,7 +199,9 @@ class TestNoneExplanationsCoverage:
         """none_explanations from training set should be included in AgentOutput."""
         from ctra.agents.orchestrator import Agent
 
-        monkeypatch.setattr("dspy.Refine", lambda module, **kw: module)
+        monkeypatch.setattr(
+            "ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module
+        )
 
         mock_orchestrator_settings = MagicMock()
         mock_orchestrator_settings.mcts.feature_cache_dir = "/tmp/test_cache"
@@ -278,7 +282,9 @@ class TestNoneExplanationsCoverage:
         """none_explanations from test set should be included in AgentOutput."""
         from ctra.agents.orchestrator import Agent
 
-        monkeypatch.setattr("dspy.Refine", lambda module, **kw: module)
+        monkeypatch.setattr(
+            "ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module
+        )
 
         mock_orchestrator_settings = MagicMock()
         mock_orchestrator_settings.mcts.feature_cache_dir = "/tmp/test_cache"
@@ -363,7 +369,9 @@ class TestIterNDiagnosticsPreservation:
         from ctra.agents.data_models import FeatureOp, ProposerOutput
         from ctra.agents.orchestrator import Agent
 
-        monkeypatch.setattr("dspy.Refine", lambda module, **kw: module)
+        monkeypatch.setattr(
+            "ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module
+        )
 
         mock_orchestrator_settings = MagicMock()
         mock_orchestrator_settings.mcts.feature_cache_dir = "/tmp/test_cache"
@@ -580,7 +588,9 @@ class TestIterNDiagnosticsPreservation:
         """Helper: build a fully-mocked Agent for iter-N tests."""
         from ctra.agents.orchestrator import Agent
 
-        monkeypatch.setattr("dspy.Refine", lambda module, **kw: module)
+        monkeypatch.setattr(
+            "ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module
+        )
 
         mock_orchestrator_settings = MagicMock()
         mock_orchestrator_settings.mcts.feature_cache_dir = "/tmp/test_cache"
