@@ -214,3 +214,17 @@ class TestTwoBranchesShareStore:
             1 for nctid in nctids if builder_meta[nctid]["feat_x"].get("research_results")
         )
         assert research_count / len(nctids) == 1.0
+
+
+class TestExceptionSentinelDistinctness:
+    """Test that exception and cached sentinels are distinct and don't collide."""
+
+    def test_exception_sentinel_is_distinct_from_cached_sentinel(self) -> None:
+        """BUILDER_EXCEPTION_RESEARCH_SENTINEL must not equal the cached sentinel."""
+        from ctra.agents.data_models import BUILDER_EXCEPTION_RESEARCH_SENTINEL
+
+        # The cached sentinel is hardcoded in compute_features
+        cached_sentinel = "[cached]"
+
+        assert cached_sentinel != BUILDER_EXCEPTION_RESEARCH_SENTINEL
+        assert BUILDER_EXCEPTION_RESEARCH_SENTINEL == "[builder_exception]"

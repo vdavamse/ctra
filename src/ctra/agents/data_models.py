@@ -141,6 +141,17 @@ class Task(StrEnum):
 # Dataclasses for diagnostics
 # ---------------------------------------------------------------------------
 
+# Sentinels marking a trial-group build that crashed inside
+# ``WrappedFeatureBuilder.__call__``. Written by the builder's exception path,
+# read by ``_build_builder_diagnostics`` (reason classification) and by
+# ``BuilderDiagnostics.format_for_llm`` (attribution). Defined here -- the leaf
+# module both sides already import -- so the writer and the two readers cannot
+# drift apart.
+BUILDER_EXCEPTION_REASON = "builder_exception"
+BUILDER_EXCEPTION_PREFIX = f"{BUILDER_EXCEPTION_REASON}:"
+BUILDER_EXCEPTION_RESEARCH_SENTINEL = "[builder_exception]"
+BUILDER_EXCEPTION_MSG_MAXLEN = 200
+
 
 @dataclass
 class FeatureDiagnostic:
@@ -173,17 +184,22 @@ class BuilderDiagnostics:
             if fd.none_rate < 0.05:
                 continue  # skip features with very low None rates
 
-            # Attribution heuristic: RESEARCHER if very high none rate and low research coverage,
-            # BUILDER if moderate none rate but good research coverage, else UNCLEAR
-            attribution = (
-                "RESEARCHER"
-                if fd.none_rate > 0.8 and fd.research_coverage_score < 0.3
-                else (
-                    "BUILDER"
-                    if fd.none_rate > 0.3 and fd.research_coverage_score > 0.5
-                    else "UNCLEAR"
-                )
-            )
+            # Attribution heuristic:
+            # - BUILDER, unconditionally, when the dominant failure is a builder
+            #   crash: the feature idea was never actually tested, so it must not
+            #   be charged to the RESEARCHER, and research_coverage is meaningless
+            #   on that path (nothing was researched).
+            # - RESEARCHER if very high none rate and low research coverage.
+            # - BUILDER if moderate none rate but good research coverage.
+            # - else UNCLEAR.
+            if fd.dominant_failure_reason == BUILDER_EXCEPTION_REASON:
+                attribution = "BUILDER"
+            elif fd.none_rate > 0.8 and fd.research_coverage_score < 0.3:
+                attribution = "RESEARCHER"
+            elif fd.none_rate > 0.3 and fd.research_coverage_score > 0.5:
+                attribution = "BUILDER"
+            else:
+                attribution = "UNCLEAR"
             lines.append(
                 f"- **{fd.feature_name}**: None rate={fd.none_rate:.0%}, "
                 f"failure='{fd.dominant_failure_reason}', "

@@ -118,21 +118,37 @@ class Evaluator(dspy.Module):  # type: ignore[misc]
         example_suggestions: list[str] = []
 
         if len(model_eval_result.wrong_idxs) > 0:
-            picks = self.rng.choice(
-                model_eval_result.wrong_idxs,
-                size=min(3, len(model_eval_result.wrong_idxs)),
-                replace=False,
-            )
+            # Draw POSITIONS into the wrong-prediction list -- never values out
+            # of it. ``wrong_idxs`` holds positions in the *full* evaluation
+            # frame, while ``wrong_df`` is the subset ``df.iloc[wrong_idxs]``
+            # that KEEPS the full frame's index labels (feature_utils.eval_model).
+            # So neither lookup is correct with a full-frame position:
+            #   .loc[idx]  -> KeyError on any non-RangeIndex frame, and a
+            #                 DataFrame (not a Series) on duplicate labels;
+            #   .iloc[idx] -> silently the WRONG ROW whenever wrong_idxs[0] != 0.
+            # Positional draws into the subset index rows and preds consistently.
+            n_wrong = len(model_eval_result.wrong_idxs)
+            if n_wrong != len(model_eval_result.wrong_df) or n_wrong != len(
+                model_eval_result.wrong_preds
+            ):
+                logger.warning(
+                    "Misaligned wrong-prediction arrays (idxs=%d, df=%d, preds=%d); "
+                    "sampling from the common prefix",
+                    n_wrong,
+                    len(model_eval_result.wrong_df),
+                    len(model_eval_result.wrong_preds),
+                )
+                n_wrong = min(
+                    n_wrong, len(model_eval_result.wrong_df), len(model_eval_result.wrong_preds)
+                )
 
-            wrong_idx_to_preds = dict(
-                zip(model_eval_result.wrong_idxs, model_eval_result.wrong_preds, strict=True)
-            )
+            picks = self.rng.choice(n_wrong, size=min(3, n_wrong), replace=False)
 
             # Step 3: Per-trial ReAct analysis
-            for pick in picks:
-                entry = model_eval_result.wrong_df.loc[pick]
+            for pos in picks:
+                entry = model_eval_result.wrong_df.iloc[pos]
                 pick_nct_id = str(entry.get("id", entry.name))
-                pred = wrong_idx_to_preds[pick]
+                pred = model_eval_result.wrong_preds[pos]
                 correct = 1 if pred == 0 else 0
 
                 # Build none_explanations context for this trial

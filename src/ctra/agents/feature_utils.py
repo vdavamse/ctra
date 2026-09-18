@@ -242,6 +242,13 @@ def eval_model(
         ``ModelEvalResult`` with metrics, interaction values (populated by
         orchestrator after model-specific explainer runs), and wrong prediction
         details.
+
+    Note:
+        ``wrong_idxs`` are **positions in ``df``**; ``wrong_df`` is ``df.iloc[wrong_idxs]``
+        and therefore retains ``df``'s index labels. ``wrong_idxs``, ``wrong_preds``
+        and ``wrong_df`` are positionally aligned with each other; consumers must
+        index all three positionally and must not use ``wrong_idxs`` values as ``.loc``
+        labels.
     """
     y_true_arr = np.asarray(y_true)
     y_pred = pipeline.predict(df)
