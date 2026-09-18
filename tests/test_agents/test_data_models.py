@@ -369,6 +369,41 @@ class TestBuilderDiagnosticsAttribution:
         # Without the override, this would be UNCLEAR (moderate none_rate + low coverage)
         assert "attribution=BUILDER" in formatted
 
+    def test_builder_omitted_beats_researcher_heuristic(self) -> None:
+        """An omission after retries is attributed BUILDER, never RESEARCHER.
+
+        none_rate=1.0 with coverage=0.0 is exactly the RESEARCHER arm; without
+        the override the omission would be charged to the feature idea even
+        though research ran and the Construct LLM simply skipped it.
+        """
+        from ctra.agents.data_models import BuilderDiagnostics, FeatureDiagnostic
+
+        fd = FeatureDiagnostic(
+            feature_name="feat",
+            none_rate=1.0,
+            dominant_failure_reason="builder_omitted",
+            research_coverage_score=0.0,
+        )
+        formatted = BuilderDiagnostics(feature_diagnostics=[fd]).format_for_llm()
+
+        assert "attribution=BUILDER" in formatted
+        assert "attribution=RESEARCHER" not in formatted
+
+    def test_builder_omitted_note_differs_from_the_crash_note(self) -> None:
+        """The omission line carries its own note, not the crash note."""
+        from ctra.agents.data_models import BuilderDiagnostics, FeatureDiagnostic
+
+        fd = FeatureDiagnostic(
+            feature_name="feat",
+            none_rate=1.0,
+            dominant_failure_reason="builder_omitted",
+            research_coverage_score=1.0,
+        )
+        formatted = BuilderDiagnostics(feature_diagnostics=[fd]).format_for_llm()
+
+        assert "note=construct LLM omitted" in formatted
+        assert "note=builder crashed" not in formatted
+
     def test_attribution_vocabulary_unchanged(self) -> None:
         """All emitted attributions must be in {RESEARCHER, BUILDER, UNCLEAR}."""
         import re
@@ -379,6 +414,8 @@ class TestBuilderDiagnosticsAttribution:
         test_cases = [
             # builder_exception overrides all heuristics -> BUILDER
             (0.9, 0.1, "builder_exception", "BUILDER"),
+            # builder_omitted overrides all heuristics -> BUILDER
+            (0.9, 0.1, "builder_omitted", "BUILDER"),
             # High none_rate + low coverage -> RESEARCHER
             (0.9, 0.1, "extraction_error", "RESEARCHER"),
             # Moderate none_rate + good coverage -> BUILDER

@@ -11,6 +11,8 @@ from unittest.mock import MagicMock
 import pytest
 
 try:
+    import dspy
+
     from ctra.agents.data_models import (
         AgentOutput,
         FeatureOp,
@@ -26,6 +28,7 @@ try:
         proposer_reward,
     )
     from tests.test_agents.conftest import (
+        builder_prediction,
         grouper_prediction,
         planner_prediction,
         proposer_prediction,
@@ -258,3 +261,31 @@ class TestBuilderReward:
 
     def test_exception_returns_zero(self) -> None:
         assert builder_reward({}, "bad") == 0.0
+
+    # --- dspy.Prediction mirrors (issue #6: FeatureBuilder.forward returns one) ---
+
+    def test_complete_prediction_scores_one(self) -> None:
+        """FENCE: do not "simplify" unwrap_builder_result out of builder_reward.
+
+        With the helper removed, ``values, _meta = result`` binds the KEY STRING
+        'feature_values', ``set('feature_values')`` is a set of *characters*,
+        ``planned.issubset(...)`` is False and this case scores 0.0 -- which in
+        production burns 3 rollouts + 2 OfferFeedback calls on every build.
+        """
+        kwargs = {
+            "feature_plan_group": {"feat_a": _make_plan("feat_a"), "feat_b": _make_plan("feat_b")}
+        }
+        result = builder_prediction({"feat_a": {"value": 1.0}, "feat_b": {"value": 2.0}})
+        assert builder_reward(kwargs, result) == 1.0
+
+    def test_partial_prediction_scores_zero(self) -> None:
+        kwargs = {
+            "feature_plan_group": {"feat_a": _make_plan("feat_a"), "feat_b": _make_plan("feat_b")}
+        }
+        result = builder_prediction({"feat_a": {"value": 1.0}})  # missing feat_b
+        assert builder_reward(kwargs, result) == 0.0
+
+    def test_malformed_prediction_scores_zero(self) -> None:
+        """A Prediction lacking 'feature_values' is a retry, not a crash."""
+        kwargs = {"feature_plan_group": {"feat_a": _make_plan("feat_a")}}
+        assert builder_reward(kwargs, dspy.Prediction(metadata={})) == 0.0

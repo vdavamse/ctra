@@ -25,14 +25,17 @@ try:
         ProposerOutput,
     )
     from ctra.agents.reward_fns import (
+        is_valid_builder,
         is_valid_grouper,
         is_valid_planner,
         is_valid_proposer,
+        unwrap_builder_result,
         unwrap_groups,
         unwrap_planner_result,
         unwrap_proposal,
     )
     from tests.test_agents.conftest import (
+        builder_prediction,
         grouper_prediction,
         planner_prediction,
         proposer_prediction,
@@ -336,6 +339,56 @@ class TestIsValidGrouper:
 
 
 # ======================================================================
+# is_valid_builder
+# ======================================================================
+
+
+class TestIsValidBuilder:
+    """Completeness predicate for the builder (issue #6).
+
+    ``FeatureBuilder.forward`` no longer raises on an incomplete group; this
+    predicate is what turns a partial build into a Refine retry.
+    """
+
+    def _two_plans(self) -> dict[str, dict[str, FeaturePlan]]:
+        return {
+            "feature_plan_group": {"feat_a": _make_plan("feat_a"), "feat_b": _make_plan("feat_b")}
+        }
+
+    def test_complete_legacy_tuple_is_valid(self) -> None:
+        result = ({"feat_a": {"value": 1.0}, "feat_b": {"value": 2.0}}, {})
+        assert is_valid_builder(self._two_plans(), result) is True
+
+    def test_missing_feature_in_legacy_tuple_is_invalid(self) -> None:
+        result = ({"feat_a": {"value": 1.0}}, {})
+        assert is_valid_builder(self._two_plans(), result) is False
+
+    def test_complete_prediction_is_valid(self) -> None:
+        """The discriminating case: a tuple-unpack of the Prediction binds the
+        strings 'feature_values'/'metadata' and would return False here."""
+        result = builder_prediction({"feat_a": {"value": 1.0}, "feat_b": {"value": 2.0}})
+        assert is_valid_builder(self._two_plans(), result) is True
+
+    def test_missing_feature_in_prediction_is_invalid(self) -> None:
+        result = builder_prediction({"feat_a": {"value": 1.0}})
+        assert is_valid_builder(self._two_plans(), result) is False
+
+    def test_prediction_missing_feature_values_field_is_false(self) -> None:
+        """A malformed Prediction is reported invalid, not raised."""
+        result = dspy.Prediction(metadata={})
+        assert is_valid_builder(self._two_plans(), result) is False
+
+    def test_extra_features_still_valid(self) -> None:
+        """issubset semantics: extra keys do not invalidate the build."""
+        kwargs = {"feature_plan_group": {"feat_a": _make_plan("feat_a")}}
+        result = builder_prediction({"feat_a": {"value": 1.0}, "feat_extra": {"value": 3.0}})
+        assert is_valid_builder(kwargs, result) is True
+
+    def test_exception_returns_false(self) -> None:
+        assert is_valid_builder({}, "bad") is False
+
+
+# ======================================================================
 # unwrap_* helpers: a Prediction lacking its field must not fall through
 # ======================================================================
 
@@ -360,12 +413,33 @@ class TestUnwrapHelpersRejectMalformedPredictions:
         with pytest.raises(TypeError, match=r"FeatureGrouper Prediction lacks 'groups'"):
             unwrap_groups(dspy.Prediction(some_other_field="value"))
 
+    @pytest.mark.parametrize(
+        ("prediction", "missing"),
+        [
+            (dspy.Prediction(feature_values={}), "metadata"),
+            (dspy.Prediction(metadata={}), "feature_values"),
+        ],
+        ids=["only_feature_values", "only_metadata"],
+    )
+    def test_unwrap_builder_result_raises_on_missing_field(
+        self, prediction: dspy.Prediction, missing: str
+    ) -> None:
+        with pytest.raises(TypeError, match=rf"FeatureBuilder Prediction lacks '{missing}'"):
+            unwrap_builder_result(prediction)
+
+    def test_unwrap_builder_result_returns_the_two_fields(self) -> None:
+        values = {"feat_a": {"value": 1.0}}
+        meta = {"research_results": "r"}
+        assert unwrap_builder_result(builder_prediction(values, meta)) == (values, meta)
+
     def test_legacy_shapes_still_pass_through(self) -> None:
         legacy_prop = ProposerOutput(
             feature_operation=FeatureOp.ADD, feature_name="f", feature_explanation="e"
         )
         legacy_tuple = (_make_plan("feat_a"), None)
         legacy_groups = [{"feat_a": _make_plan("feat_a")}]
+        legacy_build = ({"feat_a": {"value": 1.0}}, {})
         assert unwrap_proposal(legacy_prop) is legacy_prop
         assert unwrap_planner_result(legacy_tuple) is legacy_tuple
         assert unwrap_groups(legacy_groups) is legacy_groups
+        assert unwrap_builder_result(legacy_build) is legacy_build

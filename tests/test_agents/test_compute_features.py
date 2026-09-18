@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 try:
     from ctra.agents.data_models import FeaturePlan, FeatureSource, FeatureType
     from ctra.agents.feature_builder import compute_features
-    from tests.test_agents.conftest import grouper_prediction
+    from tests.test_agents.conftest import builder_prediction, grouper_prediction
 
     _HAS_DSPY = True
 except ImportError:
@@ -581,6 +581,111 @@ class TestBuilderExceptionMetadata:
                 str(feature_store_dir), "phase2", "NCT001", "feat_a", plans["feat_a"]
             )
             assert cached is None
+
+
+class TestBuilderOmissionMetadata:
+    """Issue #6: a partial build stays visible (R12) and column-complete (R9).
+
+    Shaped like ``TestBuilderExceptionMetadata`` above, but the double returns a
+    *partial* ``dspy.Prediction`` instead of raising. ``ResettingRefine`` is
+    patched to identity so the retry loop is out of the picture.
+    """
+
+    @staticmethod
+    def _partial_double(built: dict[str, dict[str, object]]):
+        """FeatureBuilder double returning ``built`` with real research metadata."""
+        instance = MagicMock(
+            side_effect=lambda **kw: builder_prediction(
+                dict(built), {"research_results": "real research", "builder_reasoning": "r"}
+            )
+        )
+        return (
+            patch("ctra.agents.feature_builder.FeatureBuilder", return_value=instance),
+            patch(
+                "ctra.agents.feature_builder.ResettingRefine",
+                side_effect=lambda module, **kw: module,
+            ),
+        )
+
+    def test_partial_build_is_visible_to_diagnostics(self) -> None:
+        """R12: the omitted feature reports none_rate 1.0 / builder_omitted, and
+        the built sibling is NOT flagged -- the diagnostic discriminates."""
+        from ctra.agents.orchestrator import _build_builder_diagnostics
+
+        plans = {"feat_a": _make_plan("feat_a"), "feat_b": _make_plan("feat_b")}
+        builder_cls, refine_cls = self._partial_double({"feat_a": {"value": 1.0}})
+
+        with builder_cls, refine_cls:
+            raw_features, none_explanations, builder_meta = compute_features(
+                grouper=lambda feature_plans, task: [feature_plans],
+                nctids=["NCT001"],
+                task_description="test",
+                plans=plans,
+                feature_store_dir=None,
+                feature_store_enabled=False,
+            )
+
+        assert raw_features["NCT001"] == {"feat_a": {"value": 1.0}, "feat_b": {"value": None}}
+        # Not an exception group: research metadata is the real thing.
+        assert builder_meta["NCT001"]["feat_b"]["research_results"] == "real research"
+
+        diagnostics = _build_builder_diagnostics(none_explanations, plans, builder_meta)
+        by_name = {d.feature_name: d for d in diagnostics.feature_diagnostics}
+        assert by_name["feat_b"].none_rate == 1.0
+        assert by_name["feat_b"].dominant_failure_reason == "builder_omitted"
+        assert by_name["feat_a"].none_rate == 0.0
+
+        formatted = diagnostics.format_for_llm()
+        assert "**feat_b**" in formatted
+        assert "attribution=BUILDER" in formatted
+        assert "note=construct LLM omitted" in formatted
+        # The healthy sibling is skipped (none_rate < 0.05), proving the
+        # diagnostic flags the omission specifically, not everything.
+        assert "**feat_a**" not in formatted
+
+    def test_omitted_feature_gets_a_dataframe_column(self) -> None:
+        """R9: without the fill, ``pd.DataFrame(rows)`` never emits the column and
+        ``build_feature_type_transformer`` (which names columns from the plans)
+        fails at fit, or ``val_df[train_cols]`` raises KeyError across splits."""
+        from ctra.agents.feature_utils import features_to_df
+
+        plans = {"feat_a": _make_plan("feat_a"), "feat_b": _make_plan("feat_b")}
+        builder_cls, refine_cls = self._partial_double({"feat_a": {"value": 1.0}})
+
+        with builder_cls, refine_cls:
+            raw_features, _, _ = compute_features(
+                grouper=lambda feature_plans, task: [feature_plans],
+                nctids=["NCT001", "NCT002"],
+                task_description="test",
+                plans=plans,
+                feature_store_dir=None,
+                feature_store_enabled=False,
+            )
+
+        df = features_to_df(raw_features)
+        assert "feat_b--value" in df.columns
+        assert len(df) == 2
+        assert df["feat_b--value"].isna().all()
+        assert df["feat_a--value"].tolist() == [1.0, 1.0]
+
+    def test_omitted_sentinel_is_distinct_from_the_exception_and_cached_sentinels(
+        self,
+    ) -> None:
+        from ctra.agents.data_models import (
+            BUILDER_EXCEPTION_PREFIX,
+            BUILDER_EXCEPTION_REASON,
+            BUILDER_EXCEPTION_RESEARCH_SENTINEL,
+            BUILDER_OMITTED_PREFIX,
+            BUILDER_OMITTED_REASON,
+        )
+
+        assert BUILDER_OMITTED_REASON != BUILDER_EXCEPTION_REASON
+        assert not BUILDER_OMITTED_PREFIX.startswith(BUILDER_EXCEPTION_PREFIX)
+        assert not BUILDER_EXCEPTION_PREFIX.startswith(BUILDER_OMITTED_PREFIX)
+        assert f"{BUILDER_OMITTED_REASON}:" == BUILDER_OMITTED_PREFIX
+        for sentinel in (BUILDER_OMITTED_REASON, BUILDER_OMITTED_PREFIX):
+            assert sentinel != "[cached]"
+            assert sentinel != BUILDER_EXCEPTION_RESEARCH_SENTINEL
 
 
 # ---------------------------------------------------------------------------
