@@ -292,6 +292,11 @@ class MCTSSearch:
         else:
             # Resuming: root and previous nodes already restored
             assert self._root is not None, "Cannot resume: no root node. Load checkpoint first."
+            # Issue #7: the pickled dedupe set holds ``id()`` values from the
+            # previous process.  A fresh node can collide with one of them and
+            # have its first skip logged at DEBUG (a missing line), so start
+            # clean — one INFO line per node per process is the contract.
+            self._skip_logged = set()
 
         logger.info(
             "MCTS starting: %d initial features, %d rollouts planned (from %d)",
@@ -311,19 +316,33 @@ class MCTSSearch:
             node = self._select(self._root)
 
             # 2. EXPAND — generate children from feature operations
+            all_children_exhausted = False
             if node.visit_count > 0 and len(node.features) > 0:
                 children = self._expand(node)
                 if children:
                     # Issue #7 (R6): pick the first child that can still make
                     # progress.  With the expansion cap this is ``children[0]``
-                    # in every current scenario; the filter covers a parent that
-                    # was re-evaluated to fewer suggestions after its children
-                    # were born.  If none can, stay on the (visited) leaf.
-                    node = next((c for c in children if not self._is_exhausted(c)), node)
+                    # in every current scenario — children are born capped in
+                    # this same rollout — so the empty branch is unreachable
+                    # today; it covers a predicate or expander change that
+                    # could exhaust fresh children.  Re-evaluating the visited
+                    # leaf instead would be a pointless subprocess, so the
+                    # rollout ends with no evaluation.
+                    viable = [c for c in children if not self._is_exhausted(c)]
+                    if viable:
+                        node = viable[0]
+                    else:
+                        logger.info(
+                            "Rollout %d: every child of the selected leaf is exhausted (issue #7)",
+                            rollout + 1,
+                        )
+                        all_children_exhausted = True
 
             # 3. SIMULATE + 4. BACKPROPAGATE
             try:
-                if self._config.deep_simulation:
+                if all_children_exhausted:
+                    rollout_reward = None
+                elif self._config.deep_simulation:
                     best_obj, _best_node = self._simulate_deep(node, rollout)
                     # Backpropagation is handled inside _simulate_deep
                     # for each node on the deep path.  ``None`` = the whole
@@ -471,7 +490,7 @@ class MCTSSearch:
                 logger.debug(msg, len(candidates), n_suggestions)
             else:
                 self._truncation_logged = True
-                logger.info(msg, len(candidates), n_suggestions)
+                logger.warning(msg, len(candidates), n_suggestions)
             candidates = candidates[:n_suggestions]
 
         children: list[MCTSNode] = []
@@ -903,8 +922,9 @@ class MCTSSearch:
         #14 keeps a clean slate for its ``skipped`` flag.  ``getattr`` with a
         default is what lets a checkpoint pickled *before* this change resume —
         it unpickles without ``_skip_logged``.  ``id(node)`` is stable for the
-        lifetime of a search and meaningless across a resume; the only
-        consequence of a resume is one extra INFO line per node.
+        lifetime of a process and meaningless across a resume — a pickled set
+        would carry stale ids that a fresh node can collide with, silencing its
+        first INFO line — so ``search()`` resets the set on resume.
         """
         logged = getattr(self, "_skip_logged", None)
         if logged is None:

@@ -73,38 +73,27 @@ class _DeadEndRunner(OrchestratorLikeRunner):
 
 
 class _SkipCountingSearch(MCTSSearch):
-    """Counts ``_call_evaluate`` skips and rollouts that evaluated nothing.
+    """Records every ``_call_evaluate`` result, in order and per rollout.
 
-    ``skips`` proves the guard fired; ``noop_rollouts`` counts rollouts whose
-    ``rollout_reward`` was ``None`` (one rollout can contain several skips, or
-    a skip followed by a real evaluation, so the two are not interchangeable).
+    ``skips`` proves the guard fired; ``returned_by_rollout`` lets a test
+    derive which rollouts evaluated nothing from the evaluation results
+    themselves, independently of the ``on_rollout`` callback under test (one
+    rollout can contain several skips, or a skip followed by a real
+    evaluation, so a skip count alone says nothing about the callback).
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.skips = 0
-        self.noop_rollouts = 0
         self.returned: list[Any] = []
-
-    def search(
-        self, initial_features: list[str], on_rollout: Any = None, **kwargs: Any
-    ) -> MCTSNode:
-        evaluated: set[int] = set()
-
-        def _counting(rollout: int, node: MCTSNode, vector: Any) -> None:
-            evaluated.add(rollout)
-            if on_rollout is not None:
-                on_rollout(rollout, node, vector)
-
-        best = super().search(initial_features, on_rollout=_counting, **kwargs)
-        self.noop_rollouts = self._config.num_rollouts - len(evaluated)
-        return best
+        self.returned_by_rollout: dict[int, list[Any]] = {}
 
     def _call_evaluate(self, node: MCTSNode, rollout: int) -> Any:
         result = super()._call_evaluate(node, rollout)
         if result is None:
             self.skips += 1
         self.returned.append(result)
+        self.returned_by_rollout.setdefault(rollout, []).append(result)
         return result
 
 
@@ -341,8 +330,11 @@ def test_on_rollout_never_receives_none(deep: bool) -> None:
     search.search(initial_features=["f0"], on_rollout=on_rollout)
 
     assert search.skips > 0, "scenario did not exercise the guard"
-    assert search.noop_rollouts > 0
-    assert len(calls) == 8 - search.noop_rollouts
+    # Derived from the evaluation results, not from the callback under test.
+    assert set(search.returned_by_rollout) == set(range(8))
+    noop = {r for r, res in search.returned_by_rollout.items() if all(x is None for x in res)}
+    assert noop, "scenario produced no rollout that evaluated nothing"
+    assert {r for r, _, _ in calls} == set(range(8)) - noop
     for _rollout, _node, vector in calls:
         assert isinstance(vector, np.ndarray)
         assert vector.shape == (2,)
@@ -410,6 +402,39 @@ def test_log_skip_survives_checkpoint_without_skip_logged(caplog: pytest.LogCapt
     levels = [r.levelno for r in caplog.records if "Skipping evaluation" in r.getMessage()]
     assert levels == [logging.INFO, logging.DEBUG]
     assert search._skip_logged == {id(node)}
+
+
+def test_resume_resets_skip_logged_so_first_skip_is_info(caplog: pytest.LogCaptureFixture) -> None:
+    """A resumed search discards the pickled dedupe set: stale ``id()`` values must not silence a node.
+
+    The checkpoint's set holds ids from the previous process; a fresh node
+    can collide with one, and without the reset its first skip would go to
+    DEBUG — a missing INFO line, not an extra one.
+    """
+    runner = make_orchestrator_like_runner(["s0"], initial_features=["f0"])
+    config = _config(num_rollouts=3, deep_simulation=False)
+    search = MCTSSearch(runner=runner, task="phase2", config=config)
+    root = MCTSNode(features=["f0"], total_reward=np.zeros(2))
+    root.eval_output = runner("root", "phase2", None)
+    root.visit_count = 1
+    root.objective_history.append(search._wrap_result(np.array([0.7, 0.9])))
+    search._root, search._all_nodes = root, [root]
+    fresh = MCTSNode(features=["f0"], parent=root, suggestion_index=1, operation_detail="fresh")
+    # Simulate the stale checkpoint: the set already "knows" this node's id.
+    search._skip_logged = {id(fresh), 12345}
+
+    # Resume with no rollouts left to run: only the resume branch executes.
+    search.search(initial_features=["f0"], start_rollout=config.num_rollouts)
+    assert search._skip_logged == set()
+
+    with caplog.at_level(logging.DEBUG, logger="ctra.search.mcts"):
+        search._log_skip(fresh)
+        search._log_skip(fresh)
+
+    levels = [r.levelno for r in caplog.records if "Skipping evaluation" in r.getMessage()]
+    assert levels == [logging.INFO, logging.DEBUG]
+    assert search._skip_logged == {id(fresh)}
+    assert runner.evaluations == 1, "the resume must not re-evaluate the root"
 
 
 def test_deep_simulation_filters_exhausted_children_before_picking() -> None:
@@ -488,3 +513,44 @@ def test_skipped_unevaluated_start_node_is_not_expanded() -> None:
     assert exhausted.children == []
     assert search.all_nodes == [root, *children]
     assert exhausted.visit_count == 0 and exhausted.objective_history == []
+
+
+def test_shallow_rollout_with_all_fresh_children_exhausted_evaluates_nothing(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Shallow ``search()``: if every fresh child is exhausted, the rollout evaluates nothing.
+
+    Unreachable with the real predicate (children are born capped in the
+    same rollout), so the predicate is forced: every non-root node counts
+    as exhausted.  The visited leaf must not be re-evaluated in their place.
+    """
+    runner = make_orchestrator_like_runner(["s0", "s1"], initial_features=["f0"])
+    search = _SkipCountingSearch(
+        runner=runner,
+        task="phase2",
+        config=_config(num_rollouts=1, deep_simulation=False),
+    )
+    # One rollout: the root (visited) is selected and expanded.  A second
+    # rollout would legitimately select an unvisited child and evaluate it.
+    monkeypatch.setattr(search, "_is_exhausted", lambda node: node.parent is not None)
+    calls: list[int] = []
+
+    with caplog.at_level(logging.DEBUG, logger="ctra.search.mcts"):
+        best = search.search(initial_features=["f0"], on_rollout=lambda r, n, v: calls.append(r))
+
+    root = search.root
+    assert root is not None and best is root
+    assert runner.evaluations == 1, "only the root setup evaluation may run"
+    assert search.returned_by_rollout == {0: [search.returned[0]]}  # root setup only
+    assert search.skips == 0  # nothing reached the guard; nothing was evaluated
+    assert calls == []
+    assert root.visit_count == 1 and len(root.objective_history) == 1
+    assert len(root.children) == 2
+    for child in root.children:
+        assert child.visit_count == 0 and child.objective_history == []
+    exhausted_msgs = [
+        r
+        for r in caplog.records
+        if "every child of the selected leaf is exhausted" in r.getMessage()
+    ]
+    assert [r.levelno for r in exhausted_msgs] == [logging.INFO]
