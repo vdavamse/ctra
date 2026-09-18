@@ -1,31 +1,37 @@
 """Regression fence for issue #9: no test module may guard a required import.
 
-``dspy`` and ``shapiq`` are **required** dependencies (``pyproject.toml``
-``[project] dependencies``).  Wrapping their import -- or any first-party
-``ctra.*`` import -- in ``try: ... except ImportError`` and skipping the module
-turns real breakage into a green run.  That is how issue #2 shipped.
+Every ``[project] dependencies`` entry in ``pyproject.toml`` (``dspy``,
+``shapiq``, ``xgboost``, ...) is **required**.  Wrapping its import -- or any
+first-party ``ctra.*`` import -- in ``try: ... except ImportError`` and
+skipping turns real breakage into a green run.  That is how issue #2 shipped.
 
 Sanctioned alternative for a genuinely optional third-party dependency:
 ``pytest.importorskip("datasets")`` inside the test (see
 ``tests/test_rag/test_ner_eval.py``).  It names the dependency, it cannot go
 stale, and it cannot be defeated by a partially-imported package.
 
-Caught at module scope and inside class bodies (function bodies are exempt: a
-guard inside a test is loud by nature, see ``test_dspy_api_surface.py``):
+Caught at module scope and inside class bodies, including when nested in
+``if`` / ``for`` / ``while`` / ``with`` / ``try`` blocks (function bodies are
+not entered by this walker):
 
-* ``try`` with an ``except ImportError`` / ``except ModuleNotFoundError``
-  handler, named directly, in a tuple, or as an attribute
-  (``builtins.ImportError``);
+* ``try`` (or ``try``/``except*``) whose body contains an import and whose
+  handler is ``except ImportError`` / ``except ModuleNotFoundError``, named
+  directly, in a tuple, or as an attribute (``builtins.ImportError``);
 * ``try`` whose body contains an import and whose handler is ``except
   Exception``, ``except BaseException`` or a bare ``except:``;
 * ``with contextlib.suppress(ImportError)`` / ``with suppress(ModuleNotFoundError)``;
-* ``_HAS_*`` availability flags, including tuple targets;
 * the stale skip-reason strings of the removed guards.
 
 Caught anywhere in the file, function bodies included:
 
-* ``pytest.importorskip("dspy")`` / ``pytest.importorskip("shapiq")`` -- these
-  are required dependencies, so skipping on them is the same false green.
+* ``pytest.importorskip(...)`` on a required or first-party module, matched on
+  the top-level package: ``"ctra.agents.reward_fns"``, ``"dspy.utils.dummies"``
+  and ``"xgboost"`` are all rejected;
+* an ``except ImportError`` / ``except ModuleNotFoundError`` handler that calls
+  ``pytest.skip`` or ``pytest.importorskip``.  In a fixture or helper this
+  skips every test that uses it, which is the same false green.  A handler
+  that ``pytest.fail``s is loud and stays allowed (see
+  ``test_dspy_api_surface.py``).
 """
 
 from __future__ import annotations
@@ -38,7 +44,44 @@ SELF = Path(__file__).resolve()
 
 IMPORT_ERRORS = frozenset({"ImportError", "ModuleNotFoundError"})
 BROAD_EXCEPTIONS = frozenset({"Exception", "BaseException"})
-REQUIRED_DEPS = frozenset({"dspy", "shapiq"})
+SKIP_CALLS = frozenset({"skip", "importorskip"})
+
+# Top-level import names of every ``[project] dependencies`` entry in
+# ``pyproject.toml``, plus the first-party package.  Distribution names that
+# differ from their import name: dspy-ai -> dspy, scikit-learn -> sklearn,
+# pyyaml -> yaml, pydantic-settings -> pydantic_settings.  Keep in sync with
+# ``pyproject.toml`` when a required dependency is added or removed.
+REQUIRED_DEPS = frozenset(
+    {
+        "ctra",  # first-party
+        "dspy",
+        "xgboost",
+        "shap",
+        "shapiq",
+        "sklearn",
+        "polars",
+        "pandas",
+        "pyarrow",
+        "numpy",
+        "scipy",
+        "mlflow",
+        "joblib",
+        "pydantic",
+        "pydantic_settings",
+        "httpx",
+        "tenacity",
+        "tqdm",
+        "yaml",
+        "diskcache",
+        "pubchempy",
+        "dill",
+    }
+)
+
+# ``except*`` (Python 3.11+) has the same shape as ``try`` and guards the same way.
+_TRY_TYPES: tuple[type[ast.stmt], ...] = (ast.Try,) + (
+    (ast.TryStar,) if hasattr(ast, "TryStar") else ()
+)
 
 # Reason strings from the guards issue #9 removed; they must not come back.
 STALE_SKIP_REASONS = (
@@ -84,18 +127,19 @@ def _contains_import(stmts: list[ast.stmt]) -> bool:
 
 
 def _try_guard(stmt: ast.Try) -> str | None:
-    """Describe the guard a ``try`` statement is, or ``None``."""
+    """Describe the guard a ``try`` (or ``try``/``except*``) statement is, or ``None``."""
+    if not _contains_import(stmt.body):
+        return None
     for handler in stmt.handlers:
         names = _exception_names(handler.type)
         if names & IMPORT_ERRORS:
             return "'try/except ImportError' import guard"
-        broad = handler.type is None or bool(names & BROAD_EXCEPTIONS)
-        if broad and _contains_import(stmt.body):
+        if handler.type is None or names & BROAD_EXCEPTIONS:
             return "broad 'except' around an import"
     return None
 
 
-def _with_guard(stmt: ast.With) -> str | None:
+def _with_guard(stmt: ast.With | ast.AsyncWith) -> str | None:
     for item in stmt.items:
         call = item.context_expr
         if (
@@ -107,45 +151,44 @@ def _with_guard(stmt: ast.With) -> str | None:
     return None
 
 
-def _availability_flags(stmt: ast.Assign | ast.AnnAssign) -> list[str]:
-    """``_HAS_*`` names assigned, including inside tuple targets."""
-    targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
-    return [
-        node.id
-        for target in targets
-        for node in ast.walk(target)
-        if isinstance(node, ast.Name) and node.id.startswith("_HAS_")
-    ]
-
-
 def _scope_violations(path: Path, tree: ast.Module) -> list[str]:
-    """Guards at module scope or in class bodies; function bodies are not entered."""
+    """Guards at module scope or in class bodies; function bodies are not entered.
+
+    Compound statements (``if``/``for``/``while``/``with``/``try`` and their
+    async forms) are descended so nesting a guard in one does not hide it.
+    Each finding names the scope it was found in.
+    """
     out: list[str] = []
-    stack: list[ast.stmt] = list(tree.body)
+    stack: list[tuple[ast.stmt, str]] = [(s, "module-level") for s in tree.body]
     while stack:
-        stmt = stack.pop()
-        if isinstance(stmt, ast.Try):
+        stmt, scope = stack.pop()
+        if isinstance(stmt, _TRY_TYPES):
             if (what := _try_guard(stmt)) is not None:
-                out.append(f"{path}:{stmt.lineno}: module-level {what}")
-            stack.extend(stmt.body + stmt.orelse + stmt.finalbody)
+                out.append(f"{path}:{stmt.lineno}: {scope} {what}")
+            children = stmt.body + stmt.orelse + stmt.finalbody
             for handler in stmt.handlers:
-                stack.extend(handler.body)
-        elif isinstance(stmt, ast.With):
+                children = children + handler.body
+        elif isinstance(stmt, (ast.With, ast.AsyncWith)):
             if (what := _with_guard(stmt)) is not None:
-                out.append(f"{path}:{stmt.lineno}: module-level {what}")
-            stack.extend(stmt.body)
-        elif isinstance(stmt, ast.If):
-            stack.extend(stmt.body + stmt.orelse)
+                out.append(f"{path}:{stmt.lineno}: {scope} {what}")
+            children = stmt.body
+        elif isinstance(stmt, (ast.If, ast.For, ast.AsyncFor, ast.While)):
+            children = stmt.body + stmt.orelse
         elif isinstance(stmt, ast.ClassDef):
-            stack.extend(stmt.body)
-        elif isinstance(stmt, (ast.Assign, ast.AnnAssign)):
-            for name in _availability_flags(stmt):
-                out.append(f"{path}:{stmt.lineno}: module-level '{name}' availability flag")
+            stack.extend((s, f"class-level (in class {stmt.name})") for s in stmt.body)
+            continue
+        else:
+            continue
+        stack.extend((s, scope) for s in children)
     return out
 
 
 def _importorskip_violations(path: Path, tree: ast.Module) -> list[str]:
-    """``importorskip`` on a required dependency, anywhere in the file."""
+    """``importorskip`` on a required or first-party module, anywhere in the file.
+
+    Matched on the top-level package, so submodules (``"ctra.agents.reward_fns"``,
+    ``"dspy.utils.dummies"``) are rejected along with the package itself.
+    """
     out: list[str] = []
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call) and _callee_name(node) == "importorskip"):
@@ -154,10 +197,36 @@ def _importorskip_violations(path: Path, tree: ast.Module) -> list[str]:
         for kw in node.keywords:
             if kw.arg == "modname":
                 first = kw.value
-        if isinstance(first, ast.Constant) and first.value in REQUIRED_DEPS:
+        if not (isinstance(first, ast.Constant) and isinstance(first.value, str)):
+            continue
+        if first.value.split(".")[0] in REQUIRED_DEPS:
             out.append(
-                f"{path}:{node.lineno}: importorskip({first.value!r}) on a required dependency"
+                f"{path}:{node.lineno}: importorskip({first.value!r}) "
+                "on a required/first-party module"
             )
+    return out
+
+
+def _skipping_handler_violations(path: Path, tree: ast.Module) -> list[str]:
+    """``except ImportError`` handlers that skip instead of failing, at any depth.
+
+    Function bodies included: an autouse fixture or a helper that catches
+    ``ImportError`` and calls ``pytest.skip`` skips every test that uses it.
+    A handler that ``pytest.fail``s is loud and is not reported.
+    """
+    out: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ExceptHandler):
+            continue
+        if not _exception_names(node.type) & IMPORT_ERRORS:
+            continue
+        for call in (n for s in node.body for n in ast.walk(s) if isinstance(n, ast.Call)):
+            if _callee_name(call) in SKIP_CALLS:
+                out.append(
+                    f"{path}:{call.lineno}: 'except ImportError' handler calls "
+                    f"{_callee_name(call)}() instead of failing"
+                )
+                break
     return out
 
 
@@ -171,14 +240,15 @@ def test_no_module_level_import_guards_in_tests() -> None:
         tree = ast.parse(text)
         violations.extend(_scope_violations(path, tree))
         violations.extend(_importorskip_violations(path, tree))
+        violations.extend(_skipping_handler_violations(path, tree))
         for reason in STALE_SKIP_REASONS:
             if reason in text:
                 violations.append(f"{path}: stale skip reason {reason!r}")
 
     assert not violations, (
         "Import guards re-introduced in tests/ (issue #9).\n"
-        "dspy and shapiq are REQUIRED dependencies; a failed first-party import "
-        "must turn the suite RED, not skip it.\n"
+        "Every [project] dependency and every ctra.* module is REQUIRED; a failed "
+        "import must turn the suite RED, not skip it.\n"
         "For a genuinely optional dependency use pytest.importorskip(...) inside "
         "the test instead.\n\n" + "\n".join(sorted(violations))
     )
