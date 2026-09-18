@@ -390,10 +390,13 @@ class TestEvaluatorWrongRowSelection:
         """Duplicate index labels should be handled positionally, not with .loc."""
         import re
 
-        # Create fixture with duplicate labels to trigger the old .loc bug
+        # Duplicate labels: the old `.loc[pick]` code would return a 2-row DataFrame
+        # for a duplicated label (or KeyError for a missing one, since `wrong_idxs`
+        # holds n distinct positions but only n labels exist, so not every position
+        # can also be a label). The positional code must return one scalar row each.
         wrong_idxs = [0, 1, 2]
         wrong_preds = [1, 0, 1]
-        wrong_df_index = [0, 0, 1]  # Duplicate label at 0
+        wrong_df_index = [2, 2, 0]  # seed-42 draw order is [2, 0, 1]: old code hits the dup first
         model_result = _make_eval_result(
             roc_auc=0.7,
             wrong_idxs=wrong_idxs,

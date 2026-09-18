@@ -503,7 +503,10 @@ class TestBuilderExceptionMetadata:
 
     def test_builder_exception_message_is_truncated(self, tmp_path: Path) -> None:
         """Long exception messages should be truncated to BUILDER_EXCEPTION_MSG_MAXLEN."""
-        from ctra.agents.data_models import BUILDER_EXCEPTION_MSG_MAXLEN
+        from ctra.agents.data_models import (
+            BUILDER_EXCEPTION_MSG_MAXLEN,
+            BUILDER_EXCEPTION_PREFIX,
+        )
         from ctra.agents.feature_builder import WrappedFeatureBuilder
 
         plans = {"feat_a": _make_plan("feat_a")}
@@ -522,12 +525,11 @@ class TestBuilderExceptionMetadata:
             _, _, meta = builder(("NCT001", plans))
 
             reason = meta.get("none_feature_explanations", {}).get("feat_a", "")
-            # Reason format: "builder_exception: " + truncated(detail)
-            # where detail = "RuntimeError: " + message (truncated to MAXLEN - 3) + "..."
-            # Total length = len("builder_exception: ") + min(len(detail), MAXLEN)
+            # Reason format: f"{BUILDER_EXCEPTION_PREFIX} {detail}" where detail is
+            # "RuntimeError: " + message, truncated to MAXLEN - 3 chars plus "...".
             assert reason.endswith("...")
-            # Exact length: prefix + space + (MAXLEN truncated to fit "...")
-            expected_length = len("builder_exception: ") + BUILDER_EXCEPTION_MSG_MAXLEN
+            # Exact length: prefix + one space + MAXLEN (truncation is deterministic).
+            expected_length = len(BUILDER_EXCEPTION_PREFIX) + 1 + BUILDER_EXCEPTION_MSG_MAXLEN
             assert len(reason) == expected_length
 
     def test_builder_exception_reason_names_the_exception_type(self, tmp_path: Path) -> None:
