@@ -389,7 +389,7 @@ class _PartialBuilder(dspy.Module):  # type: ignore[misc]
     ``Prediction`` return that covers only ``feat_a`` (reward 0.0 every attempt).
 
     A real ``dspy.Module`` rather than a MagicMock, because the fence is about
-    which LM ``refine.py:107-108``'s ``mod.set_lm()`` pins onto that predictor.
+    which LM ``refine.py:109``'s ``mod.set_lm()`` pins onto that predictor.
     """
 
     def __init__(self, task_description: str) -> None:

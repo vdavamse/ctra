@@ -17,7 +17,7 @@ The builder uses the **budget LM** (Claude Sonnet 4.6) via
 :func:`ctra.agents.lm_config.configure_budget_lm` to reduce cost for
 high-volume extraction calls. ``FeatureBuilder.forward`` enters
 ``dspy.context(lm=<budget>)`` itself, but under ``ResettingRefine`` that is
-not enough: ``refine.py:107-108`` deepcopies the module and ``set_lm()``s
+not enough: ``refine.py:108-109`` deepcopies the module and ``set_lm()``s
 ``dspy.settings.lm`` onto every ``__init__``-time predictor, which overrides
 the inner context. ``WrappedFeatureBuilder`` therefore enters the budget-LM
 context *around* the Refine call, so both the Construct phase and Refine's
@@ -189,7 +189,9 @@ class FeatureBuilder(dspy.Module):  # type: ignore[misc]
         # values and a builder_omitted explanation.
         missing_features = set(feature_plan_group.keys()) - set(feature_values.keys())
         if missing_features:
-            logger.warning(
+            # info, not warning: this fires on every Refine attempt; the wrapper
+            # logs one warning per group once the retries are exhausted.
+            logger.info(
                 "Construct step omitted %d/%d feature(s) for %s: %s",
                 len(missing_features),
                 len(feature_plan_group),
@@ -370,7 +372,7 @@ class WrappedFeatureBuilder:
         self._feature_store_dir = feature_store_dir
         self._task_namespace = task_namespace
         self._feature_store_enabled = feature_store_enabled and feature_store_dir is not None
-        # Entered around the ResettingRefine call in __call__. refine.py:107-108
+        # Entered around the ResettingRefine call in __call__. refine.py:108-109
         # deepcopies the module and pins ``dspy.settings.lm`` onto every named
         # predictor via ``mod.set_lm()``, which OVERRIDES FeatureBuilder.forward's
         # own ``dspy.context(lm=...)`` for the __init__-time ``constructor``.
@@ -433,7 +435,7 @@ class WrappedFeatureBuilder:
                 threshold=1.0,
             )
             # Refine call under the budget LM. refine.py:99 reads
-            # dspy.settings.lm and :108 pins it onto the deepcopied module's
+            # dspy.settings.lm and :109 pins it onto the deepcopied module's
             # predictors, so without this context the Construct phase leaks onto
             # the primary (Opus) LM. Entering it here routes the Construct phase
             # *and* the now-live OfferFeedback call (refine.py:167, resolved at
@@ -444,6 +446,10 @@ class WrappedFeatureBuilder:
             # Never ``values, meta = result``: a Prediction unpacks into its KEY
             # STRINGS with no error. The helper also passes a legacy tuple through.
             values, meta = unwrap_builder_result(result)
+            # Copy: the omission fill below must not mutate the dict inside the
+            # Prediction (a double returning the same object twice would carry
+            # the fill into the next call and get it negatively cached).
+            values = dict(values)
 
             # Persist each freshly built feature individually. The
             # ``feature_name not in values`` guard is what keeps the omission
@@ -475,7 +481,9 @@ class WrappedFeatureBuilder:
             # in _build_builder_diagnostics counts explanation-map membership.
             omitted = [name for name in uncached_plans if name not in values]
             if omitted:
-                explanations = dict(meta.get("none_feature_explanations", {}))
+                # ``or {}``: the LLM can return null for this field, and a
+                # TypeError here would degrade the whole group to builder_exception.
+                explanations = dict(meta.get("none_feature_explanations") or {})
                 for name in omitted:
                     values[name] = {k: None for k in uncached_plans[name].feature_type}
                     detail = str(explanations.get(name) or "no explanation provided")

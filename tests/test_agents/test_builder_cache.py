@@ -20,7 +20,11 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 try:
+    import dspy
+
     from ctra.agents.data_models import (
+        BUILDER_EXCEPTION_PREFIX,
+        BUILDER_EXCEPTION_RESEARCH_SENTINEL,
         BUILDER_OMITTED_PREFIX,
         FeaturePlan,
         FeatureSource,
@@ -407,3 +411,74 @@ class TestPartialBuild:
 
         assert values == {"feat_a": {"value": 1.0}, "feat_b": {"value": 2.0}}
         assert meta_out is meta_in
+
+    def test_null_explanations_from_the_llm_do_not_crash_the_group(
+        self, wrapper: WrappedFeatureBuilder
+    ) -> None:
+        """``none_feature_explanations=None`` (the LLM returned null) must not
+        turn a partial build into a builder_exception group: the built sibling
+        keeps its real value and the omission still gets its sentinel."""
+        plans = self._two_plans()
+        builder_cls, refine_cls, _ = self._patched_builder(
+            lambda **kw: builder_prediction(
+                {"feat_a": {"value": 1.5}},
+                {"research_results": "real research", "none_feature_explanations": None},
+            )
+        )
+
+        with builder_cls, refine_cls:
+            _, values, meta = wrapper(("NCT_NULL", plans))
+
+        assert values["feat_a"] == {"value": 1.5}
+        assert values["feat_b"] == {"value": None}
+        assert meta["none_feature_explanations"]["feat_b"].startswith(BUILDER_OMITTED_PREFIX)
+        assert meta["research_results"] == "real research"
+        assert meta["research_results"] != BUILDER_EXCEPTION_RESEARCH_SENTINEL
+
+    def test_fill_does_not_mutate_the_prediction_or_leak_into_the_store(
+        self, wrapper: WrappedFeatureBuilder, store_dir: Path
+    ) -> None:
+        """The fill works on a copy of ``feature_values``. A double returning the
+        SAME Prediction object twice would otherwise carry the first call's
+        all-None fill into the second call's ``values`` and negatively cache it."""
+        plans = self._two_plans()
+        shared = builder_prediction({"feat_a": {"value": 1.5}}, {"research_results": "r"})
+        builder_cls, refine_cls, mock_instance = self._patched_builder(lambda **kw: shared)
+
+        with builder_cls, refine_cls:
+            _, first_values, _ = wrapper(("NCT_SHARED", plans))
+            _, second_values, _ = wrapper(("NCT_SHARED", plans))
+
+        assert mock_instance.call_count == 2
+        assert first_values["feat_b"] == {"value": None}
+        assert second_values["feat_b"] == {"value": None}
+        # The shared Prediction never acquired the fill ...
+        assert shared["feature_values"] == {"feat_a": {"value": 1.5}}
+        # ... so the second call could not persist a None for feat_b.
+        assert (
+            get_cached_feature(store_dir, "test", "NCT_SHARED", "feat_b", plans["feat_b"]) is None
+        )
+        assert get_cached_feature(store_dir, "test", "NCT_SHARED", "feat_a", plans["feat_a"]) == {
+            "feat_a": {"value": 1.5}
+        }
+
+    def test_malformed_prediction_degrades_to_the_exception_path(
+        self, wrapper: WrappedFeatureBuilder, store_dir: Path
+    ) -> None:
+        """A Prediction lacking ``feature_values`` raises TypeError in the unwrap,
+        inside the outer ``try``, so the group takes the PR #22 exception path
+        and nothing is cached."""
+        plans = self._two_plans()
+        builder_cls, refine_cls, _ = self._patched_builder(
+            lambda **kw: dspy.Prediction(metadata={})
+        )
+
+        with builder_cls, refine_cls:
+            _, values, meta = wrapper(("NCT_MALFORMED", plans))
+
+        assert values == {"feat_a": {"value": None}, "feat_b": {"value": None}}
+        assert meta["research_results"] == BUILDER_EXCEPTION_RESEARCH_SENTINEL
+        assert meta["builder_reasoning"].startswith(f"{BUILDER_EXCEPTION_PREFIX} TypeError")
+        for name in plans:
+            assert meta["none_feature_explanations"][name].startswith(BUILDER_EXCEPTION_PREFIX)
+            assert get_cached_feature(store_dir, "test", "NCT_MALFORMED", name, plans[name]) is None

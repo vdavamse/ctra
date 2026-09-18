@@ -103,4 +103,6 @@ def builder_prediction(
     """
     if not _HAS_DSPY:
         raise ImportError("dspy not available")
-    return dspy.Prediction(feature_values=feature_values, metadata=metadata or {})
+    return dspy.Prediction(
+        feature_values=feature_values, metadata=metadata if metadata is not None else {}
+    )
