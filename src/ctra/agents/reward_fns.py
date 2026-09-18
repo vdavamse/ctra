@@ -10,6 +10,16 @@ the next silent failure traceable.
 Also provides :class:`ResettingRefine`, which every agent module should use in place
 of :class:`dspy.Refine` -- see its docstring for why.
 
+FeatureProposer, FeaturePlanner and FeatureGrouper return ``dspy.Prediction``; the
+three ``unwrap_*`` helpers below normalise them back to the legacy shapes. (Note:
+``FeatureBuilder`` does not yet -- it still returns ``(values, meta)`` and is wrapped
+in ``ResettingRefine`` at ``feature_builder.py:376``. That is unobservable today only
+because ``feature_builder.py:155`` raises before the feedback step is reached. Issue
+#6 removes that raise and **must** convert the builder to ``dspy.Prediction`` and add
+the matching ``unwrap_*``, or it will reintroduce exactly the bug #5 fixed. Note
+``_builder_reward`` (``feature_builder.py:295-303``) does ``values, _meta = result``
+-- a tuple-unpack that would silently bind key strings.)
+
 Note: ``_builder_reward`` still lives in ``feature_builder`` and has no
 ``is_valid_builder`` counterpart here; that site was left alone deliberately.
 """
@@ -37,20 +47,15 @@ class ResettingRefine(dspy.Refine):  # type: ignore[misc]
     ``planner`` / ``grouper`` are built once in ``Agent.__init__`` and reused for an
     entire MCTS run.
 
-    That erosion is guaranteed here rather than incidental: once ``forward()`` stops
-    raising, Refine reaches its feedback path, which does ``dict(outputs)``. Our
-    modules return ``ProposerOutput`` / ``(FeaturePlan, raw)`` / ``list[dict]``, none
-    of which are ``dspy.Prediction``, so that conversion raises on **every**
-    sub-threshold attempt. Budget: 3 -> 1 after one invalid output, and the *second*
-    invalid output re-raises out of ``Refine`` instead of returning its best attempt
-    -- past the caller's ``is_valid_*`` guard, which is exactly the dead-skip-branch
-    failure this package was fixed to eliminate.
-
-    Resetting per call restores graceful degradation on every call. It does not
-    revive Refine's ``OfferFeedback`` advice (``dict(outputs)`` still fails, so
-    retries remain blind re-rolls) -- that has never worked in this codebase and is
-    tracked separately; fixing it means returning ``dspy.Prediction`` from each
-    ``forward()``.
+    Resetting per call restores graceful degradation on every call. Budget erosion
+    from transient LM errors (timeout, rate limit) and exceptions in the feedback
+    path persists: ``refine.py:170-174`` decrements for **any** swallowed exception
+    and never restores. The instances are long-lived (shared planner in
+    ``Initializer``), so multiple callers draw on one budget. Additionally, the
+    now-live ``OfferFeedback`` call at ``refine.py:167`` is itself a new exception
+    source inside the same ``try`` block. Without the reset, a second exception
+    re-raises past the caller's ``is_valid_*`` guard instead of returning its best
+    attempt -- the dead-skip-branch failure this package was fixed to eliminate.
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -61,6 +66,77 @@ class ResettingRefine(dspy.Refine):  # type: ignore[misc]
     def forward(self, **kwargs: Any) -> Any:
         self.fail_count = self._initial_fail_count
         return super().forward(**kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Return-shape normalisation
+# ---------------------------------------------------------------------------
+# The Refine-wrapped modules return dspy.Prediction so that Refine's feedback
+# step (refine.py:153 ``dict(outputs)``) succeeds and OfferFeedback actually
+# runs.  Every consumer still works against the legacy raw shape; these three
+# helpers are the only place that knows both.
+#
+# Tolerant by design: a non-Prediction passes through untouched, which keeps the
+# hand-built ``is_valid_planner({}, (plan, raw))`` calls in orchestrator.py and
+# initializer.py -- and the MagicMock doubles in the test suite -- valid.
+#
+# NEVER tuple-unpack a Prediction: it inherits Example.__iter__, which yields
+# KEYS, so ``plan, raw = pred`` silently binds the strings 'plan' and 'raw'.
+
+
+def unwrap_proposal(result: Any) -> Any:
+    """Extract proposal from dspy.Prediction or pass through legacy shape.
+
+    If result is a dspy.Prediction with a 'proposal' field, returns that field.
+    Otherwise returns result unchanged. Tolerant: a Prediction missing the field
+    falls through untouched for the caller's exception handler to catch.
+
+    Args:
+        result: Either a dspy.Prediction(proposal=...) or a raw ProposerOutput.
+
+    Returns:
+        The ProposerOutput (or original result if not a Prediction).
+    """
+    if isinstance(result, dspy.Prediction):
+        return result.get("proposal", result)
+    return result
+
+
+def unwrap_planner_result(result: Any) -> Any:
+    """Extract (plan, raw) from dspy.Prediction or pass through legacy shape.
+
+    If result is a dspy.Prediction with both 'plan' and 'raw' fields, returns
+    the tuple (plan, raw). Otherwise returns result unchanged. Tolerant: a
+    Prediction missing either field falls through untouched for the caller's
+    exception handler to catch.
+
+    Args:
+        result: Either a dspy.Prediction(plan=..., raw=...) or a (plan, raw) tuple.
+
+    Returns:
+        The (FeaturePlan, raw) tuple (or original result if not a Prediction).
+    """
+    if isinstance(result, dspy.Prediction) and "plan" in result:
+        return (result.get("plan"), result.get("raw"))
+    return result
+
+
+def unwrap_groups(result: Any) -> Any:
+    """Extract groups from dspy.Prediction or pass through legacy shape.
+
+    If result is a dspy.Prediction with a 'groups' field, returns that field.
+    Otherwise returns result unchanged. Tolerant: a Prediction missing the field
+    falls through untouched for the caller's exception handler to catch.
+
+    Args:
+        result: Either a dspy.Prediction(groups=...) or a raw list[dict].
+
+    Returns:
+        The list of groups (or original result if not a Prediction).
+    """
+    if isinstance(result, dspy.Prediction):
+        return result.get("groups", result)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -92,12 +168,14 @@ def is_valid_proposer(kwargs: Any, result: Any) -> bool:
 
     Args:
         kwargs: Dict with "previous_output" containing current feature_plans.
-        result: The ProposerOutput (NamedTuple) with feature_operation and feature_name.
+        result: The ProposerOutput (NamedTuple) or the ``dspy.Prediction``
+            wrapping it.
 
     Returns:
         True if valid operation, False otherwise.
     """
     try:
+        result = unwrap_proposal(result)
         previous_output = kwargs["previous_output"]
         existing = set(previous_output.feature_plans.keys())
 
@@ -135,12 +213,14 @@ def is_valid_planner(kwargs: Any, result: Any) -> bool:
 
     Args:
         kwargs: Dict (not used, plan comes from result).
-        result: Tuple of (FeaturePlan, raw LLM output).
+        result: Tuple of (FeaturePlan, raw LLM output) or the ``dspy.Prediction``
+            wrapping it.
 
     Returns:
         True if plan schema is valid, False otherwise.
     """
     try:
+        result = unwrap_planner_result(result)
         if not isinstance(result, tuple) or len(result) != 2:
             return False
 
@@ -181,12 +261,14 @@ def is_valid_grouper(kwargs: Any, result: Any) -> bool:
 
     Args:
         kwargs: Dict with "feature_plans" containing all features to be grouped.
-        result: List of groups, each a dict/set of feature names.
+        result: List of groups, each a dict/set of feature names, or the
+            ``dspy.Prediction`` wrapping it.
 
     Returns:
         True if grouping covers all features exactly once, False otherwise.
     """
     try:
+        result = unwrap_groups(result)
         feature_plans = kwargs["feature_plans"]
 
         # Must be a non-empty sequence of groups

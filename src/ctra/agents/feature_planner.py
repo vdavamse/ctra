@@ -7,15 +7,14 @@ enforcement.
 The planner uses the primary LM (Claude Opus 4.6) configured via
 :func:`ctra.agents.lm_config.configure_lm`.
 
-Note: ``forward()`` does not raise on invalid LLM output; instead it returns
-the best-effort plan. Validation is deferred to the caller (e.g., ``dspy.Refine``
-rewards and post-checks in the orchestrator).
+Returns a ``dspy.Prediction`` carrying the best-effort plan. Note: ``forward()``
+does not raise on invalid LLM output. Validation is deferred to the caller (e.g.,
+``dspy.Refine`` rewards and post-checks in the orchestrator).
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import dspy
 
@@ -49,7 +48,7 @@ class FeaturePlanner(dspy.Module):  # type: ignore[misc]
         self.task_description = task_description
         self.planner = dspy.ChainOfThought(FeaturePlannerSignature)
 
-    def forward(self, feature_name: str, feature_idea: str) -> tuple[FeaturePlan, Any]:
+    def forward(self, feature_name: str, feature_idea: str) -> dspy.Prediction:
         """Plan a single feature.
 
         Parameters:
@@ -58,7 +57,9 @@ class FeaturePlanner(dspy.Module):  # type: ignore[misc]
                 operations, this is the concatenation of old + new ideas.
 
         Returns:
-            Tuple of ``(FeaturePlan, raw_planner_result)``.
+            ``dspy.Prediction`` with fields ``plan`` (``FeaturePlan``) and ``raw``
+            (the unparsed ``ChainOfThought`` result). **Do not tuple-unpack it**
+            -- ``Prediction`` iterates its keys. Use ``reward_fns.unwrap_planner_result``.
         """
         planner_result = self.planner(
             task=self.task_description,
@@ -77,4 +78,4 @@ class FeaturePlanner(dspy.Module):  # type: ignore[misc]
         )
 
         logger.debug("Planned feature: %s (types=%s)", feature_name, plan.feature_type)
-        return plan, planner_result
+        return dspy.Prediction(plan=plan, raw=planner_result)

@@ -26,7 +26,12 @@ if TYPE_CHECKING:
     from ctra.agents.data_models import FeaturePlan
 
 from ctra.agents.feature_planner import FeaturePlanner
-from ctra.agents.reward_fns import ResettingRefine, is_valid_planner, planner_reward
+from ctra.agents.reward_fns import (
+    ResettingRefine,
+    is_valid_planner,
+    planner_reward,
+    unwrap_planner_result,
+)
 from ctra.agents.signatures import (
     FactorAnalystSignature,
     FeatureInitializerCombinedSignature,
@@ -271,9 +276,11 @@ class Initializer(dspy.Module):  # type: ignore[misc]
         feature_plans: dict[str, FeaturePlan] = {}
         for feature_name, feature_idea in combined_result.feature_ideas.items():
             try:
-                plan, raw = self.feature_planner(
-                    feature_name=feature_name,
-                    feature_idea=feature_idea,
+                plan, raw = unwrap_planner_result(
+                    self.feature_planner(
+                        feature_name=feature_name,
+                        feature_idea=feature_idea,
+                    )
                 )
             except _LLM_RUNTIME_EXCEPTIONS:
                 # LLM-origin error: timeout, connection, rate limit, malformed JSON, etc.
