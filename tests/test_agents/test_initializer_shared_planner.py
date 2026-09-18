@@ -10,18 +10,10 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pandas as pd
-import pytest
 
-try:
-    from ctra.agents.data_models import Task
-    from ctra.agents.initializer import Initializer
-    from ctra.agents.orchestrator import Agent
-
-    _HAS_DSPY = True
-except ImportError:
-    _HAS_DSPY = False
-
-pytestmark = pytest.mark.skipif(not _HAS_DSPY, reason="dspy/sqlite3 not available")
+from ctra.agents.data_models import Task
+from ctra.agents.initializer import Initializer
+from ctra.agents.orchestrator import Agent
 
 
 def _make_agent() -> Agent:

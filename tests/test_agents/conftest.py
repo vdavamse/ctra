@@ -10,14 +10,9 @@ from __future__ import annotations
 
 from typing import Any
 
-try:
-    import dspy
+import dspy
 
-    from ctra.agents.data_models import FeatureOp, FeaturePlan, ProposerOutput
-
-    _HAS_DSPY = True
-except ImportError:
-    _HAS_DSPY = False
+from ctra.agents.data_models import FeatureOp, FeaturePlan, ProposerOutput
 
 
 def proposer_prediction(
@@ -38,8 +33,6 @@ def proposer_prediction(
         A ``dspy.Prediction(proposal=ProposerOutput(...))`` matching the
         real module's return.
     """
-    if not _HAS_DSPY:
-        raise ImportError("dspy not available")
     return dspy.Prediction(
         proposal=ProposerOutput(
             feature_name=feature_name,
@@ -63,8 +56,6 @@ def planner_prediction(plan: FeaturePlan, raw: object = None) -> dspy.Prediction
         A ``dspy.Prediction(plan=..., raw=...)`` matching the real module's
         return.
     """
-    if not _HAS_DSPY:
-        raise ImportError("dspy not available")
     return dspy.Prediction(plan=plan, raw=raw)
 
 
@@ -77,8 +68,6 @@ def grouper_prediction(groups: list[dict[str, FeaturePlan]]) -> dspy.Prediction:
     Returns:
         A ``dspy.Prediction(groups=...)`` matching the real module's return.
     """
-    if not _HAS_DSPY:
-        raise ImportError("dspy not available")
     return dspy.Prediction(groups=groups)
 
 
@@ -101,8 +90,6 @@ def builder_prediction(
         A ``dspy.Prediction(feature_values=..., metadata=...)`` matching the
         real module's return.
     """
-    if not _HAS_DSPY:
-        raise ImportError("dspy not available")
     return dspy.Prediction(
         feature_values=feature_values, metadata=metadata if metadata is not None else {}
     )

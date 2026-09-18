@@ -9,20 +9,11 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
+import dspy
 
-try:
-    import dspy
-
-    from ctra.agents.data_models import FeaturePlan, FeatureSource, FeatureType
-    from ctra.agents.feature_grouper import FeatureGrouper
-    from ctra.agents.reward_fns import is_valid_grouper
-
-    _HAS_DSPY = True
-except ImportError:
-    _HAS_DSPY = False
-
-pytestmark = pytest.mark.skipif(not _HAS_DSPY, reason="dspy/sqlite3 not available")
+from ctra.agents.data_models import FeaturePlan, FeatureSource, FeatureType
+from ctra.agents.feature_grouper import FeatureGrouper
+from ctra.agents.reward_fns import is_valid_grouper
 
 
 def _make_plan(name: str) -> FeaturePlan:

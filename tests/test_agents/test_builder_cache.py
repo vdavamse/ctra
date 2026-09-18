@@ -19,31 +19,23 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
-try:
-    import dspy
+import dspy
 
-    from ctra.agents.data_models import (
-        BUILDER_EXCEPTION_PREFIX,
-        BUILDER_EXCEPTION_RESEARCH_SENTINEL,
-        BUILDER_OMITTED_PREFIX,
-        FeaturePlan,
-        FeatureSource,
-        FeatureType,
-    )
-    from ctra.agents.feature_builder import WrappedFeatureBuilder
-    from ctra.agents.feature_store import (
-        _plan_content_hash,
-        get_cached_feature,
-        put_cached_feature,
-    )
-    from tests.test_agents.conftest import builder_prediction
-
-    _HAS_DSPY = True
-except ImportError:
-    _HAS_DSPY = False
-
-pytestmark = pytest.mark.skipif(not _HAS_DSPY, reason="dspy/sqlite3 not available")
-
+from ctra.agents.data_models import (
+    BUILDER_EXCEPTION_PREFIX,
+    BUILDER_EXCEPTION_RESEARCH_SENTINEL,
+    BUILDER_OMITTED_PREFIX,
+    FeaturePlan,
+    FeatureSource,
+    FeatureType,
+)
+from ctra.agents.feature_builder import WrappedFeatureBuilder
+from ctra.agents.feature_store import (
+    _plan_content_hash,
+    get_cached_feature,
+    put_cached_feature,
+)
+from tests.test_agents.conftest import builder_prediction
 
 # ---------------------------------------------------------------------------
 # Fixtures

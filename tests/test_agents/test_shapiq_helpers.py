@@ -12,18 +12,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import pytest
-
-try:
-    from ctra.agents import data_models as _  # noqa: F401
-
-    _HAS_DSPY = True
-except ImportError:
-    _HAS_DSPY = False
-
-pytestmark = pytest.mark.skipif(not _HAS_DSPY, reason="dspy/sqlite3 not available")
-
-
 # ---------------------------------------------------------------------------
 # Helpers — mock shapiq InteractionValues-like object
 # ---------------------------------------------------------------------------

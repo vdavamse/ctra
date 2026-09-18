@@ -14,23 +14,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
-try:
-    from ctra.agents.data_models import (
-        AgentOutput,
-        EvalOutput,
-        FeaturePlan,
-        FeatureSource,
-        FeatureType,
-        ModelEvalResult,
-    )
-    from ctra.config.settings import ClassifierType
-
-    _HAS_DSPY = True
-except ImportError:
-    _HAS_DSPY = False
-
-pytestmark = pytest.mark.skipif(not _HAS_DSPY, reason="dspy/sqlite3 not available")
-
+from ctra.agents.data_models import (
+    AgentOutput,
+    EvalOutput,
+    FeaturePlan,
+    FeatureSource,
+    FeatureType,
+    ModelEvalResult,
+)
+from ctra.config.settings import ClassifierType
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -16,42 +16,32 @@ sub-threshold attempt, reproducing the erosion deterministically.
 
 from __future__ import annotations
 
-import pytest
+import dspy
+from dspy.utils.dummies import DummyLM
 
-try:
-    import dspy
-    from dspy.utils.dummies import DummyLM
-
-    from ctra.agents.data_models import FeatureOp, ProposerOutput
-    from ctra.agents.reward_fns import ResettingRefine
-
-    _HAS_DSPY = True
-except ImportError:
-    _HAS_DSPY = False
-
-pytestmark = pytest.mark.skipif(not _HAS_DSPY, reason="dspy/sqlite3 not available")
+from ctra.agents.data_models import FeatureOp, ProposerOutput
+from ctra.agents.reward_fns import ResettingRefine
 
 
-if _HAS_DSPY:
+class _Sig(dspy.Signature):
+    q: str = dspy.InputField()
+    a: str = dspy.OutputField()
 
-    class _Sig(dspy.Signature):
-        q: str = dspy.InputField()
-        a: str = dspy.OutputField()
 
-    class _ReturnsNamedTuple(dspy.Module):  # type: ignore[misc]
-        """Shaped like ``FeatureProposer``: real predictor, non-Prediction return."""
+class _ReturnsNamedTuple(dspy.Module):  # type: ignore[misc]
+    """Shaped like ``FeatureProposer``: real predictor, non-Prediction return."""
 
-        def __init__(self) -> None:
-            super().__init__()
-            self.p = dspy.Predict(_Sig)
+    def __init__(self) -> None:
+        super().__init__()
+        self.p = dspy.Predict(_Sig)
 
-        def forward(self, **kwargs):
-            self.p(q=kwargs.get("q", "x"))
-            return ProposerOutput(
-                feature_operation=FeatureOp.ADD,
-                feature_name="f",
-                feature_explanation="e",
-            )
+    def forward(self, **kwargs):
+        self.p(q=kwargs.get("q", "x"))
+        return ProposerOutput(
+            feature_operation=FeatureOp.ADD,
+            feature_name="f",
+            feature_explanation="e",
+        )
 
 
 def _always_invalid(kwargs, result) -> float:

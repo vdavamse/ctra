@@ -7,16 +7,8 @@ unit tests.
 
 from __future__ import annotations
 
+import dspy
 import pytest
-
-try:
-    import dspy
-
-    _HAS_DSPY = True
-except ImportError:
-    _HAS_DSPY = False
-
-pytestmark = pytest.mark.skipif(not _HAS_DSPY, reason="dspy not available")
 
 
 class TestDspyAPISurface:

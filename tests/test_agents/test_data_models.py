@@ -1,33 +1,21 @@
-"""Tests for ctra.agents.data_models — enums, NamedTuples, AgentOutput methods.
-
-Requires dspy (which needs sqlite3) to be importable because the
-``ctra.agents`` package __init__.py eagerly imports dspy modules.
-"""
+"""Tests for ctra.agents.data_models — enums, NamedTuples, AgentOutput methods."""
 
 from __future__ import annotations
 
 import pandas as pd
 import pytest
 
-try:
-    from ctra.agents.data_models import (
-        AgentOutput,
-        EvalOutput,
-        FeatureOp,
-        FeaturePlan,
-        FeatureSource,
-        FeatureType,
-        ModelEvalResult,
-        ProposerOutput,
-        Task,
-    )
-
-    _HAS_DSPY = True
-except ImportError:
-    _HAS_DSPY = False
-
-pytestmark = pytest.mark.skipif(not _HAS_DSPY, reason="dspy/sqlite3 not available")
-
+from ctra.agents.data_models import (
+    AgentOutput,
+    EvalOutput,
+    FeatureOp,
+    FeaturePlan,
+    FeatureSource,
+    FeatureType,
+    ModelEvalResult,
+    ProposerOutput,
+    Task,
+)
 
 # ---------------------------------------------------------------------------
 # Enum values

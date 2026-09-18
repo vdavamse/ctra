@@ -26,37 +26,29 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
+import dspy
 import pytest
+from dspy.clients.base_lm import GLOBAL_HISTORY
 
-try:
-    import dspy
-    from dspy.clients.base_lm import GLOBAL_HISTORY
-
-    from ctra.agents.data_models import (
-        FeaturePlan,
-        FeatureSource,
-        FeatureType,
-    )
-    from ctra.agents.feature_builder import FeatureBuilder, WrappedFeatureBuilder
-    from ctra.agents.feature_grouper import FeatureGrouper
-    from ctra.agents.feature_planner import FeaturePlanner
-    from ctra.agents.feature_proposer import FeatureProposer
-    from ctra.agents.reward_fns import (
-        ResettingRefine,
-        grouper_reward,
-    )
-    from tests.test_agents.conftest import (
-        builder_prediction,
-        grouper_prediction,
-        planner_prediction,
-        proposer_prediction,
-    )
-
-    _HAS_DSPY = True
-except ImportError:
-    _HAS_DSPY = False
-
-pytestmark = pytest.mark.skipif(not _HAS_DSPY, reason="dspy/sqlite3 not available")
+from ctra.agents.data_models import (
+    FeaturePlan,
+    FeatureSource,
+    FeatureType,
+)
+from ctra.agents.feature_builder import FeatureBuilder, WrappedFeatureBuilder
+from ctra.agents.feature_grouper import FeatureGrouper
+from ctra.agents.feature_planner import FeaturePlanner
+from ctra.agents.feature_proposer import FeatureProposer
+from ctra.agents.reward_fns import (
+    ResettingRefine,
+    grouper_reward,
+)
+from tests.test_agents.conftest import (
+    builder_prediction,
+    grouper_prediction,
+    planner_prediction,
+    proposer_prediction,
+)
 
 SENTINEL = "REFINE_FEEDBACK_TEST_SENTINEL"
 
