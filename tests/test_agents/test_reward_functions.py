@@ -25,6 +25,11 @@ try:
         planner_reward,
         proposer_reward,
     )
+    from tests.test_agents.conftest import (
+        grouper_prediction,
+        planner_prediction,
+        proposer_prediction,
+    )
 
     _HAS_DSPY = True
 except ImportError:
@@ -104,6 +109,16 @@ class TestProposerReward:
     def test_exception_returns_zero(self) -> None:
         assert proposer_reward({}, None) == 0.0
 
+    def test_prediction_wrapped_proposal_valid(self) -> None:
+        """Proposer can return dspy.Prediction wrapping a valid proposal."""
+        kwargs = {"previous_output": self._make_previous_output(["feat_a"])}
+        result = proposer_prediction(
+            feature_name="feat_b",
+            feature_explanation="new feature",
+            feature_operation=FeatureOp.ADD,
+        )
+        assert proposer_reward(kwargs, result) == 1.0
+
 
 # ======================================================================
 # planner_reward
@@ -166,6 +181,20 @@ class TestPlannerReward:
     def test_exception_returns_zero(self) -> None:
         assert planner_reward({}, "not a tuple") == 0.0
 
+    def test_prediction_wrapped_plan_valid(self) -> None:
+        """Planner can return dspy.Prediction wrapping a valid plan."""
+        plan = FeaturePlan(
+            feature_name="test",
+            feature_idea="idea",
+            feature_type={"cat_field": FeatureType.CATEGORICAL},
+            data_sources=[FeatureSource.PUBMED],
+            example_values=[],
+            possible_values={"cat_field": ["a", "b"]},
+            feature_instructions="test",
+        )
+        result = planner_prediction(plan, raw=MagicMock())
+        assert planner_reward({}, result) == 1.0
+
 
 # ======================================================================
 # grouper_reward
@@ -194,6 +223,12 @@ class TestGrouperReward:
 
     def test_exception_returns_zero(self) -> None:
         assert grouper_reward({}, None) == 0.0
+
+    def test_prediction_wrapped_groups_valid(self) -> None:
+        """Grouper can return dspy.Prediction wrapping a valid grouping."""
+        plans = {"feat_a": _make_plan("feat_a"), "feat_b": _make_plan("feat_b")}
+        result = grouper_prediction([{"feat_a": plans["feat_a"]}, {"feat_b": plans["feat_b"]}])
+        assert grouper_reward({"feature_plans": plans}, result) == 1.0
 
 
 # ======================================================================

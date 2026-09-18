@@ -28,6 +28,7 @@ try:
     )
     from ctra.agents.orchestrator import Agent
     from ctra.config.settings import ClassifierType
+    from tests.test_agents.conftest import planner_prediction, proposer_prediction
 
     _HAS_DSPY = True
 except ImportError:
@@ -227,9 +228,7 @@ class TestForwardIteration0:
         monkeypatch.setattr("ctra.agents.orchestrator.get_settings", lambda: mock_settings)
 
         # Bypass the Refine wrapper — return the module unchanged
-        monkeypatch.setattr(
-            "ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module
-        )
+        monkeypatch.setattr("ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module)
 
         # Mock sub-agent constructors
         with (
@@ -319,9 +318,7 @@ class TestForwardIterationN:
         monkeypatch.setattr("ctra.agents.orchestrator.get_settings", lambda: mock_settings)
 
         # Bypass the Refine wrapper — return the module unchanged
-        monkeypatch.setattr(
-            "ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module
-        )
+        monkeypatch.setattr("ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module)
 
         with (
             patch("ctra.agents.orchestrator.Initializer") as mock_init_cls,
@@ -351,16 +348,22 @@ class TestForwardIterationN:
         self,
         mock_agent: Agent,
     ) -> None:
-        """Iteration N should call the proposer with previous_output."""
+        """Iteration N should call the proposer with previous_output.
+
+        Both doubles return the ``dspy.Prediction`` shape the real modules
+        produce, so this test only passes if the orchestrator unwraps them:
+        an un-unwrapped proposer Prediction fails ``is_valid_proposer`` and the
+        iteration is skipped before the planner is reached.
+        """
         prev_output = _make_output()
 
         new_plan = _make_plan("feat_b")
-        mock_agent.proposer.return_value = ProposerOutput(
+        mock_agent.proposer.return_value = proposer_prediction(
             feature_operation=FeatureOp.ADD,
             feature_name="feat_b",
             feature_explanation="Add a safety feature",
         )
-        mock_agent.planner.return_value = (new_plan, MagicMock())
+        mock_agent.planner.return_value = planner_prediction(new_plan, MagicMock())
 
         with (
             patch("ctra.agents.orchestrator.compute_features") as mock_compute,
@@ -378,7 +381,9 @@ class TestForwardIterationN:
             result = mock_agent.forward(previous_output=prev_output)
 
         mock_agent.proposer.assert_called_once()
+        mock_agent.planner.assert_called_once()
         assert isinstance(result, AgentOutput)
+        assert "feat_b" in result.feature_plans
 
     def test_remove_operation_deletes_feature(
         self,
@@ -409,6 +414,7 @@ class TestForwardIterationN:
             },
         )
 
+        # Legacy raw shape: the unwrap helpers must keep tolerating it.
         mock_agent.proposer.return_value = ProposerOutput(
             feature_operation=FeatureOp.REMOVE,
             feature_name="feat_b",
@@ -431,12 +437,13 @@ class TestForwardIterationN:
         """ADD operation should call planner and compute_features."""
         prev_output = _make_output()
 
-        mock_agent.proposer.return_value = ProposerOutput(
+        mock_agent.proposer.return_value = proposer_prediction(
             feature_operation=FeatureOp.ADD,
             feature_name="feat_new",
             feature_explanation="Add new feature",
         )
         new_plan = _make_plan("feat_new")
+        # Legacy (plan, raw) tuple: the unwrap helpers must keep tolerating it.
         mock_agent.planner.return_value = (new_plan, MagicMock())
 
         with (
@@ -493,9 +500,7 @@ class TestTaskNamespaceResolution:
         mock_settings.mcts.feature_store_enabled = True
         mock_settings.model.classifiers = []
         monkeypatch.setattr("ctra.agents.orchestrator.get_settings", lambda: mock_settings)
-        monkeypatch.setattr(
-            "ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module
-        )
+        monkeypatch.setattr("ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module)
 
         with (
             patch("ctra.agents.orchestrator.Initializer") as mock_init_cls,

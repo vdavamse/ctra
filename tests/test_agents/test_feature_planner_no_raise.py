@@ -11,8 +11,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 try:
+    import dspy
+
     from ctra.agents.data_models import FeaturePlan, FeatureSource, FeatureType
     from ctra.agents.feature_planner import FeaturePlanner
+    from ctra.agents.reward_fns import unwrap_planner_result
 
     _HAS_DSPY = True
 except ImportError:
@@ -22,7 +25,7 @@ pytestmark = pytest.mark.skipif(not _HAS_DSPY, reason="dspy/sqlite3 not availabl
 
 
 def test_planner_missing_possible_values_for_categorical_no_raise():
-    """FeaturePlanner.forward() returns plan even if categorical lacks possible_values.
+    """FeaturePlanner.forward() returns dspy.Prediction wrapping (plan, raw).
 
     Previously, forward() would raise ValueError if a categorical feature lacked
     possible_values. Now it returns the FeaturePlan and lets the orchestrator's
@@ -30,7 +33,7 @@ def test_planner_missing_possible_values_for_categorical_no_raise():
 
     Arranges: Create planner, mock dspy.ChainOfThought to return plan with missing possible_values.
     Acts: Call forward().
-    Asserts: FeaturePlan is returned as a tuple (plan, raw) without raising ValueError.
+    Asserts: dspy.Prediction(plan=..., raw=...) is returned without raising ValueError.
     """
     planner = FeaturePlanner(
         task_description="Predict trial outcome",
@@ -47,12 +50,14 @@ def test_planner_missing_possible_values_for_categorical_no_raise():
         mock_planner_module.return_value = mock_result
 
         # Call forward — should NOT raise
-        plan, raw = planner.forward(
+        pred = planner.forward(
             feature_name="trial_status",
             feature_idea="Status of the trial",
         )
+        plan = pred.plan
 
-        # Assert we got a FeaturePlan back
+        # Assert we got a dspy.Prediction with plan and raw fields
+        assert isinstance(pred, dspy.Prediction)
         assert isinstance(plan, FeaturePlan)
         assert plan.feature_name == "trial_status"
         assert plan.feature_type == {"status": FeatureType.CATEGORICAL}
@@ -60,12 +65,12 @@ def test_planner_missing_possible_values_for_categorical_no_raise():
 
 
 def test_planner_possible_values_key_not_in_feature_type_no_raise():
-    """FeaturePlanner.forward() returns plan even if possible_values keys not in feature_type.
+    """FeaturePlanner.forward() returns dspy.Prediction wrapping (plan, raw).
 
     Arranges: Create planner, mock to return plan where possible_values has a key
               not in feature_type (schema mismatch).
     Acts: Call forward().
-    Asserts: FeaturePlan is returned without raising ValueError.
+    Asserts: dspy.Prediction(plan=..., raw=...) is returned without raising ValueError.
     """
     planner = FeaturePlanner(
         task_description="Predict trial outcome",
@@ -85,13 +90,19 @@ def test_planner_possible_values_key_not_in_feature_type_no_raise():
         mock_planner_module.return_value = mock_result
 
         # Call forward — should NOT raise
-        plan, raw = planner.forward(
+        pred = planner.forward(
             feature_name="trial_status",
             feature_idea="Status of the trial",
         )
+        plan = pred.plan
 
-        # Assert we got a FeaturePlan back with the mismatched possible_values
+        # Assert we got a dspy.Prediction with plan and raw fields
+        assert isinstance(pred, dspy.Prediction)
         assert isinstance(plan, FeaturePlan)
         assert plan.feature_name == "trial_status"
         # Note: the mismatch is present, but returned as-is for orchestrator validation
         assert "extra_key" in plan.possible_values
+
+        # Verify unwrap_planner_result extracts the tuple correctly
+        unwrapped = unwrap_planner_result(pred)
+        assert unwrapped == (pred.plan, pred.raw)

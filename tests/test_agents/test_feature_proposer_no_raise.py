@@ -77,7 +77,7 @@ def _make_output() -> AgentOutput:
 
 
 def test_proposer_add_with_existing_name_no_raise():
-    """FeatureProposer.forward() returns ProposerOutput even for ADD with existing name.
+    """FeatureProposer.forward() returns dspy.Prediction wrapping ProposerOutput.
 
     Previously, forward() would raise ValueError if the proposed feature name
     already existed. Now it returns the output and lets the orchestrator's
@@ -85,8 +85,10 @@ def test_proposer_add_with_existing_name_no_raise():
 
     Arranges: Create proposer, mock dspy.Predict to return ADD with existing name.
     Acts: Call forward().
-    Asserts: ProposerOutput is returned without raising ValueError.
+    Asserts: dspy.Prediction(proposal=ProposerOutput) is returned without raising ValueError.
     """
+    import dspy
+
     proposer = FeatureProposer(
         task_description="Predict trial outcome",
     )
@@ -101,22 +103,26 @@ def test_proposer_add_with_existing_name_no_raise():
         mock_result.operation_description = "Some explanation"
         mock_proposer_module.return_value = mock_result
 
-        # Call forward — should NOT raise, should return ProposerOutput
+        # Call forward — should NOT raise, should return dspy.Prediction
         result = proposer.forward(previous_output=previous)
 
-        # Assert we got a ProposerOutput back
-        assert isinstance(result, ProposerOutput)
-        assert result.feature_name == "feat_a"
-        assert result.feature_operation == FeatureOp.ADD
+        # Assert we got a dspy.Prediction with proposal field
+        assert isinstance(result, dspy.Prediction)
+        proposal = result.proposal
+        assert isinstance(proposal, ProposerOutput)
+        assert proposal.feature_name == "feat_a"
+        assert proposal.feature_operation == FeatureOp.ADD
 
 
 def test_proposer_remove_nonexistent_name_no_raise():
-    """FeatureProposer.forward() returns ProposerOutput even for REMOVE of nonexistent name.
+    """FeatureProposer.forward() returns dspy.Prediction wrapping ProposerOutput.
 
     Arranges: Create proposer, mock dspy.Predict to return REMOVE with nonexistent name.
     Acts: Call forward().
-    Asserts: ProposerOutput is returned without raising ValueError.
+    Asserts: dspy.Prediction(proposal=ProposerOutput) is returned without raising ValueError.
     """
+    import dspy
+
     proposer = FeatureProposer(
         task_description="Predict trial outcome",
     )
@@ -134,10 +140,12 @@ def test_proposer_remove_nonexistent_name_no_raise():
         # Call forward — should NOT raise
         result = proposer.forward(previous_output=previous)
 
-        # Assert we got a ProposerOutput back
-        assert isinstance(result, ProposerOutput)
-        assert result.feature_name == "nonexistent_feature"
-        assert result.feature_operation == FeatureOp.REMOVE
+        # Assert we got a dspy.Prediction with proposal field
+        assert isinstance(result, dspy.Prediction)
+        proposal = result.proposal
+        assert isinstance(proposal, ProposerOutput)
+        assert proposal.feature_name == "nonexistent_feature"
+        assert proposal.feature_operation == FeatureOp.REMOVE
 
 
 # ======================================================================
@@ -176,7 +184,7 @@ def test_proposer_normalises_operation_case_and_whitespace(raw, expected):
 
         result = proposer.forward(previous_output=previous)
 
-    assert result.feature_operation is expected
+    assert result.proposal.feature_operation is expected
 
 
 def test_proposer_keeps_unrecognisable_operation_as_raw_value():
@@ -196,7 +204,7 @@ def test_proposer_keeps_unrecognisable_operation_as_raw_value():
 
         result = proposer.forward(previous_output=previous)
 
-    assert result.feature_operation == "obliterate"
+    assert result.proposal.feature_operation == "obliterate"
 
 
 # ======================================================================
@@ -212,6 +220,8 @@ def test_proposer_with_no_suggestions_does_not_raise():
     ``is_valid_proposer`` guard -- the dead-skip-branch failure this package was
     fixed to eliminate. Degrade to an empty suggestion instead.
     """
+    import dspy
+
     proposer = FeatureProposer(task_description="Predict trial outcome")
 
     base = _make_output()
@@ -231,6 +241,7 @@ def test_proposer_with_no_suggestions_does_not_raise():
 
         result = proposer.forward(previous_output=empty)
 
-    assert isinstance(result, ProposerOutput)
+    assert isinstance(result, dspy.Prediction)
+    assert isinstance(result.proposal, ProposerOutput)
     # The inner predictor still ran, with an empty suggestion.
     assert mock_proposer_module.call_args.kwargs["suggestion"] == ""

@@ -38,7 +38,7 @@ from ctra.agents.feature_store import (
 )
 from ctra.agents.feature_utils import dump_as_json, soft_assert
 from ctra.agents.lm_config import configure_budget_lm
-from ctra.agents.reward_fns import ResettingRefine, is_valid_grouper
+from ctra.agents.reward_fns import ResettingRefine, is_valid_grouper, unwrap_groups
 from ctra.agents.signatures import (
     FeatureBuilderConstructSignature,
     FeatureBuilderResearchMultiSignature,
@@ -447,7 +447,8 @@ def compute_features(
     """Compute features for all trials using grouped parallel execution.
 
     Parameters:
-        grouper: ``FeatureGrouper`` module (or any callable with same API).
+        grouper: ``FeatureGrouper`` module (or any callable with same API). May return
+            either a ``dspy.Prediction(groups=...)`` or the bare list; both are accepted.
         nctids: List of NCT IDs to process.
         task_description: Task description for the builder.
         plans: All feature plans.
@@ -466,7 +467,7 @@ def compute_features(
     if len(plans) == 1:
         grouped_feature_plans = [plans]
     else:
-        grouped_feature_plans = grouper(feature_plans=plans, task=task_description)
+        grouped_feature_plans = unwrap_groups(grouper(feature_plans=plans, task=task_description))
 
     # Site 3 validation. ``FeatureGrouper.forward()`` no longer raises on a bad
     # partition -- it filters and returns whatever survives -- so without a repair

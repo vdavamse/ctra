@@ -57,7 +57,7 @@ class FeatureGrouper(dspy.Module):  # type: ignore[misc]
         self,
         feature_plans: dict[str, FeaturePlan],
         task: str | None = None,
-    ) -> list[dict[str, FeaturePlan]]:
+    ) -> dspy.Prediction:
         """Group feature plans for batch research (filtering, non-raising).
 
         Filters the LLM output to drop:
@@ -73,7 +73,8 @@ class FeatureGrouper(dspy.Module):  # type: ignore[misc]
         Site 3 fallback).
 
         Never raises: a missing task description is logged as an error and
-        returns ``[]``, which the caller repairs into one group per feature.
+        returns ``dspy.Prediction(groups=[])``, which the caller repairs into
+        one group per feature.
 
         Parameters:
             feature_plans: All feature plans keyed by name.
@@ -81,7 +82,8 @@ class FeatureGrouper(dspy.Module):  # type: ignore[misc]
                 given at construction.
 
         Returns:
-            List of grouped plan dicts (may be empty or partial coverage).
+            ``dspy.Prediction`` with field ``groups`` (list of grouped plan
+            dicts; may be empty or partial coverage).
         """
         task_text = task if task is not None else self.task_description
         if task_text is None:
@@ -93,21 +95,18 @@ class FeatureGrouper(dspy.Module):  # type: ignore[misc]
             # ``is_valid_grouper``, so ``compute_features`` repairs it into
             # one-feature-per-group: every feature still gets built.
             #
-            # What this trade actually costs, measured against a DummyLM: the
-            # error is logged once per Refine attempt (three times, not once),
-            # and because ``forward()`` no longer raises, Refine reaches its
-            # feedback block -- ``dict([])`` succeeds where a non-empty
-            # ``list[dict]`` would not -- spending 2 ``OfferFeedback`` LM calls
-            # the raise-path skipped. So a misconfiguration is now a recurring
-            # cost (those calls, plus permanently losing ~5x batching) instead
-            # of a fail-fast. Reachability is low: ``compute_features`` always
-            # passes ``task=``, and it is the only caller.
+            # What this trade actually costs: the misconfiguration path still
+            # costs 2 ``OfferFeedback`` LM calls per invocation and the loss of
+            # ~5x batching, but ``dict(Prediction(groups=[]))`` is ``{'groups': []}``
+            # rather than ``{}``, so the feedback the LM receives now names the
+            # field instead of being empty. Reachability is low: ``compute_features``
+            # always passes ``task=``, and it is the only caller.
             logger.error(
                 "FeatureGrouper has no task description (pass task= to forward() or "
                 "task_description= to __init__); returning an empty grouping, which "
                 "the caller will repair into one group per feature."
             )
-            return []
+            return dspy.Prediction(groups=[])
 
         serialized_feature_plans = {
             feature_name: json.loads(dump_as_json(plan))
@@ -149,4 +148,4 @@ class FeatureGrouper(dspy.Module):  # type: ignore[misc]
             len(claimed_features),
             len(valid_feature_names),
         )
-        return grouped_feature_plans
+        return dspy.Prediction(groups=grouped_feature_plans)

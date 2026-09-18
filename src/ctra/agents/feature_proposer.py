@@ -7,9 +7,9 @@ predicate.
 The proposer uses the primary LM (Claude Opus 4.6) configured via
 :func:`ctra.agents.lm_config.configure_lm`.
 
-Note: ``forward()`` does not raise on invalid LLM output; instead it returns
-the best-effort proposal. Validation is deferred to the caller (e.g., ``dspy.Refine``
-rewards and post-checks in the orchestrator).
+Returns a ``dspy.Prediction`` carrying the best-effort proposal. Note: ``forward()``
+does not raise on invalid LLM output. Validation is deferred to the caller (e.g.,
+``dspy.Refine`` rewards and post-checks in the orchestrator).
 """
 
 from __future__ import annotations
@@ -49,14 +49,16 @@ class FeatureProposer(dspy.Module):  # type: ignore[misc]
         self.task_description = task_description
         self.proposer = dspy.ChainOfThought(FeatureProposerSignature)
 
-    def forward(self, previous_output: AgentOutput) -> ProposerOutput:
+    def forward(self, previous_output: AgentOutput) -> dspy.Prediction:
         """Propose a single feature operation from the best evaluator suggestion.
 
         Parameters:
             previous_output: The ``AgentOutput`` from the previous iteration.
 
         Returns:
-            ``ProposerOutput`` with operation type, feature name, and explanation.
+            ``dspy.Prediction`` with field ``proposal`` (a ``ProposerOutput``).
+            Wrapped so ``dspy.Refine``'s ``dict(outputs)`` feedback step succeeds
+            -- see ``reward_fns.unwrap_proposal``.
         """
         current_features_with_plan = [
             (fp.feature_name, dump_as_json(fp, pretty=False))
@@ -110,8 +112,10 @@ class FeatureProposer(dspy.Module):  # type: ignore[misc]
             except (ValueError, TypeError):
                 continue
 
-        return ProposerOutput(
-            feature_name=proposer_result.feature_name,
-            feature_explanation=proposer_result.operation_description,
-            feature_operation=operation,
+        return dspy.Prediction(
+            proposal=ProposerOutput(
+                feature_name=proposer_result.feature_name,
+                feature_explanation=proposer_result.operation_description,
+                feature_operation=operation,
+            )
         )

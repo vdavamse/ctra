@@ -2,8 +2,9 @@
 
 These predicates are the canonical source of truth for "what valid LLM output
 means"; the ``dspy.Refine`` float rewards are thin adapters over them. The
-adapters themselves are covered by ``test_reward_functions.py`` (via the
-orchestrator re-exports), so this module tests the predicates directly.
+adapters themselves are covered by ``test_reward_functions.py`` (imported
+directly from ``ctra.agents.reward_fns``), so this module tests the predicates
+directly.
 """
 
 from __future__ import annotations
@@ -13,6 +14,8 @@ from unittest.mock import MagicMock
 import pytest
 
 try:
+    import dspy
+
     from ctra.agents.data_models import (
         AgentOutput,
         FeatureOp,
@@ -25,6 +28,14 @@ try:
         is_valid_grouper,
         is_valid_planner,
         is_valid_proposer,
+        unwrap_groups,
+        unwrap_planner_result,
+        unwrap_proposal,
+    )
+    from tests.test_agents.conftest import (
+        grouper_prediction,
+        planner_prediction,
+        proposer_prediction,
     )
 
     _HAS_DSPY = True
@@ -166,6 +177,22 @@ class TestIsValidProposer:
         )
         assert is_valid_proposer(kwargs, result) is False
 
+    def test_prediction_wrapped_proposal_is_valid(self) -> None:
+        """Proposer can return dspy.Prediction(proposal=...) and pass validation."""
+        kwargs = {"previous_output": _previous_output(["feat_a"])}
+        result = proposer_prediction(
+            feature_name="feat_b",
+            feature_explanation="new feature",
+            feature_operation=FeatureOp.ADD,
+        )
+        assert is_valid_proposer(kwargs, result) is True
+
+    def test_prediction_missing_proposal_field_is_false(self) -> None:
+        """Prediction without 'proposal' field falls through to exception handler."""
+        kwargs = {"previous_output": _previous_output(["feat_a"])}
+        result = dspy.Prediction(some_other_field="value")
+        assert is_valid_proposer(kwargs, result) is False
+
 
 # ======================================================================
 # is_valid_planner
@@ -227,6 +254,25 @@ class TestIsValidPlanner:
     def test_wrong_length_tuple_returns_false(self) -> None:
         assert is_valid_planner({}, (1, 2, 3)) is False
 
+    def test_prediction_wrapped_plan_and_raw_is_valid(self) -> None:
+        """Planner can return dspy.Prediction(plan=..., raw=...) and pass validation."""
+        plan = FeaturePlan(
+            feature_name="test",
+            feature_idea="idea",
+            feature_type={"cat_field": FeatureType.CATEGORICAL},
+            data_sources=[FeatureSource.PUBMED],
+            example_values=[],
+            possible_values={"cat_field": ["a", "b"]},
+            feature_instructions="test",
+        )
+        result = planner_prediction(plan, raw=MagicMock())
+        assert is_valid_planner({}, result) is True
+
+    def test_prediction_missing_plan_field_is_false(self) -> None:
+        """Prediction without 'plan' field falls through to exception handler."""
+        result = dspy.Prediction(raw="something")
+        assert is_valid_planner({}, result) is False
+
 
 # ======================================================================
 # is_valid_grouper
@@ -269,3 +315,57 @@ class TestIsValidGrouper:
             {"feat_a": plans["feat_a"]},
         ]
         assert is_valid_grouper({"feature_plans": plans}, result) is False
+
+    def test_prediction_wrapped_groups_is_valid(self) -> None:
+        """Grouper can return dspy.Prediction(groups=...) and pass validation."""
+        plans = {"feat_a": _make_plan("feat_a"), "feat_b": _make_plan("feat_b")}
+        result = grouper_prediction([{"feat_a": plans["feat_a"]}, {"feat_b": plans["feat_b"]}])
+        assert is_valid_grouper({"feature_plans": plans}, result) is True
+
+    def test_prediction_empty_groups_is_invalid(self) -> None:
+        """Prediction(groups=[]) is invalid (empty partition)."""
+        plans = {"feat_a": _make_plan("feat_a")}
+        result = grouper_prediction([])
+        assert is_valid_grouper({"feature_plans": plans}, result) is False
+
+    def test_prediction_missing_groups_field_is_false(self) -> None:
+        """Prediction without 'groups' field falls through to exception handler."""
+        plans = {"feat_a": _make_plan("feat_a")}
+        result = dspy.Prediction(some_other_field="value")
+        assert is_valid_grouper({"feature_plans": plans}, result) is False
+
+
+# ======================================================================
+# unwrap_* helpers: a Prediction lacking its field must not fall through
+# ======================================================================
+
+
+class TestUnwrapHelpersRejectMalformedPredictions:
+    """A ``dspy.Prediction`` missing the contract field raises rather than
+    falling through, so it can never reach a ``plan, raw = ...`` unpack
+    downstream (``Prediction`` iterates over its keys). Legacy shapes still
+    pass through; the predicates above turn the TypeError into ``False``."""
+
+    def test_unwrap_proposal_raises_on_missing_field(self) -> None:
+        with pytest.raises(TypeError, match=r"FeatureProposer Prediction lacks 'proposal'"):
+            unwrap_proposal(dspy.Prediction(some_other_field="value"))
+
+    def test_unwrap_planner_result_raises_on_missing_field(self) -> None:
+        with pytest.raises(TypeError, match=r"FeaturePlanner Prediction lacks 'plan'"):
+            unwrap_planner_result(dspy.Prediction(raw="something"))
+        with pytest.raises(TypeError, match=r"FeaturePlanner Prediction lacks 'raw'"):
+            unwrap_planner_result(dspy.Prediction(plan=_make_plan("feat_a")))
+
+    def test_unwrap_groups_raises_on_missing_field(self) -> None:
+        with pytest.raises(TypeError, match=r"FeatureGrouper Prediction lacks 'groups'"):
+            unwrap_groups(dspy.Prediction(some_other_field="value"))
+
+    def test_legacy_shapes_still_pass_through(self) -> None:
+        legacy_prop = ProposerOutput(
+            feature_operation=FeatureOp.ADD, feature_name="f", feature_explanation="e"
+        )
+        legacy_tuple = (_make_plan("feat_a"), None)
+        legacy_groups = [{"feat_a": _make_plan("feat_a")}]
+        assert unwrap_proposal(legacy_prop) is legacy_prop
+        assert unwrap_planner_result(legacy_tuple) is legacy_tuple
+        assert unwrap_groups(legacy_groups) is legacy_groups

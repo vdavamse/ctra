@@ -51,6 +51,8 @@ from ctra.agents.reward_fns import (
     is_valid_proposer,
     planner_reward,
     proposer_reward,
+    unwrap_planner_result,
+    unwrap_proposal,
 )
 from ctra.config.settings import ClassifierType, get_settings
 from ctra.models.model_registry import ModelRegistry
@@ -371,8 +373,10 @@ class Agent(dspy.Module):  # type: ignore[misc]
             all_builder_meta = deepcopy(previous_output.builder_meta)
 
             # Propose operation
-            proposer_result = self.proposer(previous_output=previous_output)
-            assert proposer_result is not None
+            proposer_prediction = self.proposer(previous_output=previous_output)
+            # Refine never returns None with our N/fail_count; the assert guards a contract change
+            assert proposer_prediction is not None
+            proposer_result = unwrap_proposal(proposer_prediction)
 
             # Validate proposer result; skip iteration if all retries failed
             if not is_valid_proposer({"previous_output": previous_output}, proposer_result):
@@ -399,9 +403,11 @@ class Agent(dspy.Module):  # type: ignore[misc]
                         f"{current_plan.feature_idea}\n---\n{proposer_result.feature_explanation}"
                     )
 
-                plan, raw = self.planner(
-                    feature_name=proposer_result.feature_name,
-                    feature_idea=feature_idea,
+                plan, raw = unwrap_planner_result(
+                    self.planner(
+                        feature_name=proposer_result.feature_name,
+                        feature_idea=feature_idea,
+                    )
                 )
 
                 # Validate planner result; skip planning if all retries failed (Site 2)
