@@ -11,8 +11,6 @@ from unittest.mock import MagicMock
 import pytest
 
 try:
-    import dspy
-
     from ctra.agents.data_models import (
         AgentOutput,
         FeatureOp,

@@ -17,8 +17,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 try:
-    import dspy
-
     from ctra.agents.data_models import FeaturePlan, FeatureSource, FeatureType
     from ctra.agents.feature_builder import compute_features
     from tests.test_agents.conftest import grouper_prediction

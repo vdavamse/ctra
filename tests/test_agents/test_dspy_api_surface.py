@@ -77,4 +77,6 @@ class TestDspyAPISurface:
         try:
             from dspy.clients.base_lm import GLOBAL_HISTORY  # noqa: F401
         except ImportError:
-            pytest.fail("dspy.clients.base_lm.GLOBAL_HISTORY not importable — acceptance test channel missing")
+            pytest.fail(
+                "dspy.clients.base_lm.GLOBAL_HISTORY not importable — acceptance test channel missing"
+            )

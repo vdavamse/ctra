@@ -82,27 +82,6 @@ def _advice(predictor_name: str, text: str) -> str:
     return json.dumps({predictor_name: text})
 
 
-class _DummyLM(dspy.LM):
-    """Minimal LM for testing that always returns the same response."""
-
-    def __init__(self, responses: list[str]) -> None:
-        super().__init__(model="dummy")
-        self.responses = responses
-        self.call_count = 0
-        self.history = []
-
-    def __call__(self, prompt: str = None, messages: list = None, **kwargs) -> str:
-        """Return the next canned response. Accepts both prompt and messages."""
-        response = self.responses[self.call_count % len(self.responses)]
-        self.call_count += 1
-        self.history.append({"prompt": prompt, "messages": messages, "response": response})
-        return response
-
-    def copy(self, **kwargs):
-        """Create a copy for Refine to deepcopy (accepts Refine's kwargs)."""
-        return _DummyLM(self.responses)
-
-
 @pytest.fixture
 def _clear_history():
     """Clear GLOBAL_HISTORY before each test."""
@@ -114,30 +93,6 @@ def _clear_history():
         GLOBAL_HISTORY.clear()
     except ImportError:
         yield
-
-
-@pytest.fixture
-def _kinds(request):
-    """Classify LM calls as 'module' or 'offer_feedback' by rendered message content."""
-
-    def classify_history():
-        try:
-            from dspy.clients.base_lm import GLOBAL_HISTORY
-
-            kinds = []
-            for entry in GLOBAL_HISTORY:
-                # Each entry is a dict with 'messages', 'kwargs', etc.
-                # OfferFeedback is recognizable by its instruction text
-                messages_text = str(entry.get("messages", ""))
-                if "assign blame" in messages_text or "OfferFeedback" in messages_text:
-                    kinds.append("offer_feedback")
-                else:
-                    kinds.append("module")
-            return kinds
-        except ImportError:
-            return []
-
-    return classify_history
 
 
 def test_real_grouper_returns_prediction():
@@ -156,9 +111,7 @@ def test_real_grouper_returns_prediction():
 
     # Mock the inner ChainOfThought to return valid groups
     with patch.object(grouper, "feature_grouper") as mock_cot:
-        mock_cot.return_value = dspy.Prediction(
-            groups=[["feat_a", "feat_b"]]
-        )
+        mock_cot.return_value = dspy.Prediction(groups=[["feat_a", "feat_b"]])
 
         result = grouper.forward(feature_plans=feature_plans, task="Test task")
 
@@ -178,7 +131,6 @@ def test_all_three_modules_return_predictions():
     This verifies that proposer, planner, and grouper all have the right return
     type for Refine's feedback step to work.
     """
-    from ctra.agents.feature_planner import FeaturePlanner
     from ctra.agents.feature_proposer import FeatureProposer
 
     # Test proposer
@@ -211,9 +163,7 @@ def test_all_three_modules_return_predictions():
     grouper = FeatureGrouper(task_description="Test task")
     with patch.object(grouper, "feature_grouper") as mock_cot:
         mock_cot.return_value = dspy.Prediction(groups=[["feat_a"]])
-        result = grouper(
-            feature_plans={"feat_a": _make_plan("feat_a")}, task="Test task"
-        )
+        result = grouper(feature_plans={"feat_a": _make_plan("feat_a")}, task="Test task")
         assert isinstance(result, dspy.Prediction)
         assert dict(result) is not None  # dict() succeeds - THE FIX!
 
@@ -309,6 +259,7 @@ def test_unwrap_helpers_are_tolerant():
     # unwrap_planner_result is tolerant
     plan_pred = planner_prediction(plan, raw="raw")
     unwrapped_plan, unwrapped_raw = unwrap_planner_result(plan_pred)
+    assert unwrapped_raw == "raw"
     assert unwrapped_plan == plan
 
     legacy_tuple = (plan, "raw")
@@ -360,3 +311,135 @@ def test_helpers_match_the_real_modules():
     # Grouper: check groups field exists
     helper_groups = grouper_prediction([])
     assert "groups" in dict(helper_groups)
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: the feedback path actually runs (the issue's acceptance criterion)
+# ---------------------------------------------------------------------------
+
+_GROUPER_PREDICTOR = "feature_grouper.predict"
+
+
+def _two_plans() -> dict[str, FeaturePlan]:
+    return {"feat_a": _make_plan("feat_a"), "feat_b": _make_plan("feat_b")}
+
+
+def _sub_threshold_lm(advice_json: str):
+    """A DummyLM whose grouping covers only ``feat_a`` (reward 0.0 every attempt).
+
+    The same canned dict serves both signatures: ``reasoning``/``groups`` for the
+    grouper's ChainOfThought and ``discussion``/``advice`` for OfferFeedback.
+    """
+    from dspy.utils.dummies import DummyLM
+
+    canned = {
+        "reasoning": "r",
+        "groups": json.dumps([["feat_a"]]),
+        "discussion": "d",
+        "advice": advice_json,
+    }
+    return DummyLM([canned] * 20)
+
+
+def _rendered(entry: dict) -> str:
+    return json.dumps(entry.get("messages") or entry.get("prompt") or "")
+
+
+def _global_history() -> list:
+    from dspy.clients.base_lm import GLOBAL_HISTORY
+
+    return GLOBAL_HISTORY
+
+
+@pytest.mark.usefixtures("_clear_history")
+def test_sub_threshold_attempts_trigger_offer_feedback_and_hints(capsys) -> None:
+    """Headline: real grouper + real reward + ResettingRefine + DummyLM.
+
+    Before #5 this run made 3 LM calls, printed ``Refine: Attempt failed`` twice
+    (``dict(list[dict])`` raised), eroded ``fail_count`` from 3 to 1 and never sent
+    a hint. Now it makes 5 calls (module, OfferFeedback, module, OfferFeedback,
+    module), swallows nothing, keeps the budget, and the sentinel advice reaches
+    attempts 2 and 3.
+    """
+    dspy.configure(lm=_sub_threshold_lm(_advice(_GROUPER_PREDICTOR, SENTINEL)))
+    refine = ResettingRefine(module=FeatureGrouper(), N=3, reward_fn=grouper_reward, threshold=1.0)
+
+    result = refine(feature_plans=_two_plans(), task="t")
+
+    history = _global_history()
+    assert len(history) == 5, [_rendered(e)[:80] for e in history]
+    assert "Attempt failed" not in capsys.readouterr().out
+    assert refine.fail_count == 3
+    assert list(result.keys()) == ["groups"]
+
+    module_attempts = [history[0], history[2], history[4]]
+    assert SENTINEL not in _rendered(module_attempts[0])
+    for attempt in module_attempts[1:]:
+        text = _rendered(attempt)
+        assert "hint_" in text and SENTINEL in text, text[:300]
+
+
+@pytest.mark.usefixtures("_clear_history")
+def test_legacy_raw_return_still_takes_the_blind_path(capsys) -> None:
+    """Contrast case proving the headline test discriminates old from new.
+
+    A module shaped like the pre-#5 grouper (real predictor, raw ``list[dict]``
+    return) makes ``dict(outputs)`` raise, so OfferFeedback never runs.
+    """
+
+    class _RawListGrouper(dspy.Module):  # type: ignore[misc]
+        def __init__(self) -> None:
+            super().__init__()
+            self.feature_grouper = FeatureGrouper().feature_grouper
+
+        def forward(self, feature_plans, task):
+            self.feature_grouper(task=task, feature_plans={})
+            return [{"feat_a": feature_plans["feat_a"]}]
+
+    dspy.configure(lm=_sub_threshold_lm(_advice(_GROUPER_PREDICTOR, SENTINEL)))
+    refine = ResettingRefine(module=_RawListGrouper(), N=3, reward_fn=grouper_reward, threshold=1.0)
+
+    refine(feature_plans=_two_plans(), task="t")
+
+    history = _global_history()
+    assert len(history) == 3
+    assert capsys.readouterr().out.count("Attempt failed") == 2
+    assert refine.fail_count == 1
+    assert all(SENTINEL not in _rendered(e) for e in history)
+
+
+@pytest.mark.usefixtures("_clear_history")
+def test_advice_keyed_by_wrong_predictor_yields_na_hint() -> None:
+    """refine.py resolves advice via ``signature2name``; a wrong key degrades to "N/A".
+
+    Guards the routing: asserting only that ``hint_`` is present would pass here too.
+    """
+    dspy.configure(lm=_sub_threshold_lm(_advice("nonexistent.predict", SENTINEL)))
+    refine = ResettingRefine(module=FeatureGrouper(), N=3, reward_fn=grouper_reward, threshold=1.0)
+
+    refine(feature_plans=_two_plans(), task="t")
+
+    history = _global_history()
+    assert len(history) == 5
+    for attempt in (history[2], history[4]):
+        text = _rendered(attempt)
+        assert "hint_" in text
+        assert "N/A" in text
+        assert SENTINEL not in text
+
+
+@pytest.mark.usefixtures("_clear_history")
+def test_empty_advice_dict_runs_feedback_but_injects_no_hint() -> None:
+    """Pins refine.py's ``if not advice:``: ``"{}"`` parses falsy, so no hint is sent.
+
+    This is why ``_advice`` must build a non-empty dict; the older fixture in
+    ``test_resetting_refine.py`` returns ``"{}"`` and would never exercise the hint.
+    """
+    dspy.configure(lm=_sub_threshold_lm("{}"))
+    refine = ResettingRefine(module=FeatureGrouper(), N=3, reward_fn=grouper_reward, threshold=1.0)
+
+    refine(feature_plans=_two_plans(), task="t")
+
+    history = _global_history()
+    assert len(history) == 5
+    assert all("hint_" not in _rendered(e) for e in history)
