@@ -456,8 +456,8 @@ class TestBuilderExceptionMetadata:
             assert "BUILDER" in formatted
 
     def test_builder_exception_preserves_cached_siblings(self, tmp_path: Path) -> None:
-        """Cached values should survive when other features crash."""
-        from ctra.agents.feature_builder import WrappedFeatureBuilder
+        """Exception on uncached features should not stamp exception metadata onto cached siblings."""
+        from ctra.agents.feature_builder import compute_features
         from ctra.agents.feature_store import put_cached_feature
 
         plans = {"feat_a": _make_plan("feat_a"), "feat_b": _make_plan("feat_b")}
@@ -467,6 +467,7 @@ class TestBuilderExceptionMetadata:
         feature_store_dir.mkdir()
 
         nctid = "NCT001"
+        nctids = [nctid]
         put_cached_feature(
             str(feature_store_dir),
             "phase2",
@@ -481,23 +482,24 @@ class TestBuilderExceptionMetadata:
             # Raise on uncached plans
             mock_builder_cls.side_effect = RuntimeError("Test exception")
 
-            builder = WrappedFeatureBuilder(
+            # Use compute_features with a dummy grouper (will be overridden by single plan)
+            _, _, builder_meta = compute_features(
+                grouper=lambda feature_plans, task: [feature_plans],
+                nctids=nctids,
                 task_description="test",
+                plans=plans,
                 feature_store_dir=feature_store_dir,
                 task_namespace="phase2",
                 feature_store_enabled=True,
             )
 
-            _, values, meta = builder((nctid, plans))
+            # feat_a (cached) should have "[cached]" sentinel, not exception metadata
+            assert builder_meta[nctid]["feat_a"]["research_results"] == "[cached]"
+            assert builder_meta[nctid]["feat_a"]["builder_reasoning"] == "[cached]"
 
-            # feat_a should be cached and preserved
-            assert "feat_a" in values
-            assert values["feat_a"]["value"] == 1.5
-
-            # Only feat_b should have exception explanation
-            none_exps = meta.get("none_feature_explanations", {})
-            assert "feat_b" in none_exps
-            assert "feat_a" not in none_exps  # Cached, no explanation
+            # feat_b (failed) should have exception metadata
+            assert builder_meta[nctid]["feat_b"]["research_results"] == "[builder_exception]"
+            assert "builder_exception:" in builder_meta[nctid]["feat_b"]["builder_reasoning"]
 
     def test_builder_exception_message_is_truncated(self, tmp_path: Path) -> None:
         """Long exception messages should be truncated to BUILDER_EXCEPTION_MSG_MAXLEN."""
@@ -520,13 +522,13 @@ class TestBuilderExceptionMetadata:
             _, _, meta = builder(("NCT001", plans))
 
             reason = meta.get("none_feature_explanations", {}).get("feat_a", "")
-            # The reason starts with the prefix and truncated detail.
-            # The truncation applies to the detail part, so the total can be
-            # slightly longer due to the prefix ("builder_exception: ").
-            # We verify it's reasonable and ends with "..."
+            # Reason format: "builder_exception: " + truncated(detail)
+            # where detail = "RuntimeError: " + message (truncated to MAXLEN - 3) + "..."
+            # Total length = len("builder_exception: ") + min(len(detail), MAXLEN)
             assert reason.endswith("...")
-            # Detail should be truncated to BUILDER_EXCEPTION_MSG_MAXLEN
-            assert len(reason) <= BUILDER_EXCEPTION_MSG_MAXLEN + len("builder_exception: ")
+            # Exact length: prefix + space + (MAXLEN truncated to fit "...")
+            expected_length = len("builder_exception: ") + BUILDER_EXCEPTION_MSG_MAXLEN
+            assert len(reason) == expected_length
 
     def test_builder_exception_reason_names_the_exception_type(self, tmp_path: Path) -> None:
         """Exception type name should be included in the reason."""

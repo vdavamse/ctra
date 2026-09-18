@@ -200,12 +200,18 @@ class BuilderDiagnostics:
                 attribution = "BUILDER"
             else:
                 attribution = "UNCLEAR"
-            lines.append(
+            line = (
                 f"- **{fd.feature_name}**: None rate={fd.none_rate:.0%}, "
                 f"failure='{fd.dominant_failure_reason}', "
                 f"research_coverage={fd.research_coverage_score:.0%}, "
                 f"attribution={attribution}"
             )
+            # Add note for builder crashes
+            if fd.dominant_failure_reason == BUILDER_EXCEPTION_REASON:
+                line += (
+                    " note=builder crashed; feature never evaluated, not evidence against the plan"
+                )
+            lines.append(line)
         return "\n".join(lines) if len(lines) > 1 else "All features have low None rates."
 
 

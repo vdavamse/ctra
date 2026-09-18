@@ -565,12 +565,24 @@ def compute_features(
         none_feature_reasons[nctid] = none_feature_reasons[nctid] | metadata.get(
             "none_feature_explanations", {}
         )
-        # Preserve per-feature builder metadata for diagnostic analysis
+        # Preserve per-feature builder metadata for diagnostic analysis.
+        # When the builder crashed (exception sentinel), only stamp exception metadata
+        # on the features that actually failed; give cached siblings the "[cached]" sentinel.
+        is_exception = metadata.get("research_results") == BUILDER_EXCEPTION_RESEARCH_SENTINEL
+        crashed_features = (
+            set(metadata.get("none_feature_explanations", {})) if is_exception else set()
+        )
+        group_meta = {
+            "research_results": metadata.get("research_results", ""),
+            "builder_reasoning": metadata.get("builder_reasoning", ""),
+        }
+        cached_meta = {"research_results": "[cached]", "builder_reasoning": "[cached]"}
         builder_meta[nctid] = builder_meta[nctid] | {
-            feat_name: {
-                "research_results": metadata.get("research_results", ""),
-                "builder_reasoning": metadata.get("builder_reasoning", ""),
-            }
+            feat_name: (
+                dict(cached_meta)
+                if is_exception and feat_name not in crashed_features
+                else dict(group_meta)
+            )
             for feat_name in feature_values
         }
 

@@ -388,9 +388,12 @@ class TestEvaluatorWrongRowSelection:
 
     def test_duplicate_index_labels_produce_scalar_rows(self, mock_evaluator: Evaluator) -> None:
         """Duplicate index labels should be handled positionally, not with .loc."""
+        import re
+
+        # Create fixture with duplicate labels to trigger the old .loc bug
         wrong_idxs = [0, 1, 2]
         wrong_preds = [1, 0, 1]
-        wrong_df_index = [1, 1, 2]
+        wrong_df_index = [0, 0, 1]  # Duplicate label at 0
         model_result = _make_eval_result(
             roc_auc=0.7,
             wrong_idxs=wrong_idxs,
@@ -434,10 +437,12 @@ class TestEvaluatorWrongRowSelection:
             call_args_list = mock_react_instance.call_args_list
             for call in call_args_list:
                 example = call.kwargs.get("example", "")
-                # Should contain exactly one "Predicted" token per example
-                assert example.count("Predicted") == 1
-                # Should match pattern
-                assert "## NCT" in example
+                # Header should match pattern: "## NCTXXX Predicted 0/1, should be 0/1"
+                assert re.search(
+                    r"^## NCT00\d Predicted [01], should be [01]$",
+                    example,
+                    re.MULTILINE,
+                ), f"Header not found or malformed in: {example}"
 
     def test_sampling_is_seed_stable(self, mock_evaluator: Evaluator) -> None:
         """Sampling with a fixed seed (42) should produce deterministic results."""

@@ -350,6 +350,8 @@ class TestBuilderDiagnosticsAttribution:
 
         # Without the override, this would be RESEARCHER (high none_rate + low coverage)
         assert "attribution=BUILDER" in formatted
+        # Should include note about crash
+        assert "note=builder crashed" in formatted
 
     def test_builder_exception_beats_unclear_heuristic(self) -> None:
         """Builder exception should override UNCLEAR heuristic."""
@@ -369,6 +371,8 @@ class TestBuilderDiagnosticsAttribution:
 
     def test_attribution_vocabulary_unchanged(self) -> None:
         """All emitted attributions must be in {RESEARCHER, BUILDER, UNCLEAR}."""
+        import re
+
         from ctra.agents.data_models import BuilderDiagnostics, FeatureDiagnostic
 
         # Test cases: (none_rate, research_coverage, reason, expected_attribution)
@@ -401,19 +405,14 @@ class TestBuilderDiagnosticsAttribution:
 
             feat_key = f"feat_{i}"
             if f"**{feat_key}**" not in formatted:
-                # Feature was skipped due to none_rate < 0.05; verify attribution not in output
-                assert "attribution=" not in formatted or feat_key not in formatted
+                # Feature was skipped due to none_rate < 0.05
                 continue
 
-            # Assert the expected attribution is present
-            assert f"attribution={expected}" in formatted
-            # Also verify only valid attributions are used
-            for attr in valid_attributions:
-                if attr != expected:
-                    # May appear elsewhere, but not for this feature
-                    pass
-            # Verify no invalid attributions in this feature's line
-            assert f"attribution={expected}" in formatted
+            # Extract all attribution values from formatted output
+            emitted = re.findall(r"attribution=(\w+)", formatted)
+            assert emitted == [expected], f"Expected {[expected]}, got {emitted} in: {formatted}"
+            # Verify only valid attributions are used
+            assert set(emitted) <= valid_attributions
 
     def test_low_rate_builder_exception_is_still_skipped(self) -> None:
         """Builder exception with none_rate < 0.05 should still be skipped."""
