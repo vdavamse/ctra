@@ -106,12 +106,15 @@ class FeatureBuilder(dspy.Module):  # type: ignore[misc]
 
         Returns:
             ``dspy.Prediction`` with fields ``feature_values``
-            (``{feature_name: {sub: value}}``) and ``metadata`` (the four keys
-            ``research_results``, ``research_result_reasoning``,
-            ``builder_reasoning``, ``none_feature_explanations``). Wrapped so
-            ``dspy.Refine``'s ``dict(outputs)`` feedback step succeeds. Unwrap
-            with ``reward_fns.unwrap_builder_result`` -- never
-            ``values, meta = ...``, which binds the field-name strings.
+            (``{feature_name: {sub: value}}``, covering **only** the features the
+            Construct step actually produced -- coverage may be partial) and
+            ``metadata`` (the four keys ``research_results``,
+            ``research_result_reasoning``, ``builder_reasoning``,
+            ``none_feature_explanations``). Completeness is validated by
+            ``reward_fns.is_valid_builder`` via the ``ResettingRefine`` wrapper in
+            ``WrappedFeatureBuilder``, not here. Unwrap with
+            ``reward_fns.unwrap_builder_result`` -- never ``values, meta = ...``,
+            which binds the field-name strings.
         """
         nct_info = get_trial_info_dict(nctid)
 
@@ -160,10 +163,21 @@ class FeatureBuilder(dspy.Module):  # type: ignore[misc]
 
         feature_values = deepcopy(builder_result.all_feature_values)
 
-        # Validate all features were generated
+        # Incomplete coverage is reported, not raised. Raising here burned every
+        # ResettingRefine attempt and re-raised on the last one (refine.py:172),
+        # discarding the features that *were* built. is_valid_builder scores the
+        # partial result 0.0 so Refine retries with OfferFeedback guidance; if the
+        # budget runs out, WrappedFeatureBuilder fills the stragglers with all-None
+        # values and a builder_omitted explanation.
         missing_features = set(feature_plan_group.keys()) - set(feature_values.keys())
         if missing_features:
-            raise ValueError(f"Features not generated: {missing_features}")
+            logger.warning(
+                "Construct step omitted %d/%d feature(s) for %s: %s",
+                len(missing_features),
+                len(feature_plan_group),
+                nctid,
+                sorted(missing_features),
+            )
 
         # Per-type validation (AutoCT lines 1214-1330)
         values: dict[str, dict[str, Any]] = {}
