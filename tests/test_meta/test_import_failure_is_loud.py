@@ -70,7 +70,9 @@ def _run_pytest(
     env.pop("PYTEST_ADDOPTS", None)
     # Inherit normal plugin autoload (pytest-asyncio etc.); the blocker is loaded by -p.
     env.pop("PYTEST_DISABLE_PLUGIN_AUTOLOAD", None)
-    # This repo tracks __pycache__/*.pyc; the subprocess must not dirty the tree.
+    # Keep the subprocess side-effect free: it runs against the real checkout,
+    # so the tree must look the same after it as before, regardless of ignore
+    # rules (the Dockerfiles set the same variable).
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     plugin = ["-p", "ctra_block_reward_fns"] if blocked else []
     return subprocess.run(

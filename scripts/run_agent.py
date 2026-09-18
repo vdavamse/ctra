@@ -7,10 +7,10 @@ Standalone script for debugging or subprocess invocation from
 Usage::
 
     # Iteration 0 (no previous output)
-    python scripts/run_agent.py --task phase2 --output result.pkl
+    python scripts/run_agent.py --task phase2 --output .output/result.pkl
 
     # Iteration N (resume from previous output)
-    python scripts/run_agent.py --task phase2 --input prev.pkl --output result.pkl
+    python scripts/run_agent.py --task phase2 --input .output/prev.pkl --output .output/result.pkl
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from pathlib import Path
 
 import dill
 
@@ -134,6 +135,7 @@ def main() -> None:
     output = agent.forward(previous_output=previous_output)
 
     # ---- Serialize output ----
+    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     with open(args.output, "wb") as f:
         dill.dump(output, f)
     logger.info("Output written to %s", args.output)

@@ -1,0 +1,61 @@
+# Byte-compiled / optimized Python files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Packaging / build artefacts
+/build/
+/dist/
+*.egg-info/
+*.egg
+MANIFEST
+
+# Virtual environments and local secrets
+.venv/
+venv/
+/env/
+.env
+.env.*
+!.env.example
+
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+.hypothesis/
+.tox/
+.nox/
+
+# Logs, coverage and test reports
+*.log
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+junit*.xml
+*.cover
+
+# Notebooks, editors and OS cruft
+.ipynb_checkpoints/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Pipeline outputs -- see src/ctra/config/settings.py, README.md, docker-compose.yml
+/output/
+/.output/
+/mlruns/
+/models/
+/monitoring/
+/datasets/
+/tasks/
+
+# Local workflow state (agent notes, downloaded CI logs, per-machine Claude config)
+/notes/
+/checks/
+.claude/settings.local.json
+.claude/*.lock
