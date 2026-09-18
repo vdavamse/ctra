@@ -345,6 +345,15 @@ class WrappedFeatureBuilder:
         self._feature_store_dir = feature_store_dir
         self._task_namespace = task_namespace
         self._feature_store_enabled = feature_store_enabled and feature_store_dir is not None
+        # Entered around the ResettingRefine call in __call__. refine.py:107-108
+        # deepcopies the module and pins ``dspy.settings.lm`` onto every named
+        # predictor via ``mod.set_lm()``, which OVERRIDES FeatureBuilder.forward's
+        # own ``dspy.context(lm=...)`` for the __init__-time ``constructor``.
+        # Deliberately not ``builder._budget_lm``: FeatureBuilder is patched as a
+        # MagicMock class in tests, and a MagicMock must never reach
+        # ``dspy.context(lm=...)``. Constructed once per wrapper (one per
+        # compute_features call), not per trial-group.
+        self._budget_lm = configure_budget_lm()
 
     def __call__(
         self, arg: tuple[str, dict[str, FeaturePlan]]
@@ -398,7 +407,14 @@ class WrappedFeatureBuilder:
                 reward_fn=builder_reward,
                 threshold=1.0,
             )
-            result = refiner(nctid=nctid, feature_plan_group=uncached_plans)
+            # Refine call under the budget LM. refine.py:99 reads
+            # dspy.settings.lm and :108 pins it onto the deepcopied module's
+            # predictors, so without this context the Construct phase leaks onto
+            # the primary (Opus) LM. Entering it here routes the Construct phase
+            # *and* the now-live OfferFeedback call (refine.py:167, resolved at
+            # call time) to the budget LM instead.
+            with dspy.context(lm=self._budget_lm):
+                result = refiner(nctid=nctid, feature_plan_group=uncached_plans)
 
             # Never ``values, meta = result``: a Prediction unpacks into its KEY
             # STRINGS with no error. The helper also passes a legacy tuple through.
