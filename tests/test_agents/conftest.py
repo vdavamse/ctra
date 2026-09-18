@@ -8,6 +8,8 @@ modules so the helpers cannot silently drift from production.
 
 from __future__ import annotations
 
+from typing import Any
+
 try:
     import dspy
 
@@ -78,3 +80,27 @@ def grouper_prediction(groups: list[dict[str, FeaturePlan]]) -> dspy.Prediction:
     if not _HAS_DSPY:
         raise ImportError("dspy not available")
     return dspy.Prediction(groups=groups)
+
+
+def builder_prediction(
+    feature_values: dict[str, dict[str, Any]],
+    metadata: dict[str, Any] | None = None,
+) -> dspy.Prediction:
+    """Build a dspy.Prediction matching FeatureBuilder.forward() return.
+
+    Note the field name is ``feature_values``: a Prediction field named
+    ``values`` shadows the reserved ``Example.values`` method and is silently
+    broken.
+
+    Args:
+        feature_values: ``{feature_name: {sub: value}}`` as the builder emits it.
+        metadata: The builder metadata dict; defaults to ``{}`` so the legacy
+            ``(values, {})`` doubles are a one-line substitution.
+
+    Returns:
+        A ``dspy.Prediction(feature_values=..., metadata=...)`` matching the
+        real module's return.
+    """
+    if not _HAS_DSPY:
+        raise ImportError("dspy not available")
+    return dspy.Prediction(feature_values=feature_values, metadata=metadata or {})

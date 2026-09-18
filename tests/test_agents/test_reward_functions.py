@@ -19,8 +19,8 @@ try:
         FeatureType,
         ProposerOutput,
     )
-    from ctra.agents.feature_builder import _builder_reward
     from ctra.agents.reward_fns import (
+        builder_reward,
         grouper_reward,
         planner_reward,
         proposer_reward,
@@ -232,7 +232,7 @@ class TestGrouperReward:
 
 
 # ======================================================================
-# _builder_reward
+# builder_reward
 # ======================================================================
 
 
@@ -242,19 +242,19 @@ class TestBuilderReward:
             "feature_plan_group": {"feat_a": _make_plan("feat_a"), "feat_b": _make_plan("feat_b")}
         }
         result = ({"feat_a": {"value": 1.0}, "feat_b": {"value": 2.0}}, {})
-        assert _builder_reward(kwargs, result) == 1.0
+        assert builder_reward(kwargs, result) == 1.0
 
     def test_missing_feature_invalid(self) -> None:
         kwargs = {
             "feature_plan_group": {"feat_a": _make_plan("feat_a"), "feat_b": _make_plan("feat_b")}
         }
         result = ({"feat_a": {"value": 1.0}}, {})  # missing feat_b
-        assert _builder_reward(kwargs, result) == 0.0
+        assert builder_reward(kwargs, result) == 0.0
 
     def test_extra_features_still_valid(self) -> None:
         kwargs = {"feature_plan_group": {"feat_a": _make_plan("feat_a")}}
         result = ({"feat_a": {"value": 1.0}, "feat_extra": {"value": 3.0}}, {})
-        assert _builder_reward(kwargs, result) == 1.0
+        assert builder_reward(kwargs, result) == 1.0
 
     def test_exception_returns_zero(self) -> None:
-        assert _builder_reward({}, "bad") == 0.0
+        assert builder_reward({}, "bad") == 0.0

@@ -38,7 +38,13 @@ from ctra.agents.feature_store import (
 )
 from ctra.agents.feature_utils import dump_as_json, soft_assert
 from ctra.agents.lm_config import configure_budget_lm
-from ctra.agents.reward_fns import ResettingRefine, is_valid_grouper, unwrap_groups
+from ctra.agents.reward_fns import (
+    ResettingRefine,
+    builder_reward,
+    is_valid_grouper,
+    unwrap_builder_result,
+    unwrap_groups,
+)
 from ctra.agents.signatures import (
     FeatureBuilderConstructSignature,
     FeatureBuilderResearchMultiSignature,
@@ -91,7 +97,7 @@ class FeatureBuilder(dspy.Module):  # type: ignore[misc]
         self,
         nctid: str,
         feature_plan_group: dict[str, FeaturePlan],
-    ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    ) -> dspy.Prediction:
         """Build features for a single trial from a group of plans.
 
         Parameters:
@@ -99,8 +105,13 @@ class FeatureBuilder(dspy.Module):  # type: ignore[misc]
             feature_plan_group: Grouped feature plans (max 5).
 
         Returns:
-            Tuple of ``(values_dict, metadata_dict)`` where metadata
-            includes ``none_feature_explanations``.
+            ``dspy.Prediction`` with fields ``feature_values``
+            (``{feature_name: {sub: value}}``) and ``metadata`` (the four keys
+            ``research_results``, ``research_result_reasoning``,
+            ``builder_reasoning``, ``none_feature_explanations``). Wrapped so
+            ``dspy.Refine``'s ``dict(outputs)`` feedback step succeeds. Unwrap
+            with ``reward_fns.unwrap_builder_result`` -- never
+            ``values, meta = ...``, which binds the field-name strings.
         """
         nct_info = get_trial_info_dict(nctid)
 
@@ -279,28 +290,22 @@ class FeatureBuilder(dspy.Module):  # type: ignore[misc]
                 feature_value[key] = value
             values[feature_name] = feature_value
 
-        return values, {
-            "research_results": research_result.research_results,
-            "research_result_reasoning": getattr(research_result, "reasoning", ""),
-            "builder_reasoning": getattr(builder_result, "reasoning", ""),
-            "none_feature_explanations": getattr(builder_result, "none_feature_explanations", {}),
-        }
+        return dspy.Prediction(
+            feature_values=values,
+            metadata={
+                "research_results": research_result.research_results,
+                "research_result_reasoning": getattr(research_result, "reasoning", ""),
+                "builder_reasoning": getattr(builder_result, "reasoning", ""),
+                "none_feature_explanations": getattr(
+                    builder_result, "none_feature_explanations", {}
+                ),
+            },
+        )
 
 
 # ---------------------------------------------------------------------------
 # Disk-cached wrapper (AutoCT agent.py:1709-1775)
 # ---------------------------------------------------------------------------
-
-
-def _builder_reward(kwargs: Any, result: Any) -> float:
-    """Reward: 1.0 if all planned features were generated, 0.0 otherwise."""
-    try:
-        values, _meta = result
-        planned = set(kwargs["feature_plan_group"].keys())
-        generated = set(values.keys())
-        return 1.0 if planned.issubset(generated) else 0.0
-    except Exception:
-        return 0.0
 
 
 class WrappedFeatureBuilder:
@@ -370,16 +375,20 @@ class WrappedFeatureBuilder:
 
         # Build only the uncached subset
         try:
-            fb = FeatureBuilder(task_description=self.task_description)
+            builder = FeatureBuilder(task_description=self.task_description)
             # Constructed per call, so Refine's failure budget cannot erode across
             # calls here -- ResettingRefine for consistency with the other sites.
-            fb = ResettingRefine(
-                module=fb,
+            refiner = ResettingRefine(
+                module=builder,
                 N=3,
-                reward_fn=_builder_reward,
+                reward_fn=builder_reward,
                 threshold=1.0,
             )
-            values, meta = fb(nctid=nctid, feature_plan_group=uncached_plans)
+            result = refiner(nctid=nctid, feature_plan_group=uncached_plans)
+
+            # Never ``values, meta = result``: a Prediction unpacks into its KEY
+            # STRINGS with no error. The helper also passes a legacy tuple through.
+            values, meta = unwrap_builder_result(result)
 
             # Persist each freshly built feature individually
             if self._feature_store_enabled:
