@@ -1,13 +1,27 @@
 """DSPy ReAct agents for feature extraction via RAG.
 
 - **FeatureBuilder**: Two-phase grouped builder (ReAct research → CoT
-  construct) with disk caching and ``soft_assert`` validation.
-- **WrappedFeatureBuilder**: Disk-cached wrapper keyed by plan hash.
+  construct) with disk caching and ``soft_assert`` validation. Returns a
+  ``dspy.Prediction(feature_values=..., metadata=...)`` that may cover only
+  **part** of the requested group: completeness is judged by
+  ``reward_fns.is_valid_builder`` (which drives the ``ResettingRefine``
+  retries), and gap-filling is ``WrappedFeatureBuilder``'s job, not the
+  module's.
+- **WrappedFeatureBuilder**: Disk-cached wrapper keyed by plan hash. After
+  Refine returns, fills any feature the builder never produced with all-None
+  sub-values and a ``builder_omitted`` explanation -- after the store writes
+  (never negatively cached) and outside the reward boundary.
 - **compute_features**: Parallel grouped feature computation.
 
 The builder uses the **budget LM** (Claude Sonnet 4.6) via
 :func:`ctra.agents.lm_config.configure_budget_lm` to reduce cost for
-high-volume extraction calls.
+high-volume extraction calls. ``FeatureBuilder.forward`` enters
+``dspy.context(lm=<budget>)`` itself, but under ``ResettingRefine`` that is
+not enough: ``refine.py:107-108`` deepcopies the module and ``set_lm()``s
+``dspy.settings.lm`` onto every ``__init__``-time predictor, which overrides
+the inner context. ``WrappedFeatureBuilder`` therefore enters the budget-LM
+context *around* the Refine call, so both the Construct phase and Refine's
+own ``OfferFeedback`` call run on the budget LM.
 """
 
 from __future__ import annotations
@@ -82,7 +96,10 @@ class FeatureBuilder(dspy.Module):  # type: ignore[misc]
     converts research results into typed feature values with
     ``none_feature_explanations`` for missing data.
 
-    Both phases run under the budget LM (Sonnet) via ``dspy.context``.
+    Both phases run under the budget LM (Sonnet) via ``dspy.context`` when
+    the module is called directly. Under ``ResettingRefine`` the wrapper's
+    outer ``dspy.context`` is what keeps the Construct phase on the budget LM
+    (see the module docstring).
 
     Parameters:
         task_description: Text description of the prediction task.

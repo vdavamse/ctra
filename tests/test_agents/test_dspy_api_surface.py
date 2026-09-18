@@ -69,7 +69,7 @@ class TestDspyAPISurface:
         assert not hasattr(dspy, "Suggest")
 
     def test_prediction_exists(self) -> None:
-        """dspy.Prediction is load-bearing for three modules after issue #5 fix."""
+        """dspy.Prediction is load-bearing for all four Refine-wrapped modules (#5, #6)."""
         assert hasattr(dspy, "Prediction"), "dspy.Prediction missing — needed for return contracts"
 
     def test_global_history_importable(self) -> None:
