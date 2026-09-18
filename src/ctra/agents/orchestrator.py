@@ -343,19 +343,16 @@ class Agent(dspy.Module):  # type: ignore[misc]
             # the proposer a suggestion already tried and rejected, so the N=3
             # ``Refine`` attempts cannot make progress. Skip before spending them.
             #
-            # Reachability, measured — this is defensive scaffolding, not a live
-            # optimization. Exhaustion requires ``suggestion_index >= len(...)``,
-            # and ``_expand`` only ever assigns ``suggestion_index=i`` with
-            # ``i < len(candidates) <= len(suggestions)`` (``mcts.py:417``). The
-            # sole route past the end is ``mcts.py:691`` advancing the counter and
-            # the *same node* being evaluated again — and it is not, because
-            # ``search()`` re-expands any visited leaf (``mcts.py:297``) and
-            # ``_simulate_deep`` expands whenever ``current`` is a leaf
-            # (``mcts.py:488``), so the unvisited frontier outgrows the rollouts.
-            # A 200-rollout run across all four deep/adaptive combinations hit
-            # this branch zero times. It becomes live with issue #7, which fixes
-            # the MCTS side; until then it guarantees that an exhausted output
-            # cannot silently replay, and it is what makes that state nameable.
+            # Reachability — issue #7 closed the MCTS side: ``_expand`` caps a
+            # node's children at its own suggestion count and ``_call_evaluate``
+            # returns ``None`` instead of calling the runner when the parent
+            # output it built (carrying the child's ``suggestion_index``) is
+            # already exhausted. The search layer therefore never sends an
+            # exhausted output here, so this branch is *less* reachable than
+            # before, not more. It survives as the last line of defence for
+            # direct ``Agent`` callers and for any future expander or runner
+            # that bypasses ``MCTSSearch``, and it is what makes the state
+            # nameable.
             #
             # Cost note: the deepcopy below is not cheaper than the branch it
             # skips — it copies all of ``AgentOutput`` (fitted pipelines and
