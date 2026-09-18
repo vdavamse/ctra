@@ -12,8 +12,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 try:
+    import dspy
+
     from ctra.agents.data_models import FeaturePlan, FeatureSource, FeatureType
     from ctra.agents.feature_grouper import FeatureGrouper
+    from ctra.agents.reward_fns import is_valid_grouper
 
     _HAS_DSPY = True
 except ImportError:
@@ -35,14 +38,14 @@ def _make_plan(name: str) -> FeaturePlan:
 
 
 def test_grouper_empty_groups_no_raise():
-    """FeatureGrouper.forward() returns list even for empty groups.
+    """FeatureGrouper.forward() returns dspy.Prediction(groups=[]).
 
     Previously, forward() would raise ValueError if groups were empty.
     Now it handles empty groups gracefully, filtering them out.
 
     Arranges: Create grouper, mock to return empty groups list.
     Acts: Call forward().
-    Asserts: Empty list is returned without raising ValueError.
+    Asserts: dspy.Prediction(groups=[]) is returned without raising ValueError.
     """
     grouper = FeatureGrouper(
         task_description="Predict trial outcome",
@@ -64,21 +67,23 @@ def test_grouper_empty_groups_no_raise():
             task="Predict trial outcome",
             feature_plans=feature_plans,
         )
+        groups = result.groups
 
-        # Assert we got an empty list back
-        assert isinstance(result, list)
-        assert len(result) == 0
+        # Assert we got a dspy.Prediction with empty groups
+        assert isinstance(result, dspy.Prediction)
+        assert isinstance(groups, list)
+        assert len(groups) == 0
 
 
 def test_grouper_missing_feature_names_no_raise():
-    """FeatureGrouper.forward() returns list even when groups reference missing features.
+    """FeatureGrouper.forward() returns dspy.Prediction with stray names dropped.
 
     The defensive filter in forward() drops stray names not in feature_plans,
     allowing the orchestrator to detect the incomplete partition.
 
     Arranges: Create grouper, mock to return group with stray feature names.
     Acts: Call forward().
-    Asserts: Group is returned with stray names dropped.
+    Asserts: dspy.Prediction(groups=...) is returned with stray names dropped.
     """
     grouper = FeatureGrouper(
         task_description="Predict trial outcome",
@@ -103,23 +108,25 @@ def test_grouper_missing_feature_names_no_raise():
             task="Predict trial outcome",
             feature_plans=feature_plans,
         )
+        groups = result.groups
 
-        # Assert stray name was dropped from the first group
-        assert len(result) == 2
-        assert "feat_a" in result[0]
-        assert "stray_feature" not in result[0]
-        assert "feat_b" in result[1]
+        # Assert dspy.Prediction is returned with stray name dropped from first group
+        assert isinstance(result, dspy.Prediction)
+        assert len(groups) == 2
+        assert "feat_a" in groups[0]
+        assert "stray_feature" not in groups[0]
+        assert "feat_b" in groups[1]
 
 
 def test_grouper_feature_count_mismatch_no_raise():
-    """FeatureGrouper.forward() returns list even if total count doesn't match input.
+    """FeatureGrouper.forward() returns dspy.Prediction even if count doesn't match input.
 
     A missing feature results in fewer total features in groups.
     The orchestrator will catch this with is_valid_grouper.
 
     Arranges: Create grouper, mock to return groups with fewer features than input.
     Acts: Call forward().
-    Asserts: List is returned without raising ValueError (orchestrator validation handles it).
+    Asserts: dspy.Prediction is returned without raising ValueError (orchestrator validation handles it).
     """
     grouper = FeatureGrouper(
         task_description="Predict trial outcome",
@@ -144,11 +151,12 @@ def test_grouper_feature_count_mismatch_no_raise():
             task="Predict trial outcome",
             feature_plans=feature_plans,
         )
+        groups = result.groups
 
-        # Assert we got back a list (orchestrator will detect feat_c is missing)
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert set(result[0].keys()) == {"feat_a", "feat_b"}
+        # Assert we got back a dspy.Prediction (orchestrator will detect feat_c is missing)
+        assert isinstance(result, dspy.Prediction)
+        assert len(groups) == 1
+        assert set(groups[0].keys()) == {"feat_a", "feat_b"}
 
 
 def test_grouper_all_stray_group_is_dropped():
@@ -156,7 +164,7 @@ def test_grouper_all_stray_group_is_dropped():
 
     Arranges: Mock the grouper to return one all-stray group and one real group.
     Acts: Call forward().
-    Asserts: Only the real group survives -- no empty dict is emitted.
+    Asserts: dspy.Prediction returned with only the real group -- no empty dict is emitted.
     """
     grouper = FeatureGrouper(task_description="Predict trial outcome")
 
@@ -171,10 +179,12 @@ def test_grouper_all_stray_group_is_dropped():
         mock_grouper_module.return_value = mock_result
 
         result = grouper.forward(task="Predict trial outcome", feature_plans=feature_plans)
+        groups = result.groups
 
-    assert len(result) == 1
-    assert set(result[0].keys()) == {"feat_a"}
-    assert all(group for group in result), "no empty group should be emitted"
+    assert isinstance(result, dspy.Prediction)
+    assert len(groups) == 1
+    assert set(groups[0].keys()) == {"feat_a"}
+    assert all(group for group in groups), "no empty group should be emitted"
 
 
 def test_grouper_duplicate_feature_is_claimed_once():
@@ -196,21 +206,23 @@ def test_grouper_duplicate_feature_is_claimed_once():
         mock_grouper_module.return_value = mock_result
 
         result = grouper.forward(task="Predict trial outcome", feature_plans=feature_plans)
+        groups = result.groups
 
     # Second group becomes empty after de-duplication and is dropped.
-    assert len(result) == 1
-    assert set(result[0].keys()) == {"feat_a", "feat_b"}
-    total_assigned = sum(len(group) for group in result)
+    assert isinstance(result, dspy.Prediction)
+    assert len(groups) == 1
+    assert set(groups[0].keys()) == {"feat_a", "feat_b"}
+    total_assigned = sum(len(group) for group in groups)
     assert total_assigned == len(feature_plans)
 
 
 def test_grouper_missing_task_description_degrades_instead_of_raising(caplog):
-    """A missing task description is logged and yields ``[]``, never a raise.
+    """A missing task description is logged and yields dspy.Prediction(groups=[]), never a raise.
 
     ``forward()`` runs inside a ``Refine`` wrapper that deepcopies the module
     and retries three times before re-raising, so a raise here surfaced as three
-    "Attempt failed" lines with the real cause buried. Returning ``[]`` is judged
-    invalid by ``is_valid_grouper``, and ``compute_features`` repairs it into
+    "Attempt failed" lines with the real cause buried. Returning ``dspy.Prediction(groups=[])``
+    is judged invalid by ``is_valid_grouper``, and ``compute_features`` repairs it into
     one group per feature -- every feature still gets built.
     """
     grouper = FeatureGrouper()  # no task_description, and none passed to forward()
@@ -219,8 +231,10 @@ def test_grouper_missing_task_description_degrades_instead_of_raising(caplog):
 
     with patch.object(grouper, "feature_grouper") as mock_grouper_module, caplog.at_level("ERROR"):
         result = grouper.forward(feature_plans=feature_plans)
+        groups = result.groups
 
-    assert result == []
+    assert isinstance(result, dspy.Prediction)
+    assert groups == []
     assert "task description" in caplog.text
     assert not mock_grouper_module.called, "must not spend an LM call when misconfigured"
 
@@ -245,21 +259,21 @@ def test_grouper_splits_oversized_group():
         mock_grouper_module.return_value = mock_result
 
         result = grouper.forward(task="Predict trial outcome", feature_plans=feature_plans)
+        groups = result.groups
 
-    assert len(result) == 3, "12 features at a cap of 5 must split into 5 + 5 + 2"
-    assert all(len(group) <= _MAX_GROUP_SIZE for group in result)
+    assert isinstance(result, dspy.Prediction)
+    assert len(groups) == 3, "12 features at a cap of 5 must split into 5 + 5 + 2"
+    assert all(len(group) <= _MAX_GROUP_SIZE for group in groups)
 
     # Chunking must preserve coverage *and* count, or it could turn a valid
     # partition invalid -- which would send compute_features into its repair path.
-    assigned = [name for group in result for name in group]
+    assigned = [name for group in groups for name in group]
     assert sorted(assigned) == sorted(names)
     assert len(assigned) == len(set(assigned)) == len(feature_plans)
 
 
 def test_grouper_chunked_output_stays_valid():
     """The chunked partition must still satisfy ``is_valid_grouper``."""
-    from ctra.agents.reward_fns import is_valid_grouper
-
     grouper = FeatureGrouper(task_description="Predict trial outcome")
 
     names = [f"feat_{i:02d}" for i in range(7)]
@@ -272,6 +286,7 @@ def test_grouper_chunked_output_stays_valid():
 
         result = grouper.forward(task="Predict trial outcome", feature_plans=feature_plans)
 
+    # is_valid_grouper is tolerant of both Prediction and legacy list shape
     assert is_valid_grouper({"feature_plans": feature_plans}, result) is True
 
 
@@ -290,6 +305,8 @@ def test_grouper_group_at_cap_is_not_split():
         mock_grouper_module.return_value = mock_result
 
         result = grouper.forward(task="Predict trial outcome", feature_plans=feature_plans)
+        groups = result.groups
 
-    assert len(result) == 1
-    assert set(result[0]) == set(names)
+    assert isinstance(result, dspy.Prediction)
+    assert len(groups) == 1
+    assert set(groups[0]) == set(names)
