@@ -11,8 +11,8 @@ Sanctioned alternative for a genuinely optional third-party dependency:
 stale, and it cannot be defeated by a partially-imported package.
 
 Caught at module scope and inside class bodies, including when nested in
-``if`` / ``for`` / ``while`` / ``with`` / ``try`` blocks (function bodies are
-not entered by this walker):
+``if`` / ``for`` / ``while`` / ``with`` / ``try`` / ``match`` blocks (function
+bodies are not entered by this walker):
 
 * ``try`` (or ``try``/``except*``) whose body contains an import and whose
   handler is ``except ImportError`` / ``except ModuleNotFoundError``, named
@@ -44,7 +44,7 @@ SELF = Path(__file__).resolve()
 
 IMPORT_ERRORS = frozenset({"ImportError", "ModuleNotFoundError"})
 BROAD_EXCEPTIONS = frozenset({"Exception", "BaseException"})
-SKIP_CALLS = frozenset({"skip", "importorskip"})
+SKIP_CALLS = frozenset({"skip", "importorskip", "xfail"})
 
 # Top-level import names of every ``[project] dependencies`` entry in
 # ``pyproject.toml``, plus the first-party package.  Distribution names that
@@ -174,6 +174,8 @@ def _scope_violations(path: Path, tree: ast.Module) -> list[str]:
             children = stmt.body
         elif isinstance(stmt, (ast.If, ast.For, ast.AsyncFor, ast.While)):
             children = stmt.body + stmt.orelse
+        elif isinstance(stmt, ast.Match):
+            children = [s for case in stmt.cases for s in case.body]
         elif isinstance(stmt, ast.ClassDef):
             stack.extend((s, f"class-level (in class {stmt.name})") for s in stmt.body)
             continue
@@ -208,25 +210,30 @@ def _importorskip_violations(path: Path, tree: ast.Module) -> list[str]:
 
 
 def _skipping_handler_violations(path: Path, tree: ast.Module) -> list[str]:
-    """``except ImportError`` handlers that skip instead of failing, at any depth.
+    """Handlers around an import that skip instead of failing, at any depth.
 
-    Function bodies included: an autouse fixture or a helper that catches
-    ``ImportError`` and calls ``pytest.skip`` skips every test that uses it.
-    A handler that ``pytest.fail``s is loud and is not reported.
+    Function bodies included: an autouse fixture or a helper that wraps an
+    import in ``except ImportError`` (or a bare / broad ``except``) and calls
+    ``pytest.skip`` / ``pytest.xfail`` skips every test that uses it.  A
+    handler that ``pytest.fail``s is loud and is not reported.
     """
     out: list[str] = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.ExceptHandler):
+        if not (isinstance(node, _TRY_TYPES) and _contains_import(node.body)):
             continue
-        if not _exception_names(node.type) & IMPORT_ERRORS:
-            continue
-        for call in (n for s in node.body for n in ast.walk(s) if isinstance(n, ast.Call)):
-            if _callee_name(call) in SKIP_CALLS:
-                out.append(
-                    f"{path}:{call.lineno}: 'except ImportError' handler calls "
-                    f"{_callee_name(call)}() instead of failing"
-                )
-                break
+        for handler in node.handlers:
+            names = _exception_names(handler.type)
+            broad = handler.type is None or bool(names & BROAD_EXCEPTIONS)
+            if not (names & IMPORT_ERRORS or broad):
+                continue
+            calls = (n for s in handler.body for n in ast.walk(s) if isinstance(n, ast.Call))
+            for call in calls:
+                if _callee_name(call) in SKIP_CALLS:
+                    out.append(
+                        f"{path}:{call.lineno}: handler around an import calls "
+                        f"{_callee_name(call)}() instead of failing"
+                    )
+                    break
     return out
 
 
