@@ -1,13 +1,27 @@
 """DSPy ReAct agents for feature extraction via RAG.
 
 - **FeatureBuilder**: Two-phase grouped builder (ReAct research → CoT
-  construct) with disk caching and ``soft_assert`` validation.
-- **WrappedFeatureBuilder**: Disk-cached wrapper keyed by plan hash.
+  construct) with disk caching and ``soft_assert`` validation. Returns a
+  ``dspy.Prediction(feature_values=..., metadata=...)`` that may cover only
+  **part** of the requested group: ``reward_fns.builder_reward`` (the coverage
+  fraction, at ``threshold=1.0``) drives the ``ResettingRefine`` retries --
+  ``is_valid_builder`` is the boolean view of the same computation -- and
+  gap-filling is ``WrappedFeatureBuilder``'s job, not the module's.
+- **WrappedFeatureBuilder**: Disk-cached wrapper keyed by plan hash. After
+  Refine returns, fills any feature the builder never produced with all-None
+  sub-values and a ``builder_omitted`` explanation -- after the store writes
+  (never negatively cached) and outside the reward boundary.
 - **compute_features**: Parallel grouped feature computation.
 
 The builder uses the **budget LM** (Claude Sonnet 4.6) via
 :func:`ctra.agents.lm_config.configure_budget_lm` to reduce cost for
-high-volume extraction calls.
+high-volume extraction calls. ``FeatureBuilder.forward`` enters
+``dspy.context(lm=<budget>)`` itself, but under ``ResettingRefine`` that is
+not enough: ``refine.py:108-109`` deepcopies the module and ``set_lm()``s
+``dspy.settings.lm`` onto every ``__init__``-time predictor, which overrides
+the inner context. ``WrappedFeatureBuilder`` therefore enters the budget-LM
+context *around* the Refine call, so both the Construct phase and Refine's
+own ``OfferFeedback`` call run on the budget LM.
 """
 
 from __future__ import annotations
@@ -28,6 +42,7 @@ from ctra.agents.data_models import (
     BUILDER_EXCEPTION_MSG_MAXLEN,
     BUILDER_EXCEPTION_PREFIX,
     BUILDER_EXCEPTION_RESEARCH_SENTINEL,
+    BUILDER_OMITTED_PREFIX,
     FeaturePlan,
     FeatureType,
 )
@@ -38,7 +53,13 @@ from ctra.agents.feature_store import (
 )
 from ctra.agents.feature_utils import dump_as_json, soft_assert
 from ctra.agents.lm_config import configure_budget_lm
-from ctra.agents.reward_fns import ResettingRefine, is_valid_grouper, unwrap_groups
+from ctra.agents.reward_fns import (
+    ResettingRefine,
+    builder_reward,
+    is_valid_grouper,
+    unwrap_builder_result,
+    unwrap_groups,
+)
 from ctra.agents.signatures import (
     FeatureBuilderConstructSignature,
     FeatureBuilderResearchMultiSignature,
@@ -75,7 +96,10 @@ class FeatureBuilder(dspy.Module):  # type: ignore[misc]
     converts research results into typed feature values with
     ``none_feature_explanations`` for missing data.
 
-    Both phases run under the budget LM (Sonnet) via ``dspy.context``.
+    Both phases run under the budget LM (Sonnet) via ``dspy.context`` when
+    the module is called directly. Under ``ResettingRefine`` the wrapper's
+    outer ``dspy.context`` is what keeps the Construct phase on the budget LM
+    (see the module docstring).
 
     Parameters:
         task_description: Text description of the prediction task.
@@ -91,7 +115,7 @@ class FeatureBuilder(dspy.Module):  # type: ignore[misc]
         self,
         nctid: str,
         feature_plan_group: dict[str, FeaturePlan],
-    ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    ) -> dspy.Prediction:
         """Build features for a single trial from a group of plans.
 
         Parameters:
@@ -99,8 +123,17 @@ class FeatureBuilder(dspy.Module):  # type: ignore[misc]
             feature_plan_group: Grouped feature plans (max 5).
 
         Returns:
-            Tuple of ``(values_dict, metadata_dict)`` where metadata
-            includes ``none_feature_explanations``.
+            ``dspy.Prediction`` with fields ``feature_values``
+            (``{feature_name: {sub: value}}``, covering **only** the features the
+            Construct step actually produced -- coverage may be partial) and
+            ``metadata`` (the four keys ``research_results``,
+            ``research_result_reasoning``, ``builder_reasoning``,
+            ``none_feature_explanations``). Completeness is scored by
+            ``reward_fns.builder_reward`` (coverage fraction, threshold 1.0) via
+            the ``ResettingRefine`` wrapper in ``WrappedFeatureBuilder``, not
+            here. Unwrap with
+            ``reward_fns.unwrap_builder_result`` -- never ``values, meta = ...``,
+            which binds the field-name strings.
         """
         nct_info = get_trial_info_dict(nctid)
 
@@ -149,10 +182,24 @@ class FeatureBuilder(dspy.Module):  # type: ignore[misc]
 
         feature_values = deepcopy(builder_result.all_feature_values)
 
-        # Validate all features were generated
+        # Incomplete coverage is reported, not raised. Raising here burned every
+        # ResettingRefine attempt and re-raised on the last one (refine.py:172),
+        # discarding the features that *were* built. builder_reward scores the
+        # partial result < 1.0 (its coverage fraction) so Refine retries with
+        # OfferFeedback guidance and keeps the fullest attempt; if the budget runs
+        # out, WrappedFeatureBuilder fills the stragglers with all-None values and
+        # a builder_omitted explanation.
         missing_features = set(feature_plan_group.keys()) - set(feature_values.keys())
         if missing_features:
-            raise ValueError(f"Features not generated: {missing_features}")
+            # info, not warning: this fires on every Refine attempt; the wrapper
+            # logs one warning per group once the retries are exhausted.
+            logger.info(
+                "Construct step omitted %d/%d feature(s) for %s: %s",
+                len(missing_features),
+                len(feature_plan_group),
+                nctid,
+                sorted(missing_features),
+            )
 
         # Per-type validation (AutoCT lines 1214-1330)
         values: dict[str, dict[str, Any]] = {}
@@ -279,28 +326,22 @@ class FeatureBuilder(dspy.Module):  # type: ignore[misc]
                 feature_value[key] = value
             values[feature_name] = feature_value
 
-        return values, {
-            "research_results": research_result.research_results,
-            "research_result_reasoning": getattr(research_result, "reasoning", ""),
-            "builder_reasoning": getattr(builder_result, "reasoning", ""),
-            "none_feature_explanations": getattr(builder_result, "none_feature_explanations", {}),
-        }
+        return dspy.Prediction(
+            feature_values=values,
+            metadata={
+                "research_results": research_result.research_results,
+                "research_result_reasoning": getattr(research_result, "reasoning", ""),
+                "builder_reasoning": getattr(builder_result, "reasoning", ""),
+                "none_feature_explanations": getattr(
+                    builder_result, "none_feature_explanations", {}
+                ),
+            },
+        )
 
 
 # ---------------------------------------------------------------------------
 # Disk-cached wrapper (AutoCT agent.py:1709-1775)
 # ---------------------------------------------------------------------------
-
-
-def _builder_reward(kwargs: Any, result: Any) -> float:
-    """Reward: 1.0 if all planned features were generated, 0.0 otherwise."""
-    try:
-        values, _meta = result
-        planned = set(kwargs["feature_plan_group"].keys())
-        generated = set(values.keys())
-        return 1.0 if planned.issubset(generated) else 0.0
-    except Exception:
-        return 0.0
 
 
 class WrappedFeatureBuilder:
@@ -313,6 +354,13 @@ class WrappedFeatureBuilder:
 
     On exception, returns all-None values and sentinel metadata documenting
     the crash. No store writes on the failure path — no negative caching.
+
+    After Refine returns, any uncached plan the builder never produced (the
+    Construct step omitted it on every attempt) is filled with all-``None``
+    sub-values and a ``builder_omitted`` explanation. The fill happens **after**
+    the store writes, so an omission is never negatively cached and is retried
+    on the next run, and **outside** the reward boundary, so Refine still sees
+    (and retries) the partial result.
     """
 
     def __init__(
@@ -326,6 +374,15 @@ class WrappedFeatureBuilder:
         self._feature_store_dir = feature_store_dir
         self._task_namespace = task_namespace
         self._feature_store_enabled = feature_store_enabled and feature_store_dir is not None
+        # Entered around the ResettingRefine call in __call__. refine.py:108-109
+        # deepcopies the module and pins ``dspy.settings.lm`` onto every named
+        # predictor via ``mod.set_lm()``, which OVERRIDES FeatureBuilder.forward's
+        # own ``dspy.context(lm=...)`` for the __init__-time ``constructor``.
+        # Deliberately not ``builder._budget_lm``: FeatureBuilder is patched as a
+        # MagicMock class in tests, and a MagicMock must never reach
+        # ``dspy.context(lm=...)``. Constructed once per wrapper (one per
+        # compute_features call), not per trial-group.
+        self._budget_lm = configure_budget_lm()
 
     def __call__(
         self, arg: tuple[str, dict[str, FeaturePlan]]
@@ -370,18 +427,36 @@ class WrappedFeatureBuilder:
 
         # Build only the uncached subset
         try:
-            fb = FeatureBuilder(task_description=self.task_description)
+            builder = FeatureBuilder(task_description=self.task_description)
             # Constructed per call, so Refine's failure budget cannot erode across
             # calls here -- ResettingRefine for consistency with the other sites.
-            fb = ResettingRefine(
-                module=fb,
+            refiner = ResettingRefine(
+                module=builder,
                 N=3,
-                reward_fn=_builder_reward,
+                reward_fn=builder_reward,
                 threshold=1.0,
             )
-            values, meta = fb(nctid=nctid, feature_plan_group=uncached_plans)
+            # Refine call under the budget LM. refine.py:99 reads
+            # dspy.settings.lm and :109 pins it onto the deepcopied module's
+            # predictors, so without this context the Construct phase leaks onto
+            # the primary (Opus) LM. Entering it here routes the Construct phase
+            # *and* the now-live OfferFeedback call (refine.py:167, resolved at
+            # call time) to the budget LM instead.
+            with dspy.context(lm=self._budget_lm):
+                result = refiner(nctid=nctid, feature_plan_group=uncached_plans)
 
-            # Persist each freshly built feature individually
+            # Never ``values, meta = result``: a Prediction unpacks into its KEY
+            # STRINGS with no error. The helper also passes a legacy tuple through.
+            values, meta = unwrap_builder_result(result)
+            # Copy: the omission fill below must not mutate the dict inside the
+            # Prediction (a double returning the same object twice would carry
+            # the fill into the next call and get it negatively cached).
+            values = dict(values)
+
+            # Persist each freshly built feature individually. The
+            # ``feature_name not in values`` guard is what keeps the omission
+            # fill below out of the store: omitted names are not in ``values``
+            # yet, so nothing negative is ever cached.
             if self._feature_store_enabled:
                 assert self._feature_store_dir is not None
                 for feature_name, plan in uncached_plans.items():
@@ -398,6 +473,34 @@ class WrappedFeatureBuilder:
                             "builder_reasoning": meta.get("builder_reasoning", ""),
                         },
                     )
+
+            # Fill omissions -- AFTER the writes (no negative caching), BEFORE the
+            # merge (the column must exist downstream: features_to_df names
+            # columns from what the rows contain, and the orchestrator slices
+            # val/test by the train columns). Outside the reward boundary so
+            # builder_reward still saw the partial result (< 1.0) and Refine retried.
+            # The explanation entry is what keeps the omission visible: none_rate
+            # in _build_builder_diagnostics counts explanation-map membership.
+            omitted = [name for name in uncached_plans if name not in values]
+            if omitted:
+                # ``or {}``: the LLM can return null for this field, and a
+                # TypeError here would degrade the whole group to builder_exception.
+                explanations = dict(meta.get("none_feature_explanations") or {})
+                for name in omitted:
+                    values[name] = {k: None for k in uncached_plans[name].feature_type}
+                    detail = str(explanations.get(name) or "no explanation provided")
+                    if len(detail) > BUILDER_EXCEPTION_MSG_MAXLEN:
+                        detail = detail[: BUILDER_EXCEPTION_MSG_MAXLEN - 3] + "..."
+                    explanations[name] = f"{BUILDER_OMITTED_PREFIX} {detail}"
+                # Rebuilt, not mutated: a shared metadata dict from a test double
+                # must not be corrupted; the happy path returns meta untouched.
+                meta = {**meta, "none_feature_explanations": explanations}
+                logger.warning(
+                    "Builder omitted %d feature(s) for %s after retries: %s",
+                    len(omitted),
+                    nctid,
+                    sorted(omitted),
+                )
 
             merged = {**cached_values, **values}
             return (nctid, merged, meta)

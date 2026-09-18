@@ -1,9 +1,11 @@
-"""Acceptance test for issue #5: Refine OfferFeedback path now runs.
+"""Acceptance tests for issues #5 and #6: Refine's OfferFeedback path runs.
 
-The three Refine-wrapped modules return dspy.Prediction so that Refine's
+All four Refine-wrapped modules return dspy.Prediction so that Refine's
 feedback step (refine.py:153 ``dict(outputs)``) succeeds and OfferFeedback
 actually runs. This file is the regression fence for "retries are guided,
-not blind re-rolls".
+not blind re-rolls". Issue #6 added the builder: its partial build must reach
+OfferFeedback, and must do so on the budget LM (see
+``test_partial_build_reaches_offer_feedback_on_the_budget_lm``).
 
 Mechanism: refine.py:153 does ``dict(outputs)`` which used to raise for
 non-Prediction returns, skipping OfferFeedback. Now it succeeds, the LM
@@ -35,6 +37,7 @@ try:
         FeatureSource,
         FeatureType,
     )
+    from ctra.agents.feature_builder import FeatureBuilder, WrappedFeatureBuilder
     from ctra.agents.feature_grouper import FeatureGrouper
     from ctra.agents.feature_planner import FeaturePlanner
     from ctra.agents.feature_proposer import FeatureProposer
@@ -43,6 +46,7 @@ try:
         grouper_reward,
     )
     from tests.test_agents.conftest import (
+        builder_prediction,
         grouper_prediction,
         planner_prediction,
         proposer_prediction,
@@ -87,11 +91,43 @@ def _clear_history():
     GLOBAL_HISTORY.clear()
 
 
-def test_all_three_modules_return_predictions():
-    """All three Refine-wrapped modules return dspy.Prediction (core issue #5 fix).
+def _real_builder_result(
+    all_feature_values: dict[str, dict[str, str]],
+    plan_group: dict[str, FeaturePlan],
+) -> dspy.Prediction:
+    """Run the real ``FeatureBuilder.forward`` with its two LLM phases stubbed.
 
-    This verifies that proposer, planner, and grouper all have the right return
-    type for Refine's feedback step to work.
+    ``get_trial_info_dict`` hits the RAG tools and ``dspy.ReAct`` is constructed
+    inside ``forward``, so both are patched; the ``__init__``-time
+    ``constructor`` is patched on the instance. Everything else -- the per-type
+    validation and the ``Prediction`` return -- is production code.
+    """
+    builder = FeatureBuilder(task_description="Test task")
+    research = MagicMock(return_value=dspy.Prediction(research_results="r", reasoning="x"))
+    with (
+        patch(
+            "ctra.agents.feature_builder.get_trial_info_dict",
+            return_value={"startDate": "2020-01-01"},
+        ),
+        patch.object(dspy, "ReAct", return_value=research),
+        patch.object(
+            builder,
+            "constructor",
+            return_value=dspy.Prediction(
+                all_feature_values=all_feature_values,
+                none_feature_explanations={},
+                reasoning="",
+            ),
+        ),
+    ):
+        return builder(nctid="NCT001", feature_plan_group=plan_group)
+
+
+def test_all_four_modules_return_predictions():
+    """All four Refine-wrapped modules return dspy.Prediction (#5 + #6).
+
+    This verifies that proposer, planner, grouper and builder all have the
+    right return type for Refine's feedback step to work.
     """
     # Test proposer
     proposer = FeatureProposer(task_description="Test task")
@@ -126,6 +162,36 @@ def test_all_three_modules_return_predictions():
         result = grouper(feature_plans={"feat_a": _make_plan("feat_a")}, task="Test task")
         assert isinstance(result, dspy.Prediction)
         assert dict(result).keys() == {"groups"}
+
+    # Test builder (issue #6)
+    result = _real_builder_result({"feat_a": {"value": "1.0"}}, {"feat_a": _make_plan("feat_a")})
+    assert isinstance(result, dspy.Prediction)
+    assert dict(result).keys() == {"feature_values", "metadata"}
+    # Reserved-name trap: ``Example.values`` is a method, so a field named
+    # ``values`` would be silently broken. The field is ``feature_values``.
+    assert "values" not in result
+    assert result["feature_values"] == {"feat_a": {"value": 1.0}}
+    assert set(result["metadata"]) == {
+        "research_results",
+        "research_result_reasoning",
+        "builder_reasoning",
+        "none_feature_explanations",
+    }
+
+
+def test_forward_returns_partial_coverage_without_raising():
+    """Issue #6 headline, at the module boundary: a Construct output that omits
+    a planned feature yields a *partial* ``feature_values`` -- no ValueError,
+    and no fill. The fill belongs to ``WrappedFeatureBuilder``, above the reward
+    boundary; filling here would make ``is_valid_builder`` always True and kill
+    every retry.
+    """
+    result = _real_builder_result({"feat_a": {"value": "1.0"}}, _two_plans())
+
+    assert isinstance(result, dspy.Prediction)
+    assert set(result["feature_values"]) == {"feat_a"}
+    assert result["feature_values"]["feat_a"] == {"value": 1.0}
+    assert "feat_b" not in result["metadata"]["none_feature_explanations"]
 
 
 def test_helpers_match_the_real_modules():
@@ -179,6 +245,12 @@ def test_helpers_match_the_real_modules():
 
     helper_groups = grouper_prediction([])
     assert set(helper_groups.keys()) == set(grouper_result.keys())
+
+    # Builder: builder keys must match the real module's Prediction keys
+    builder_result = _real_builder_result(
+        {"feat_a": {"value": "1.0"}}, {"feat_a": _make_plan("feat_a")}
+    )
+    assert set(builder_prediction({}).keys()) == set(builder_result.keys())
 
 
 # ---------------------------------------------------------------------------
@@ -305,3 +377,144 @@ def test_empty_advice_dict_runs_feedback_but_injects_no_hint() -> None:
     history = GLOBAL_HISTORY
     assert len(history) == 5
     assert all("hint_" not in _rendered(e) for e in history)
+
+
+# ---------------------------------------------------------------------------
+# Issue #6: the builder's partial build reaches OfferFeedback -- on the budget LM
+# ---------------------------------------------------------------------------
+
+
+class _PartialBuilder(dspy.Module):  # type: ignore[misc]
+    """Shaped like FeatureBuilder: one ``__init__``-time predictor, and a
+    ``Prediction`` return that covers only ``feat_a`` (reward 0.0 every attempt).
+
+    A real ``dspy.Module`` rather than a MagicMock, because the fence is about
+    which LM ``refine.py:109``'s ``mod.set_lm()`` pins onto that predictor.
+    """
+
+    def __init__(self, task_description: str) -> None:
+        super().__init__()
+        self.constructor = dspy.Predict("nctid -> value")
+
+    def forward(self, nctid: str, feature_plan_group: dict[str, FeaturePlan]) -> dspy.Prediction:
+        self.constructor(nctid=nctid)
+        return builder_prediction({"feat_a": {"value": "1.0"}})
+
+
+def _builder_dummy_lm():
+    from dspy.utils.dummies import DummyLM
+
+    canned = {
+        "value": "1.0",
+        "discussion": "d",
+        "advice": _advice("constructor", SENTINEL),
+    }
+    return DummyLM([canned] * 20)
+
+
+@pytest.mark.usefixtures("_clear_history")
+def test_partial_build_reaches_offer_feedback_on_the_budget_lm(capsys) -> None:
+    """Decision #2 fence + the retry half of R4.
+
+    ``WrappedFeatureBuilder.__call__`` enters ``dspy.context(lm=self._budget_lm)``
+    around the Refine call. Without it, ``refine.py:99`` reads the primary LM,
+    ``:108`` pins it onto the module (defeating ``forward``'s own context) and
+    ``:167`` runs OfferFeedback on it too: ``primary.history`` would hold the two
+    OfferFeedback calls and ``budget.history`` would be empty.
+    """
+    primary = _builder_dummy_lm()
+    budget = _builder_dummy_lm()
+    captured: list[ResettingRefine] = []
+
+    def _capture(**kw):
+        refiner = ResettingRefine(**kw)
+        captured.append(refiner)
+        return refiner
+
+    with (
+        patch("ctra.agents.feature_builder.FeatureBuilder", _PartialBuilder),
+        patch("ctra.agents.feature_builder.ResettingRefine", side_effect=_capture),
+    ):
+        wrapper = WrappedFeatureBuilder(
+            task_description="t", feature_store_dir=None, feature_store_enabled=False
+        )
+        wrapper._budget_lm = budget
+        with dspy.context(lm=primary):
+            nctid, values, meta = wrapper(("NCT001", _two_plans()))
+
+    # module, OfferFeedback, module, OfferFeedback, module
+    assert len(GLOBAL_HISTORY) == 5, [_rendered(e)[:80] for e in GLOBAL_HISTORY]
+    # Nothing reached the primary (Opus) LM ...
+    assert primary.history == []
+    # ... and both OfferFeedback calls landed on the budget LM. (Module attempts
+    # run on ``lm.copy(rollout_id=...)`` whose history is fresh, hence 2 not 5.)
+    assert len(budget.history) == 2
+    assert "Attempt failed" not in capsys.readouterr().out
+    assert len(captured) == 1
+    assert captured[0].fail_count == 3
+    # The retries were guided: the sentinel advice reached attempts 2 and 3.
+    for attempt in (GLOBAL_HISTORY[2], GLOBAL_HISTORY[4]):
+        assert SENTINEL in _rendered(attempt)
+    # And the partial build survived: feat_a kept, feat_b filled above the reward.
+    assert nctid == "NCT001"
+    assert values["feat_a"] == {"value": "1.0"}
+    assert values["feat_b"] == {"value": None}
+    assert meta["none_feature_explanations"]["feat_b"].startswith("builder_omitted:")
+
+
+@pytest.mark.usefixtures("_clear_history")
+def test_refine_keeps_the_fullest_partial_build() -> None:
+    """``builder_reward`` is graded so Refine returns the best attempt.
+
+    Refine keeps an attempt only on a strict ``reward > best_reward``
+    (refine.py:139). With a 0/1 reward the sequence 3/5, 4/5, 4/5 all scored
+    0.0 and the FIRST attempt (3/5) came back, so the wrapper filled two
+    features attempt 2 had actually built. With the coverage fraction the
+    scores are 0.6, 0.8, 0.8 and attempt 2 wins (attempt 3 ties, so does not
+    replace it).
+    """
+    names = [f"feat_{i}" for i in range(5)]
+    plans = {n: _make_plan(n) for n in names}
+    # Attempt 2 and 3 build different 4-feature subsets so the result proves
+    # WHICH attempt came back, not merely how many features it had.
+    attempts = iter(
+        [
+            {n: {"value": "1.0"} for n in names[:3]},  # 3/5 -> 0.6
+            {n: {"value": "2.0"} for n in names[:4]},  # 4/5 -> 0.8  (kept)
+            {n: {"value": "3.0"} for n in names[1:]},  # 4/5 -> 0.8  (tie, dropped)
+        ]
+    )
+
+    class _SequencedBuilder(dspy.Module):  # type: ignore[misc]
+        """Like ``_PartialBuilder`` but each Refine attempt (a deepcopy of this
+        module) pulls the next canned build from the closure iterator."""
+
+        def __init__(self, task_description: str) -> None:
+            super().__init__()
+            self.constructor = dspy.Predict("nctid -> value")
+
+        def forward(
+            self, nctid: str, feature_plan_group: dict[str, FeaturePlan]
+        ) -> dspy.Prediction:
+            self.constructor(nctid=nctid)
+            return builder_prediction(next(attempts))
+
+    with (
+        patch("ctra.agents.feature_builder.FeatureBuilder", _SequencedBuilder),
+        dspy.context(lm=_builder_dummy_lm()),
+    ):
+        wrapper = WrappedFeatureBuilder(
+            task_description="t", feature_store_dir=None, feature_store_enabled=False
+        )
+        wrapper._budget_lm = _builder_dummy_lm()
+        _, values, meta = wrapper(("NCT001", plans))
+
+    # All three attempts ran (none reached threshold 1.0), with feedback between.
+    assert len(GLOBAL_HISTORY) == 5
+    # Attempt 2's four features came back, not attempt 1's three.
+    built = {n for n, v in values.items() if v != {"value": None}}
+    assert built == set(names[:4])
+    assert all(values[n] == {"value": "2.0"} for n in names[:4])
+    # Only the one feature no kept attempt built was filled.
+    assert values["feat_4"] == {"value": None}
+    assert set(meta["none_feature_explanations"]) == {"feat_4"}

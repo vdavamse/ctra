@@ -10,19 +10,22 @@ the next silent failure traceable.
 Also provides :class:`ResettingRefine`, which every agent module should use in place
 of :class:`dspy.Refine` -- see its docstring for why.
 
-FeatureProposer, FeaturePlanner and FeatureGrouper return ``dspy.Prediction``; the
-three ``unwrap_*`` helpers below normalise them back to the legacy shapes. (Note:
-``FeatureBuilder`` does not yet -- it still returns ``(values, meta)`` and is wrapped
-in ``ResettingRefine`` inside ``WrappedFeatureBuilder.__call__``. That is unobservable
-today only because ``FeatureBuilder.forward`` raises
-``ValueError("Features not generated: ...")`` before the feedback step is reached.
-Issue #6 removes that raise and **must** convert the builder to ``dspy.Prediction``
-and add the matching ``unwrap_*``, or it will reintroduce exactly the bug #5 fixed.
-Note ``_builder_reward`` does ``values, _meta = result`` -- a tuple-unpack that would
-silently bind key strings.)
+All four Refine-wrapped modules -- FeatureProposer, FeaturePlanner, FeatureGrouper
+and FeatureBuilder -- return ``dspy.Prediction`` so that Refine's feedback step
+(``refine.py:153`` ``dict(outputs)``) succeeds and ``OfferFeedback`` actually runs.
+The four ``unwrap_*`` helpers below normalise them back to the legacy shapes at the
+boundary.
 
-Note: ``_builder_reward`` still lives in ``feature_builder`` and has no
-``is_valid_builder`` counterpart here; that site was left alone deliberately.
+``FeatureBuilder`` additionally returns **partial** coverage by design (issue #6):
+``FeatureBuilder.forward`` does not raise on an incomplete group. ``builder_reward``
+(the coverage fraction, at ``threshold=1.0``) is what drives the ``ResettingRefine``
+retries -- a partial build scores ``< 1.0`` and is retried; ``is_valid_builder`` is
+the boolean view of the same coverage computation. ``WrappedFeatureBuilder`` -- not
+the module, not the reward -- fills the gaps *after* Refine returns.
+
+NEVER tuple-unpack a Prediction: it inherits ``Example.__iter__``, which yields
+KEYS, so ``values, meta = pred`` silently binds the strings 'feature_values' and
+'metadata' with no error. Always go through the matching ``unwrap_*`` helper.
 """
 
 from __future__ import annotations
@@ -74,7 +77,7 @@ class ResettingRefine(dspy.Refine):  # type: ignore[misc]
 # ---------------------------------------------------------------------------
 # The Refine-wrapped modules return dspy.Prediction so that Refine's feedback
 # step (refine.py:153 ``dict(outputs)``) succeeds and OfferFeedback actually
-# runs.  Every consumer still works against the legacy raw shape; these three
+# runs.  Every consumer still works against the legacy raw shape; these four
 # helpers are the only place that knows both.
 #
 # Tolerant by design: a non-Prediction passes through untouched, which keeps the
@@ -159,6 +162,42 @@ def unwrap_groups(result: Any) -> Any:
         if "groups" not in result:
             raise TypeError(f"FeatureGrouper Prediction lacks 'groups': keys={list(result.keys())}")
         return result["groups"]
+    return result
+
+
+def unwrap_builder_result(result: Any) -> Any:
+    """Extract (feature_values, metadata) from dspy.Prediction or pass through.
+
+    If result is a dspy.Prediction, returns the tuple ``(feature_values, metadata)``
+    built from its fields. A Prediction missing either field raises TypeError
+    (``builder_reward`` / ``is_valid_builder`` catch it and score the output
+    0.0 / invalid;
+    ``WrappedFeatureBuilder.__call__`` lets it fall into the builder_exception
+    path). A non-Prediction -- the legacy ``(values, meta)`` tuple that ~8 test
+    doubles still return -- is returned unchanged.
+
+    Note the field is ``feature_values``, never ``values``: ``Example.values``
+    is a reserved method and a Prediction built with it is silently broken.
+
+    Args:
+        result: Either a dspy.Prediction(feature_values=..., metadata=...) or a
+            ``(values, meta)`` tuple.
+
+    Returns:
+        The ``(feature_values, metadata)`` tuple (or original result if not a
+        Prediction).
+
+    Raises:
+        TypeError: If ``result`` is a Prediction lacking 'feature_values' or
+            'metadata'.
+    """
+    if isinstance(result, dspy.Prediction):
+        for field in ("feature_values", "metadata"):
+            if field not in result:
+                raise TypeError(
+                    f"FeatureBuilder Prediction lacks '{field}': keys={list(result.keys())}"
+                )
+        return (result["feature_values"], result["metadata"])
     return result
 
 
@@ -321,6 +360,52 @@ def is_valid_grouper(kwargs: Any, result: Any) -> bool:
         return False
 
 
+def _builder_coverage(kwargs: Any, result: Any) -> float:
+    """Fraction of the planned group the builder produced (the one computation
+    behind ``builder_reward`` and ``is_valid_builder``).
+
+    ``|planned & built| / |planned|``; 1.0 for an empty plan group. Extra,
+    unplanned keys neither count nor invalidate. No error handling here -- the
+    two public callers decide what a malformed result is worth (0.0 / False).
+    """
+    values, _meta = unwrap_builder_result(result)
+    planned = set(kwargs["feature_plan_group"])
+    if not planned:
+        return 1.0
+    return len(planned & set(values)) / len(planned)
+
+
+def is_valid_builder(kwargs: Any, result: Any) -> bool:
+    """Validate that the builder produced every planned feature in the group.
+
+    The boolean view of ``_builder_coverage``: True exactly when
+    ``builder_reward`` would return 1.0, i.e. when a Refine attempt meets the
+    ``threshold=1.0`` and stops the retries. ``builder_reward`` is what
+    ``ResettingRefine`` actually calls; this predicate exists for parity with
+    the other three ``is_valid_*`` predicates and for callers that want a
+    yes/no answer.
+
+    ``FeatureBuilder.forward`` no longer raises on an incomplete build (issue #6):
+    it returns whatever the Construct step produced; a partial group scores
+    ``< 1.0`` and is retried, and if all N attempts are spent,
+    ``WrappedFeatureBuilder.__call__`` fills the stragglers with all-None values
+    and a ``builder_omitted`` explanation.
+
+    Args:
+        kwargs: Dict with "feature_plan_group" -- the plans requested of the builder.
+        result: ``dspy.Prediction(feature_values=..., metadata=...)`` or the legacy
+            ``(values, meta)`` tuple.
+
+    Returns:
+        True if every planned feature name is present in the built values.
+    """
+    try:
+        return _builder_coverage(kwargs, result) >= 1.0
+    except Exception:
+        logger.debug("is_valid_builder failed", exc_info=True)
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Float reward adapters (thin wrappers over validation predicates)
 # ---------------------------------------------------------------------------
@@ -374,3 +459,35 @@ def grouper_reward(kwargs: Any, result: Any) -> float:
         1.0 if grouping covers all features exactly once, 0.0 otherwise.
     """
     return 1.0 if is_valid_grouper(kwargs, result) else 0.0
+
+
+def builder_reward(kwargs: Any, result: Any) -> float:
+    """Reward function for DSPy Refine on FeatureBuilder (MCTS reward signal).
+
+    Returns the fraction of planned features the builder produced: 1.0 for a
+    complete build (which meets the ``threshold=1.0`` and stops the retries --
+    ``is_valid_builder`` is the boolean view of this same computation), anything
+    below 1.0 is a *retry request*, not a failure. Refine re-runs the builder with
+    ``OfferFeedback`` guidance, and only after all N attempts does
+    ``WrappedFeatureBuilder`` fill what is still missing.
+
+    Graded rather than 0/1 because Refine keeps the best attempt only on a
+    strict ``reward > best_reward`` (``refine.py:139``): with a boolean reward,
+    three partial attempts building 3/5, 4/5 and 4/5 all score 0.0 and Refine
+    returns the *first* (3/5), so the wrapper would fill two features a later
+    attempt had built. The fraction makes Refine return the fullest build.
+
+    Args:
+        kwargs: Dict with "feature_plan_group" -- the plans requested of the builder.
+        result: ``dspy.Prediction(feature_values=..., metadata=...)`` or the legacy
+            ``(values, meta)`` tuple.
+
+    Returns:
+        ``|planned & built| / |planned|`` (1.0 for an empty plan group); 0.0 if
+        the result cannot be unwrapped.
+    """
+    try:
+        return _builder_coverage(kwargs, result)
+    except Exception:
+        logger.debug("builder_reward failed", exc_info=True)
+        return 0.0
