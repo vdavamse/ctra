@@ -17,10 +17,11 @@ The four ``unwrap_*`` helpers below normalise them back to the legacy shapes at 
 boundary.
 
 ``FeatureBuilder`` additionally returns **partial** coverage by design (issue #6):
-``FeatureBuilder.forward`` does not raise on an incomplete group. ``is_valid_builder``
-is the sole judge of completeness, and ``WrappedFeatureBuilder`` -- not the module,
-not the reward -- fills the gaps *after* Refine returns, so a partial result is
-still scored 0.0 and retried.
+``FeatureBuilder.forward`` does not raise on an incomplete group. ``builder_reward``
+(the coverage fraction, at ``threshold=1.0``) is what drives the ``ResettingRefine``
+retries -- a partial build scores ``< 1.0`` and is retried; ``is_valid_builder`` is
+the boolean view of the same coverage computation. ``WrappedFeatureBuilder`` -- not
+the module, not the reward -- fills the gaps *after* Refine returns.
 
 NEVER tuple-unpack a Prediction: it inherits ``Example.__iter__``, which yields
 KEYS, so ``values, meta = pred`` silently binds the strings 'feature_values' and
@@ -169,7 +170,8 @@ def unwrap_builder_result(result: Any) -> Any:
 
     If result is a dspy.Prediction, returns the tuple ``(feature_values, metadata)``
     built from its fields. A Prediction missing either field raises TypeError
-    (``is_valid_builder`` catches it and reports the output as invalid;
+    (``builder_reward`` / ``is_valid_builder`` catch it and score the output
+    0.0 / invalid;
     ``WrappedFeatureBuilder.__call__`` lets it fall into the builder_exception
     path). A non-Prediction -- the legacy ``(values, meta)`` tuple that ~8 test
     doubles still return -- is returned unchanged.
@@ -358,17 +360,36 @@ def is_valid_grouper(kwargs: Any, result: Any) -> bool:
         return False
 
 
+def _builder_coverage(kwargs: Any, result: Any) -> float:
+    """Fraction of the planned group the builder produced (the one computation
+    behind ``builder_reward`` and ``is_valid_builder``).
+
+    ``|planned & built| / |planned|``; 1.0 for an empty plan group. Extra,
+    unplanned keys neither count nor invalidate. No error handling here -- the
+    two public callers decide what a malformed result is worth (0.0 / False).
+    """
+    values, _meta = unwrap_builder_result(result)
+    planned = set(kwargs["feature_plan_group"])
+    if not planned:
+        return 1.0
+    return len(planned & set(values)) / len(planned)
+
+
 def is_valid_builder(kwargs: Any, result: Any) -> bool:
     """Validate that the builder produced every planned feature in the group.
 
-    ``FeatureBuilder.forward`` no longer raises on an incomplete build (issue #6):
-    it returns whatever the Construct step produced, and this predicate is what
-    turns an incomplete group into a Refine retry. A False here costs one rollout;
-    if all N are spent, ``WrappedFeatureBuilder.__call__`` fills the stragglers with
-    all-None values and a ``builder_omitted`` explanation.
+    The boolean view of ``_builder_coverage``: True exactly when
+    ``builder_reward`` would return 1.0, i.e. when a Refine attempt meets the
+    ``threshold=1.0`` and stops the retries. ``builder_reward`` is what
+    ``ResettingRefine`` actually calls; this predicate exists for parity with
+    the other three ``is_valid_*`` predicates and for callers that want a
+    yes/no answer.
 
-    ``issubset`` (not equality) is deliberate: extra keys stay valid, matching the
-    semantics of the private reward this replaced in ``feature_builder``.
+    ``FeatureBuilder.forward`` no longer raises on an incomplete build (issue #6):
+    it returns whatever the Construct step produced; a partial group scores
+    ``< 1.0`` and is retried, and if all N attempts are spent,
+    ``WrappedFeatureBuilder.__call__`` fills the stragglers with all-None values
+    and a ``builder_omitted`` explanation.
 
     Args:
         kwargs: Dict with "feature_plan_group" -- the plans requested of the builder.
@@ -379,9 +400,7 @@ def is_valid_builder(kwargs: Any, result: Any) -> bool:
         True if every planned feature name is present in the built values.
     """
     try:
-        values, _meta = unwrap_builder_result(result)
-        planned = set(kwargs["feature_plan_group"].keys())
-        return planned.issubset(set(values.keys()))
+        return _builder_coverage(kwargs, result) >= 1.0
     except Exception:
         logger.debug("is_valid_builder failed", exc_info=True)
         return False
@@ -447,8 +466,8 @@ def builder_reward(kwargs: Any, result: Any) -> float:
 
     Returns the fraction of planned features the builder produced: 1.0 for a
     complete build (which meets the ``threshold=1.0`` and stops the retries --
-    the same retry semantics as ``is_valid_builder``), anything below 1.0 is a
-    *retry request*, not a failure. Refine re-runs the builder with
+    ``is_valid_builder`` is the boolean view of this same computation), anything
+    below 1.0 is a *retry request*, not a failure. Refine re-runs the builder with
     ``OfferFeedback`` guidance, and only after all N attempts does
     ``WrappedFeatureBuilder`` fill what is still missing.
 
@@ -468,11 +487,7 @@ def builder_reward(kwargs: Any, result: Any) -> float:
         the result cannot be unwrapped.
     """
     try:
-        values, _meta = unwrap_builder_result(result)
-        planned = set(kwargs["feature_plan_group"])
-        if not planned:
-            return 1.0
-        return len(planned & set(values)) / len(planned)
+        return _builder_coverage(kwargs, result)
     except Exception:
         logger.debug("builder_reward failed", exc_info=True)
         return 0.0

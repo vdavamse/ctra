@@ -25,6 +25,7 @@ try:
         ProposerOutput,
     )
     from ctra.agents.reward_fns import (
+        builder_reward,
         is_valid_builder,
         is_valid_grouper,
         is_valid_planner,
@@ -386,6 +387,32 @@ class TestIsValidBuilder:
 
     def test_exception_returns_false(self) -> None:
         assert is_valid_builder({}, "bad") is False
+
+    def test_predicate_is_the_boolean_view_of_the_reward(self) -> None:
+        """``ResettingRefine`` calls ``builder_reward`` at threshold 1.0, so the
+        predicate must agree with ``reward >= 1.0`` on every shape -- otherwise
+        it silently drifts from what actually drives the retries."""
+        two = self._two_plans()
+        cases = [
+            (two, builder_prediction({"feat_a": {"value": 1.0}, "feat_b": {"value": 2.0}})),
+            (two, builder_prediction({"feat_a": {"value": 1.0}})),
+            (two, ({"feat_a": {"value": 1.0}, "feat_b": {"value": 2.0}}, {})),
+            (two, ({"feat_b": {"value": 2.0}}, {})),
+            (
+                {"feature_plan_group": {"feat_a": _make_plan("feat_a")}},
+                builder_prediction({"feat_a": {"value": 1.0}, "feat_extra": {"value": 3.0}}),
+            ),
+            ({"feature_plan_group": {}}, builder_prediction({})),
+            (two, builder_prediction({})),
+            (two, dspy.Prediction(metadata={})),
+            ({}, "bad"),
+        ]
+        outcomes = [(is_valid_builder(k, r), builder_reward(k, r)) for k, r in cases]
+        assert [valid for valid, _ in outcomes] == [reward >= 1.0 for _, reward in outcomes], (
+            outcomes
+        )
+        # Both truth values occur, so the agreement above is not vacuous.
+        assert {valid for valid, _ in outcomes} == {True, False}
 
 
 # ======================================================================

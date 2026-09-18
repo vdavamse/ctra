@@ -3,10 +3,10 @@
 - **FeatureBuilder**: Two-phase grouped builder (ReAct research → CoT
   construct) with disk caching and ``soft_assert`` validation. Returns a
   ``dspy.Prediction(feature_values=..., metadata=...)`` that may cover only
-  **part** of the requested group: completeness is judged by
-  ``reward_fns.is_valid_builder`` (which drives the ``ResettingRefine``
-  retries), and gap-filling is ``WrappedFeatureBuilder``'s job, not the
-  module's.
+  **part** of the requested group: ``reward_fns.builder_reward`` (the coverage
+  fraction, at ``threshold=1.0``) drives the ``ResettingRefine`` retries --
+  ``is_valid_builder`` is the boolean view of the same computation -- and
+  gap-filling is ``WrappedFeatureBuilder``'s job, not the module's.
 - **WrappedFeatureBuilder**: Disk-cached wrapper keyed by plan hash. After
   Refine returns, fills any feature the builder never produced with all-None
   sub-values and a ``builder_omitted`` explanation -- after the store writes
@@ -128,9 +128,10 @@ class FeatureBuilder(dspy.Module):  # type: ignore[misc]
             Construct step actually produced -- coverage may be partial) and
             ``metadata`` (the four keys ``research_results``,
             ``research_result_reasoning``, ``builder_reasoning``,
-            ``none_feature_explanations``). Completeness is validated by
-            ``reward_fns.is_valid_builder`` via the ``ResettingRefine`` wrapper in
-            ``WrappedFeatureBuilder``, not here. Unwrap with
+            ``none_feature_explanations``). Completeness is scored by
+            ``reward_fns.builder_reward`` (coverage fraction, threshold 1.0) via
+            the ``ResettingRefine`` wrapper in ``WrappedFeatureBuilder``, not
+            here. Unwrap with
             ``reward_fns.unwrap_builder_result`` -- never ``values, meta = ...``,
             which binds the field-name strings.
         """
@@ -183,10 +184,11 @@ class FeatureBuilder(dspy.Module):  # type: ignore[misc]
 
         # Incomplete coverage is reported, not raised. Raising here burned every
         # ResettingRefine attempt and re-raised on the last one (refine.py:172),
-        # discarding the features that *were* built. is_valid_builder scores the
-        # partial result 0.0 so Refine retries with OfferFeedback guidance; if the
-        # budget runs out, WrappedFeatureBuilder fills the stragglers with all-None
-        # values and a builder_omitted explanation.
+        # discarding the features that *were* built. builder_reward scores the
+        # partial result < 1.0 (its coverage fraction) so Refine retries with
+        # OfferFeedback guidance and keeps the fullest attempt; if the budget runs
+        # out, WrappedFeatureBuilder fills the stragglers with all-None values and
+        # a builder_omitted explanation.
         missing_features = set(feature_plan_group.keys()) - set(feature_values.keys())
         if missing_features:
             # info, not warning: this fires on every Refine attempt; the wrapper
@@ -476,7 +478,7 @@ class WrappedFeatureBuilder:
             # merge (the column must exist downstream: features_to_df names
             # columns from what the rows contain, and the orchestrator slices
             # val/test by the train columns). Outside the reward boundary so
-            # is_valid_builder still saw the partial result and Refine retried.
+            # builder_reward still saw the partial result (< 1.0) and Refine retried.
             # The explanation entry is what keeps the omission visible: none_rate
             # in _build_builder_diagnostics counts explanation-map membership.
             omitted = [name for name in uncached_plans if name not in values]
