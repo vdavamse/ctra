@@ -8,16 +8,8 @@ from __future__ import annotations
 import datetime
 
 import numpy as np
-import pytest
 
-try:
-    from ctra.agents.feature_utils import parse_date
-
-    _HAS_DEPS = True
-except ImportError:
-    _HAS_DEPS = False
-
-pytestmark = pytest.mark.skipif(not _HAS_DEPS, reason="dependencies not available")
+from ctra.agents.feature_utils import parse_date
 
 
 class TestParseDate:

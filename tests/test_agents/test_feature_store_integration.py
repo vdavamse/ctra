@@ -10,20 +10,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 if TYPE_CHECKING:
     from pathlib import Path
 
-try:
-    from ctra.agents.data_models import FeaturePlan, FeatureSource, FeatureType
-    from ctra.agents.feature_builder import compute_features
-
-    _HAS_DSPY = True
-except ImportError:
-    _HAS_DSPY = False
-
-pytestmark = pytest.mark.skipif(not _HAS_DSPY, reason="dspy/sqlite3 not available")
+from ctra.agents.data_models import FeaturePlan, FeatureSource, FeatureType
+from ctra.agents.feature_builder import compute_features
 
 
 def _make_plan(name: str = "feat_x", idea: str = "shared feature") -> FeaturePlan:

@@ -1,8 +1,4 @@
-"""Tests for ctra.agents.feature_utils — pure utility functions.
-
-Note: soft_assert requires dspy which depends on sqlite3.  Tests for
-soft_assert are skipped if dspy is not importable.
-"""
+"""Tests for ctra.agents.feature_utils — pure utility functions."""
 
 from __future__ import annotations
 
@@ -12,40 +8,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-try:
-    from ctra.agents import data_models as _  # noqa: F401
-
-    _HAS_DSPY = True
-except ImportError:
-    _HAS_DSPY = False
-
-pytestmark = pytest.mark.skipif(not _HAS_DSPY, reason="dspy/sqlite3 not available")
-
-
-# ---------------------------------------------------------------------------
-# features_to_df — imported from feature_utils without triggering dspy
-# ---------------------------------------------------------------------------
-
-# We can't import feature_utils directly because it imports dspy.
-# Instead, copy the pure function logic for testing, or conditionally import.
-
-try:
-    from ctra.agents.feature_utils import dump_as_json, eval_model, features_to_df, soft_assert
-
-    _HAS_DSPY = True
-except ImportError:
-    _HAS_DSPY = False
-
-
-needs_dspy = pytest.mark.skipif(not _HAS_DSPY, reason="dspy/sqlite3 not available")
-
+from ctra.agents.feature_utils import dump_as_json, eval_model, features_to_df, soft_assert
 
 # ---------------------------------------------------------------------------
 # features_to_df
 # ---------------------------------------------------------------------------
 
 
-@needs_dspy
 class TestFeaturesToDf:
     def test_single_valued_feature(self) -> None:
         features = {
@@ -91,7 +60,6 @@ class TestFeaturesToDf:
 # ---------------------------------------------------------------------------
 
 
-@needs_dspy
 class TestDumpAsJson:
     def test_dict(self) -> None:
         result = dump_as_json({"a": 1, "b": "c"})
@@ -118,7 +86,6 @@ class TestDumpAsJson:
 # ---------------------------------------------------------------------------
 
 
-@needs_dspy
 class TestSoftAssert:
     def test_true_condition_returns_value(self) -> None:
         assert soft_assert("hello", True, "msg") == "hello"
@@ -149,7 +116,6 @@ class _StubPipeline:
         return np.column_stack([1 - self._y_prob, self._y_prob])
 
 
-@needs_dspy
 class TestEvalModel:
     """Tests for eval_model PR-AUC computation (Issue #37)."""
 

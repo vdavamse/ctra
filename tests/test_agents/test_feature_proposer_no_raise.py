@@ -11,24 +11,17 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
-try:
-    from ctra.agents.data_models import (
-        AgentOutput,
-        EvalOutput,
-        FeatureOp,
-        FeaturePlan,
-        FeatureSource,
-        FeatureType,
-        ModelEvalResult,
-        ProposerOutput,
-    )
-    from ctra.agents.feature_proposer import FeatureProposer
-
-    _HAS_DSPY = True
-except ImportError:
-    _HAS_DSPY = False
-
-pytestmark = pytest.mark.skipif(not _HAS_DSPY, reason="dspy/sqlite3 not available")
+from ctra.agents.data_models import (
+    AgentOutput,
+    EvalOutput,
+    FeatureOp,
+    FeaturePlan,
+    FeatureSource,
+    FeatureType,
+    ModelEvalResult,
+    ProposerOutput,
+)
+from ctra.agents.feature_proposer import FeatureProposer
 
 
 def _make_plan(name: str) -> FeaturePlan:

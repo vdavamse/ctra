@@ -11,42 +11,34 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import dspy
 import pytest
 
-try:
-    import dspy
-
-    from ctra.agents.data_models import (
-        AgentOutput,
-        FeatureOp,
-        FeaturePlan,
-        FeatureSource,
-        FeatureType,
-        ProposerOutput,
-    )
-    from ctra.agents.reward_fns import (
-        builder_reward,
-        is_valid_builder,
-        is_valid_grouper,
-        is_valid_planner,
-        is_valid_proposer,
-        unwrap_builder_result,
-        unwrap_groups,
-        unwrap_planner_result,
-        unwrap_proposal,
-    )
-    from tests.test_agents.conftest import (
-        builder_prediction,
-        grouper_prediction,
-        planner_prediction,
-        proposer_prediction,
-    )
-
-    _HAS_DSPY = True
-except ImportError:
-    _HAS_DSPY = False
-
-pytestmark = pytest.mark.skipif(not _HAS_DSPY, reason="dspy/sqlite3 not available")
+from ctra.agents.data_models import (
+    AgentOutput,
+    FeatureOp,
+    FeaturePlan,
+    FeatureSource,
+    FeatureType,
+    ProposerOutput,
+)
+from ctra.agents.reward_fns import (
+    builder_reward,
+    is_valid_builder,
+    is_valid_grouper,
+    is_valid_planner,
+    is_valid_proposer,
+    unwrap_builder_result,
+    unwrap_groups,
+    unwrap_planner_result,
+    unwrap_proposal,
+)
+from tests.test_agents.conftest import (
+    builder_prediction,
+    grouper_prediction,
+    planner_prediction,
+    proposer_prediction,
+)
 
 
 def _make_plan(name: str, ftype: FeatureType = FeatureType.FLOAT) -> FeaturePlan:

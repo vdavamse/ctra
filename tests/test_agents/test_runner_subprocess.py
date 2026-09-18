@@ -14,26 +14,19 @@ import dill
 import pandas as pd
 import pytest
 
-try:
-    from ctra.agents.data_models import (
-        AgentOutput,
-        EvalOutput,
-        FeaturePlan,
-        FeatureSource,
-        FeatureType,
-        ModelEvalResult,
-        Task,
-    )
-    from ctra.agents.runner import (
-        load_feature_plans_from_json,
-        run_agent_as_subprocess,
-    )
-
-    _HAS_DEPS = True
-except ImportError:
-    _HAS_DEPS = False
-
-pytestmark = pytest.mark.skipif(not _HAS_DEPS, reason="dspy/sqlite3 not available")
+from ctra.agents.data_models import (
+    AgentOutput,
+    EvalOutput,
+    FeaturePlan,
+    FeatureSource,
+    FeatureType,
+    ModelEvalResult,
+    Task,
+)
+from ctra.agents.runner import (
+    load_feature_plans_from_json,
+    run_agent_as_subprocess,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers

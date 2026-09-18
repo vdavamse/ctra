@@ -12,22 +12,13 @@ Covers:
 
 from __future__ import annotations
 
-import pytest
 from sklearn.compose import ColumnTransformer
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 
-try:
-    from ctra.agents.data_models import FeaturePlan, FeatureSource, FeatureType
-    from ctra.agents.feature_utils import build_feature_type_transformer
-
-    _HAS_DSPY = True
-except ImportError:
-    _HAS_DSPY = False
-
-pytestmark = pytest.mark.skipif(not _HAS_DSPY, reason="dspy/sqlite3 not available")
-
+from ctra.agents.data_models import FeaturePlan, FeatureSource, FeatureType
+from ctra.agents.feature_utils import build_feature_type_transformer
 
 # ---------------------------------------------------------------------------
 # Fixtures

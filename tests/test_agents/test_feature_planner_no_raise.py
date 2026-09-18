@@ -8,20 +8,11 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
+import dspy
 
-try:
-    import dspy
-
-    from ctra.agents.data_models import FeaturePlan, FeatureSource, FeatureType
-    from ctra.agents.feature_planner import FeaturePlanner
-    from ctra.agents.reward_fns import unwrap_planner_result
-
-    _HAS_DSPY = True
-except ImportError:
-    _HAS_DSPY = False
-
-pytestmark = pytest.mark.skipif(not _HAS_DSPY, reason="dspy/sqlite3 not available")
+from ctra.agents.data_models import FeaturePlan, FeatureSource, FeatureType
+from ctra.agents.feature_planner import FeaturePlanner
+from ctra.agents.reward_fns import unwrap_planner_result
 
 
 def test_planner_missing_possible_values_for_categorical_no_raise():

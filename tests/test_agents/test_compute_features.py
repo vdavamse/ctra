@@ -17,17 +17,9 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
-try:
-    from ctra.agents.data_models import FeaturePlan, FeatureSource, FeatureType
-    from ctra.agents.feature_builder import compute_features
-    from tests.test_agents.conftest import builder_prediction, grouper_prediction
-
-    _HAS_DSPY = True
-except ImportError:
-    _HAS_DSPY = False
-
-pytestmark = pytest.mark.skipif(not _HAS_DSPY, reason="dspy/sqlite3 not available")
-
+from ctra.agents.data_models import FeaturePlan, FeatureSource, FeatureType
+from ctra.agents.feature_builder import compute_features
+from tests.test_agents.conftest import builder_prediction, grouper_prediction
 
 # ---------------------------------------------------------------------------
 # Fixtures

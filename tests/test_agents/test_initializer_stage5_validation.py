@@ -13,18 +13,10 @@ from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
-import pytest
 
-try:
-    from ctra.agents.data_models import FeaturePlan, FeatureSource, FeatureType
-    from ctra.agents.initializer import Initializer
-    from tests.test_agents.conftest import planner_prediction
-
-    _HAS_DSPY = True
-except ImportError:
-    _HAS_DSPY = False
-
-pytestmark = pytest.mark.skipif(not _HAS_DSPY, reason="dspy/sqlite3 not available")
+from ctra.agents.data_models import FeaturePlan, FeatureSource, FeatureType
+from ctra.agents.initializer import Initializer
+from tests.test_agents.conftest import planner_prediction
 
 
 def _make_plan(name: str, with_invalid: bool = False) -> FeaturePlan:

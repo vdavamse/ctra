@@ -12,28 +12,20 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-import pytest
-
 if TYPE_CHECKING:
     from pathlib import Path
 
-try:
-    from ctra.agents.data_models import FeaturePlan, FeatureSource, FeatureType
-    from ctra.agents.feature_store import (
-        _plan_content_hash,
-        _sort_nested,
-        get_cached_feature,
-        get_cached_features_batch,
-        get_store_stats,
-        put_cached_feature,
-    )
+    import pytest
 
-    _HAS_DSPY = True
-except ImportError:
-    _HAS_DSPY = False
-
-pytestmark = pytest.mark.skipif(not _HAS_DSPY, reason="dspy/sqlite3 not available")
-
+from ctra.agents.data_models import FeaturePlan, FeatureSource, FeatureType
+from ctra.agents.feature_store import (
+    _plan_content_hash,
+    _sort_nested,
+    get_cached_feature,
+    get_cached_features_batch,
+    get_store_stats,
+    put_cached_feature,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures

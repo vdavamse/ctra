@@ -21,16 +21,8 @@ import re
 import numpy as np
 import pytest
 
-try:
-    from ctra.agents.data_models import FeatureType
-    from ctra.agents.feature_utils import soft_assert
-
-    _HAS_DSPY = True
-except ImportError:
-    _HAS_DSPY = False
-
-pytestmark = pytest.mark.skipif(not _HAS_DSPY, reason="dspy/sqlite3 not available")
-
+from ctra.agents.data_models import FeatureType
+from ctra.agents.feature_utils import soft_assert
 
 # ---------------------------------------------------------------------------
 # Helpers — extracted validation logic from FeatureBuilder.forward()

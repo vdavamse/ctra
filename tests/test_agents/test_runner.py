@@ -5,26 +5,16 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-import pytest
-
 if TYPE_CHECKING:
     from pathlib import Path
 
-try:
-    from ctra.agents.data_models import (
-        FeatureSource,
-        FeatureType,
-    )
-    from ctra.agents.runner import (
-        load_feature_plans_from_json,
-    )
-
-    _HAS_DEPS = True
-except ImportError:
-    _HAS_DEPS = False
-
-pytestmark = pytest.mark.skipif(not _HAS_DEPS, reason="dspy/sqlite3 not available")
-
+from ctra.agents.data_models import (
+    FeatureSource,
+    FeatureType,
+)
+from ctra.agents.runner import (
+    load_feature_plans_from_json,
+)
 
 # ---------------------------------------------------------------------------
 # load_feature_plans_from_json
