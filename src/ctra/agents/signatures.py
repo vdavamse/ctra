@@ -427,7 +427,12 @@ class FeatureBuilderConstructSignature(dspy.Signature):  # type: ignore[misc]
             "String"
         )
     )
-    none_feature_explanations: dict[str, str] = dspy.OutputField()
+    none_feature_explanations: dict[str, str] = dspy.OutputField(
+        desc=(
+            "A dict mapping feature name to the reason its value is None. Include "
+            "an entry for any feature you cannot produce at all."
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
