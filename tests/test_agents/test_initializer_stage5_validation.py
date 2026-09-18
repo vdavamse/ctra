@@ -18,6 +18,7 @@ import pytest
 try:
     from ctra.agents.data_models import FeaturePlan, FeatureSource, FeatureType
     from ctra.agents.initializer import Initializer
+    from tests.test_agents.conftest import planner_prediction
 
     _HAS_DSPY = True
 except ImportError:
@@ -110,11 +111,14 @@ def test_initializer_stage5_invalid_plan_skipped(caplog):
         _stubbed_idea_stages(initializer, ideas),
         caplog.at_level("WARNING"),
     ):
-        # Mock planner to return invalid result for feat_b, valid for feat_c
+        # Mock planner to return invalid result for feat_b, valid for feat_c.
+        # feat_b keeps the legacy (plan, raw) tuple as the tolerance regression;
+        # feat_c returns the dspy.Prediction the real planner produces, so the
+        # "feat_c in result" assertion only holds if Stage 5 unwraps it.
         def planner_side_effect(feature_name: str, feature_idea: str):
             if feature_name == "feat_b":
                 return (_make_plan("feat_b", with_invalid=True), None)
-            return (_make_plan("feat_c", with_invalid=False), None)
+            return planner_prediction(_make_plan("feat_c", with_invalid=False), None)
 
         mock_planner.side_effect = planner_side_effect
 
@@ -151,7 +155,7 @@ def test_initializer_stage5_llm_exception_caught_narrowly(caplog):
         def planner_side_effect(feature_name: str, feature_idea: str):
             if feature_name == "feat_b":
                 raise TimeoutError("LLM timeout")
-            return (_make_plan("feat_c", with_invalid=False), None)
+            return planner_prediction(_make_plan("feat_c", with_invalid=False), None)
 
         mock_planner.side_effect = planner_side_effect
 
@@ -188,7 +192,7 @@ def test_initializer_stage5_non_llm_exception_is_skipped_not_propagated(caplog):
         def planner_side_effect(feature_name: str, feature_idea: str):
             if feature_name == "feat_b":
                 raise ValueError("Unexpected pipeline error")
-            return (_make_plan("feat_c", with_invalid=False), None)
+            return planner_prediction(_make_plan("feat_c", with_invalid=False), None)
 
         mock_planner.side_effect = planner_side_effect
 

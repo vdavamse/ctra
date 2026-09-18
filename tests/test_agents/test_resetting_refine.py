@@ -1,15 +1,17 @@
 """Regression tests for ``ResettingRefine``'s per-call failure budget.
 
-``dspy.Refine`` decrements ``self.fail_count`` for every attempt it swallows and
-never restores it. Because ``Agent.proposer``/``planner``/``grouper`` are built
-once and reused for a whole MCTS run, that budget erodes until Refine re-raises
-instead of returning its best attempt -- past the caller's ``is_valid_*`` guard.
+``dspy.Refine`` decrements ``self.fail_count`` for every exception it swallows
+inside its per-attempt ``try`` and never restores it. Because
+``Agent.proposer``/``planner``/``grouper`` are built once and reused for a whole
+MCTS run, that budget erodes until Refine re-raises instead of returning its
+best attempt -- past the caller's ``is_valid_*`` guard.
 
-The erosion is guaranteed rather than incidental: once ``forward()`` stops
-raising, Refine reaches its feedback path, which does ``dict(outputs)``. These
-modules return ``ProposerOutput`` / ``(FeaturePlan, raw)`` / ``list[dict]``, none
-of which are ``dspy.Prediction``, so that conversion raises on every
-sub-threshold attempt.
+Any swallowed exception erodes the budget: a raising ``forward()``, a failing
+reward function, or a feedback step whose ``dict(outputs)`` cannot convert the
+module's return. The production modules now return ``dspy.Prediction`` so that
+last case no longer occurs for them; ``_ReturnsNamedTuple`` below deliberately
+keeps a legacy non-Prediction shape so ``dict(outputs)`` raises on every
+sub-threshold attempt, reproducing the erosion deterministically.
 """
 
 from __future__ import annotations

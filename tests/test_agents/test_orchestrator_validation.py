@@ -30,6 +30,7 @@ try:
         Task,
     )
     from ctra.agents.orchestrator import Agent
+    from tests.test_agents.conftest import planner_prediction, proposer_prediction
 
     _HAS_DSPY = True
 except ImportError:
@@ -313,9 +314,11 @@ def test_invalid_planner_skips_planning_with_warning(caplog):
     ):
         agent = _make_agent()
 
-        # Mock proposer to return ADD
+        # Prediction-shaped proposer (what the real module returns). Without the
+        # orchestrator's unwrap this is rejected at Site 1 and the planner
+        # warning asserted below is never reached.
         mock_proposer = MagicMock()
-        mock_proposer.return_value = ProposerOutput(
+        mock_proposer.return_value = proposer_prediction(
             feature_name="feat_b",
             feature_explanation="New feature idea",
             feature_operation=FeatureOp.ADD,
@@ -334,18 +337,64 @@ def test_invalid_planner_skips_planning_with_warning(caplog):
             possible_values={},  # Invalid: categorical requires possible_values
             feature_instructions="Extract code.",
         )
-        mock_planner.return_value = (invalid_plan, None)
+        mock_planner.return_value = planner_prediction(invalid_plan, None)
         agent.planner = mock_planner
 
         with caplog.at_level("WARNING"):
             result = agent.forward(previous_output=previous_output)
+
+        mock_planner.assert_called_once_with(feature_name="feat_b", feature_idea="New feature idea")
 
         # Assert feature_plans unchanged (feat_b not added)
         assert "feat_b" not in result.feature_plans
         assert "feat_a" in result.feature_plans
 
         # Assert warning log
+        assert "Proposer returned invalid op" not in caplog.text
         assert "Planner returned invalid plan" in caplog.text
+
+
+def test_valid_planner_prediction_is_unwrapped_and_added(caplog):
+    """Site 2 happy path with Prediction-shaped doubles.
+
+    ``dspy.Prediction`` iterates over its *keys*, so an un-unwrapped planner
+    result binds ``plan, raw = ('plan', 'raw')``, fails ``is_valid_planner`` and
+    takes the skip branch. This test only passes when the orchestrator unwraps
+    both the proposer and planner Predictions and installs the new plan.
+    """
+    previous_output = _make_output(feature_plans={"feat_a": _make_plan("feat_a")})
+    new_plan = _make_plan("feat_b")
+
+    with (
+        patch("ctra.agents.orchestrator.get_settings"),
+        patch("ctra.agents.orchestrator.compute_features") as mock_compute,
+    ):
+        mock_compute.return_value = ({"NCT001": {"feat_b": {"value": 1.0}}}, {}, {})
+        agent = _make_agent()
+
+        mock_proposer = MagicMock()
+        mock_proposer.return_value = proposer_prediction(
+            feature_name="feat_b",
+            feature_explanation="New feature idea",
+            feature_operation=FeatureOp.ADD,
+        )
+        agent.proposer = mock_proposer
+
+        mock_planner = MagicMock()
+        mock_planner.return_value = planner_prediction(new_plan, None)
+        agent.planner = mock_planner
+
+        with caplog.at_level("WARNING"):
+            result = agent.forward(previous_output=previous_output)
+
+    mock_planner.assert_called_once_with(feature_name="feat_b", feature_idea="New feature idea")
+    # train / val / test
+    assert mock_compute.call_count == 3
+    assert result.feature_plans["feat_b"] is not None
+    assert result.feature_plans["feat_b"].feature_name == "feat_b"
+    assert "feat_a" in result.feature_plans
+    assert "Proposer returned invalid op" not in caplog.text
+    assert "Planner returned invalid plan" not in caplog.text
 
 
 # ======================================================================

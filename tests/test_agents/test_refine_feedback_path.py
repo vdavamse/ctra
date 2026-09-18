@@ -28,6 +28,7 @@ import pytest
 
 try:
     import dspy
+    from dspy.clients.base_lm import GLOBAL_HISTORY
 
     from ctra.agents.data_models import (
         FeaturePlan,
@@ -84,15 +85,10 @@ def _advice(predictor_name: str, text: str) -> str:
 
 @pytest.fixture
 def _clear_history():
-    """Clear GLOBAL_HISTORY before each test."""
-    try:
-        from dspy.clients.base_lm import GLOBAL_HISTORY
-
-        GLOBAL_HISTORY.clear()
-        yield
-        GLOBAL_HISTORY.clear()
-    except ImportError:
-        yield
+    """Clear GLOBAL_HISTORY around each end-to-end test."""
+    GLOBAL_HISTORY.clear()
+    yield
+    GLOBAL_HISTORY.clear()
 
 
 def test_real_grouper_returns_prediction():
@@ -131,8 +127,6 @@ def test_all_three_modules_return_predictions():
     This verifies that proposer, planner, and grouper all have the right return
     type for Refine's feedback step to work.
     """
-    from ctra.agents.feature_proposer import FeatureProposer
-
     # Test proposer
     proposer = FeatureProposer(task_description="Test task")
     with patch.object(proposer, "proposer") as mock_cot:
@@ -300,17 +294,31 @@ def test_helpers_match_the_real_modules():
         feature_explanation="desc",
         feature_operation="add",
     )
-    assert set(dict(helper).keys()) == set(dict(result).keys())
+    assert set(helper.keys()) == set(result.keys())
 
-    # Planner: check plan and raw fields exist
-    plan = _make_plan("test")
-    helper_plan = planner_prediction(plan, raw="raw")
-    assert "plan" in dict(helper_plan)
-    assert "raw" in dict(helper_plan)
+    # Planner: builder keys must match the real module's Prediction keys
+    planner = FeaturePlanner(task_description="Test")
+    with patch.object(planner, "planner") as mock_planner_module:
+        mock_planner_module.return_value = dspy.Prediction(
+            feature_type={"value": FeatureType.FLOAT},
+            data_sources=[FeatureSource.PUBMED],
+            example_values=[],
+            possible_values={},
+            feature_instructions="test",
+        )
+        planner_result = planner(feature_name="test", feature_idea="idea")
 
-    # Grouper: check groups field exists
+    helper_plan = planner_prediction(_make_plan("test"), raw="raw")
+    assert set(helper_plan.keys()) == set(planner_result.keys())
+
+    # Grouper: builder keys must match the real module's Prediction keys
+    grouper = FeatureGrouper(task_description="Test")
+    with patch.object(grouper, "feature_grouper") as mock_grouper_module:
+        mock_grouper_module.return_value = dspy.Prediction(groups=[["feat_a"]])
+        grouper_result = grouper(feature_plans={"feat_a": _make_plan("feat_a")}, task="Test")
+
     helper_groups = grouper_prediction([])
-    assert "groups" in dict(helper_groups)
+    assert set(helper_groups.keys()) == set(grouper_result.keys())
 
 
 # ---------------------------------------------------------------------------
@@ -346,8 +354,6 @@ def _rendered(entry: dict) -> str:
 
 
 def _global_history() -> list:
-    from dspy.clients.base_lm import GLOBAL_HISTORY
-
     return GLOBAL_HISTORY
 
 
@@ -361,10 +367,10 @@ def test_sub_threshold_attempts_trigger_offer_feedback_and_hints(capsys) -> None
     module), swallows nothing, keeps the budget, and the sentinel advice reaches
     attempts 2 and 3.
     """
-    dspy.configure(lm=_sub_threshold_lm(_advice(_GROUPER_PREDICTOR, SENTINEL)))
     refine = ResettingRefine(module=FeatureGrouper(), N=3, reward_fn=grouper_reward, threshold=1.0)
 
-    result = refine(feature_plans=_two_plans(), task="t")
+    with dspy.context(lm=_sub_threshold_lm(_advice(_GROUPER_PREDICTOR, SENTINEL))):
+        result = refine(feature_plans=_two_plans(), task="t")
 
     history = _global_history()
     assert len(history) == 5, [_rendered(e)[:80] for e in history]
@@ -396,10 +402,10 @@ def test_legacy_raw_return_still_takes_the_blind_path(capsys) -> None:
             self.feature_grouper(task=task, feature_plans={})
             return [{"feat_a": feature_plans["feat_a"]}]
 
-    dspy.configure(lm=_sub_threshold_lm(_advice(_GROUPER_PREDICTOR, SENTINEL)))
     refine = ResettingRefine(module=_RawListGrouper(), N=3, reward_fn=grouper_reward, threshold=1.0)
 
-    refine(feature_plans=_two_plans(), task="t")
+    with dspy.context(lm=_sub_threshold_lm(_advice(_GROUPER_PREDICTOR, SENTINEL))):
+        refine(feature_plans=_two_plans(), task="t")
 
     history = _global_history()
     assert len(history) == 3
@@ -414,10 +420,10 @@ def test_advice_keyed_by_wrong_predictor_yields_na_hint() -> None:
 
     Guards the routing: asserting only that ``hint_`` is present would pass here too.
     """
-    dspy.configure(lm=_sub_threshold_lm(_advice("nonexistent.predict", SENTINEL)))
     refine = ResettingRefine(module=FeatureGrouper(), N=3, reward_fn=grouper_reward, threshold=1.0)
 
-    refine(feature_plans=_two_plans(), task="t")
+    with dspy.context(lm=_sub_threshold_lm(_advice("nonexistent.predict", SENTINEL))):
+        refine(feature_plans=_two_plans(), task="t")
 
     history = _global_history()
     assert len(history) == 5
@@ -435,10 +441,10 @@ def test_empty_advice_dict_runs_feedback_but_injects_no_hint() -> None:
     This is why ``_advice`` must build a non-empty dict; the older fixture in
     ``test_resetting_refine.py`` returns ``"{}"`` and would never exercise the hint.
     """
-    dspy.configure(lm=_sub_threshold_lm("{}"))
     refine = ResettingRefine(module=FeatureGrouper(), N=3, reward_fn=grouper_reward, threshold=1.0)
 
-    refine(feature_plans=_two_plans(), task="t")
+    with dspy.context(lm=_sub_threshold_lm("{}")):
+        refine(feature_plans=_two_plans(), task="t")
 
     history = _global_history()
     assert len(history) == 5

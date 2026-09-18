@@ -360,8 +360,9 @@ class TestIterNDiagnosticsPreservation:
     ) -> None:
         """Run two iterations; assert iter-1 diagnostics include iter-0 features
         with correct attribution."""
-        from ctra.agents.data_models import FeatureOp, ProposerOutput
+        from ctra.agents.data_models import FeatureOp
         from ctra.agents.orchestrator import Agent
+        from tests.test_agents.conftest import planner_prediction, proposer_prediction
 
         monkeypatch.setattr("ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module)
 
@@ -451,13 +452,16 @@ class TestIterNDiagnosticsPreservation:
         assert "feat_a" in iter0_result.builder_meta["NCT001"]
 
         # --- Iteration 1: ADD feat_b ---
-        agent.proposer.return_value = ProposerOutput(
+        # Prediction-shaped doubles (what the real modules return): without the
+        # orchestrator's unwrap the proposer output is rejected as invalid and
+        # feat_b never reaches the diagnostics asserted below.
+        agent.proposer.return_value = proposer_prediction(
             feature_operation=FeatureOp.ADD,
             feature_name="feat_b",
             feature_explanation="Add safety feature",
         )
         plan_b = _make_plan("feat_b")
-        agent.planner.return_value = (plan_b, MagicMock())
+        agent.planner.return_value = planner_prediction(plan_b, MagicMock())
 
         iter1_call_count = [0]
 
@@ -656,7 +660,7 @@ class TestIterNDiagnosticsPreservation:
             mock_create_clf.return_value = _mock_classifier()
             iter0_result = agent.forward(previous_output=None)
 
-        # iter-1 REFINE feat_a
+        # iter-1 REFINE feat_a -- legacy raw shapes, kept as the tolerance regression
         agent.proposer.return_value = ProposerOutput(
             feature_operation=FeatureOp.REFINE,
             feature_name="feat_a",

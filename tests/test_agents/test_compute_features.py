@@ -8,6 +8,7 @@ Covers:
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -483,7 +484,8 @@ class TestBuilderExceptionMetadata:
             # Raise on uncached plans
             mock_builder_cls.side_effect = RuntimeError("Test exception")
 
-            # Use compute_features with a dummy grouper (will be overridden by single plan)
+            # Two plans, so the grouper is genuinely called; this lambda keeps
+            # both in one group so the cached/uncached split happens per group.
             _, _, builder_meta = compute_features(
                 grouper=lambda feature_plans, task: [feature_plans],
                 nctids=nctids,
@@ -600,47 +602,89 @@ class TestGrouperPredictionUnwrap:
             feature_instructions=f"Extract {name}.",
         )
 
-    def test_grouper_prediction_is_unwrapped_to_list(self) -> None:
-        """Grouper returning Prediction(groups=...) is unwrapped to raw list inside compute_features."""
+    @staticmethod
+    def _patched_builder():
+        """Patch the Refine-wrapped builder so each call echoes its group.
+
+        Returns the patch context and the callable that stands in for the
+        wrapped ``FeatureBuilder``; its ``call_args_list`` records the exact
+        ``feature_plan_group`` dispatched for each (nctid, group) pair.
+        """
+        fake_builder = MagicMock(
+            side_effect=lambda nctid, feature_plan_group: (
+                {name: {"value": 1.0} for name in feature_plan_group},
+                {"research_results": "r", "builder_reasoning": "b"},
+            )
+        )
+        ctx = patch("ctra.agents.feature_builder.ResettingRefine", return_value=fake_builder)
+        return ctx, fake_builder
+
+    def test_grouper_prediction_is_unwrapped_to_list(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Prediction(groups=...) is unwrapped and each group reaches the builder intact.
+
+        Discriminating on purpose: without ``unwrap_groups`` the Prediction fails
+        ``is_valid_grouper``, Site 3 repairs it into one-feature-per-group and logs
+        a warning, and the builder sees singletons instead of the supplied
+        partition. The groups are non-singleton so the repair is observable.
+        """
+        nctids = ["NCT001"]
+        task = "Test task"
+        plans = {name: self._make_plan(name) for name in ("feat_a", "feat_b", "feat_c")}
+
+        groups_list = [
+            {"feat_a": plans["feat_a"], "feat_b": plans["feat_b"]},
+            {"feat_c": plans["feat_c"]},
+        ]
+        mock_grouper = MagicMock(return_value=grouper_prediction(groups_list))
+        builder_patch, fake_builder = self._patched_builder()
+
+        with builder_patch, caplog.at_level(logging.WARNING):
+            raw_features, none_explanations, builder_meta = compute_features(
+                grouper=mock_grouper,
+                nctids=nctids,
+                task_description=task,
+                plans=plans,
+                feature_store_enabled=False,
+            )
+
+        mock_grouper.assert_called_once_with(feature_plans=plans, task=task)
+        assert "Grouper partition invalid" not in caplog.text
+        # The builder was dispatched exactly the supplied groups, in order.
+        dispatched = [call.kwargs["feature_plan_group"] for call in fake_builder.call_args_list]
+        assert dispatched == groups_list
+        assert set(raw_features["NCT001"]) == set(plans)
+        assert none_explanations == {"NCT001": {}}
+        assert set(builder_meta["NCT001"]) == set(plans)
+
+    def test_empty_grouper_prediction_behaves_like_empty_list(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Prediction(groups=[]) is unwrapped to ``[]`` and repaired by Site 3.
+
+        Two plans so the grouper is actually consulted (a single plan bypasses
+        it). The empty partition assigns nothing, so the repair rebuilds it as
+        one-feature-per-group and logs the warning.
+        """
         nctids = ["NCT001"]
         task = "Test task"
         plans = {"feat_a": self._make_plan("feat_a"), "feat_b": self._make_plan("feat_b")}
 
-        groups_list = [{"feat_a": plans["feat_a"]}, {"feat_b": plans["feat_b"]}]
-        prediction = grouper_prediction(groups_list)
+        mock_grouper = MagicMock(return_value=grouper_prediction([]))
+        builder_patch, fake_builder = self._patched_builder()
 
-        mock_grouper = MagicMock(return_value=prediction)
+        with builder_patch, caplog.at_level(logging.WARNING):
+            raw_features, _, _ = compute_features(
+                grouper=mock_grouper,
+                nctids=nctids,
+                task_description=task,
+                plans=plans,
+                feature_store_enabled=False,
+            )
 
-        # compute_features should unwrap the Prediction and use the groups
-        result = compute_features(
-            grouper=mock_grouper,
-            nctids=nctids,
-            task_description=task,
-            plans=plans,
-            feature_store_enabled=False,
-        )
-
-        # Verify result structure (should have succeeded despite Prediction return)
-        assert isinstance(result, tuple)
-        assert len(result) == 3
-
-    def test_empty_grouper_prediction_behaves_like_empty_list(self) -> None:
-        """Grouper returning Prediction(groups=[]) is handled like legacy [] return."""
-        nctids = ["NCT001"]
-        task = "Test task"
-        plans = {"feat_a": self._make_plan("feat_a")}
-
-        # Empty grouping - should be repaired by Site 3 fallback
-        prediction = grouper_prediction([])
-        mock_grouper = MagicMock(return_value=prediction)
-
-        result = compute_features(
-            grouper=mock_grouper,
-            nctids=nctids,
-            task_description=task,
-            plans=plans,
-            feature_store_enabled=False,
-        )
-
-        # Should still work (repair path activates)
-        assert isinstance(result, tuple)
+        mock_grouper.assert_called_once_with(feature_plans=plans, task=task)
+        assert "Grouper partition invalid" in caplog.text
+        dispatched = [call.kwargs["feature_plan_group"] for call in fake_builder.call_args_list]
+        assert dispatched == [{"feat_a": plans["feat_a"]}, {"feat_b": plans["feat_b"]}]
+        assert set(raw_features["NCT001"]) == {"feat_a", "feat_b"}

@@ -78,7 +78,9 @@ class ResettingRefine(dspy.Refine):  # type: ignore[misc]
 #
 # Tolerant by design: a non-Prediction passes through untouched, which keeps the
 # hand-built ``is_valid_planner({}, (plan, raw))`` calls in orchestrator.py and
-# initializer.py -- and the MagicMock doubles in the test suite -- valid.
+# initializer.py -- and the MagicMock doubles in the test suite -- valid. A
+# Prediction that lacks the expected field raises TypeError instead: letting it
+# fall through would hand a Prediction to the ``plan, raw = ...`` unpack below.
 #
 # NEVER tuple-unpack a Prediction: it inherits Example.__iter__, which yields
 # KEYS, so ``plan, raw = pred`` silently binds the strings 'plan' and 'raw'.
@@ -87,55 +89,75 @@ class ResettingRefine(dspy.Refine):  # type: ignore[misc]
 def unwrap_proposal(result: Any) -> Any:
     """Extract proposal from dspy.Prediction or pass through legacy shape.
 
-    If result is a dspy.Prediction with a 'proposal' field, returns that field.
-    Otherwise returns result unchanged. Tolerant: a Prediction missing the field
-    falls through untouched for the caller's exception handler to catch.
+    If result is a dspy.Prediction, returns its 'proposal' field. A Prediction
+    without that field raises TypeError (the ``is_valid_*`` predicates catch it
+    and report the output as invalid). A non-Prediction is returned unchanged.
 
     Args:
         result: Either a dspy.Prediction(proposal=...) or a raw ProposerOutput.
 
     Returns:
         The ProposerOutput (or original result if not a Prediction).
+
+    Raises:
+        TypeError: If ``result`` is a Prediction lacking 'proposal'.
     """
     if isinstance(result, dspy.Prediction):
-        return result.get("proposal", result)
+        if "proposal" not in result:
+            raise TypeError(
+                f"FeatureProposer Prediction lacks 'proposal': keys={list(result.keys())}"
+            )
+        return result["proposal"]
     return result
 
 
 def unwrap_planner_result(result: Any) -> Any:
     """Extract (plan, raw) from dspy.Prediction or pass through legacy shape.
 
-    If result is a dspy.Prediction with both 'plan' and 'raw' fields, returns
-    the tuple (plan, raw). Otherwise returns result unchanged. Tolerant: a
-    Prediction missing either field falls through untouched for the caller's
-    exception handler to catch.
+    If result is a dspy.Prediction, returns the tuple ``(plan, raw)`` built from
+    its 'plan' and 'raw' fields. A Prediction missing either field raises
+    TypeError (the ``is_valid_*`` predicates catch it and report the output as
+    invalid). A non-Prediction is returned unchanged.
 
     Args:
         result: Either a dspy.Prediction(plan=..., raw=...) or a (plan, raw) tuple.
 
     Returns:
         The (FeaturePlan, raw) tuple (or original result if not a Prediction).
+
+    Raises:
+        TypeError: If ``result`` is a Prediction lacking 'plan' or 'raw'.
     """
-    if isinstance(result, dspy.Prediction) and "plan" in result:
-        return (result.get("plan"), result.get("raw"))
+    if isinstance(result, dspy.Prediction):
+        for field in ("plan", "raw"):
+            if field not in result:
+                raise TypeError(
+                    f"FeaturePlanner Prediction lacks '{field}': keys={list(result.keys())}"
+                )
+        return (result["plan"], result["raw"])
     return result
 
 
 def unwrap_groups(result: Any) -> Any:
     """Extract groups from dspy.Prediction or pass through legacy shape.
 
-    If result is a dspy.Prediction with a 'groups' field, returns that field.
-    Otherwise returns result unchanged. Tolerant: a Prediction missing the field
-    falls through untouched for the caller's exception handler to catch.
+    If result is a dspy.Prediction, returns its 'groups' field. A Prediction
+    without that field raises TypeError (the ``is_valid_*`` predicates catch it
+    and report the output as invalid). A non-Prediction is returned unchanged.
 
     Args:
         result: Either a dspy.Prediction(groups=...) or a raw list[dict].
 
     Returns:
         The list of groups (or original result if not a Prediction).
+
+    Raises:
+        TypeError: If ``result`` is a Prediction lacking 'groups'.
     """
     if isinstance(result, dspy.Prediction):
-        return result.get("groups", result)
+        if "groups" not in result:
+            raise TypeError(f"FeatureGrouper Prediction lacks 'groups': keys={list(result.keys())}")
+        return result["groups"]
     return result
 
 

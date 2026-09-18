@@ -2,8 +2,9 @@
 
 These predicates are the canonical source of truth for "what valid LLM output
 means"; the ``dspy.Refine`` float rewards are thin adapters over them. The
-adapters themselves are covered by ``test_reward_functions.py`` (via the
-orchestrator re-exports), so this module tests the predicates directly.
+adapters themselves are covered by ``test_reward_functions.py`` (imported
+directly from ``ctra.agents.reward_fns``), so this module tests the predicates
+directly.
 """
 
 from __future__ import annotations
@@ -27,6 +28,9 @@ try:
         is_valid_grouper,
         is_valid_planner,
         is_valid_proposer,
+        unwrap_groups,
+        unwrap_planner_result,
+        unwrap_proposal,
     )
     from tests.test_agents.conftest import (
         grouper_prediction,
@@ -329,3 +333,39 @@ class TestIsValidGrouper:
         plans = {"feat_a": _make_plan("feat_a")}
         result = dspy.Prediction(some_other_field="value")
         assert is_valid_grouper({"feature_plans": plans}, result) is False
+
+
+# ======================================================================
+# unwrap_* helpers: a Prediction lacking its field must not fall through
+# ======================================================================
+
+
+class TestUnwrapHelpersRejectMalformedPredictions:
+    """A ``dspy.Prediction`` missing the contract field raises rather than
+    falling through, so it can never reach a ``plan, raw = ...`` unpack
+    downstream (``Prediction`` iterates over its keys). Legacy shapes still
+    pass through; the predicates above turn the TypeError into ``False``."""
+
+    def test_unwrap_proposal_raises_on_missing_field(self) -> None:
+        with pytest.raises(TypeError, match=r"FeatureProposer Prediction lacks 'proposal'"):
+            unwrap_proposal(dspy.Prediction(some_other_field="value"))
+
+    def test_unwrap_planner_result_raises_on_missing_field(self) -> None:
+        with pytest.raises(TypeError, match=r"FeaturePlanner Prediction lacks 'plan'"):
+            unwrap_planner_result(dspy.Prediction(raw="something"))
+        with pytest.raises(TypeError, match=r"FeaturePlanner Prediction lacks 'raw'"):
+            unwrap_planner_result(dspy.Prediction(plan=_make_plan("feat_a")))
+
+    def test_unwrap_groups_raises_on_missing_field(self) -> None:
+        with pytest.raises(TypeError, match=r"FeatureGrouper Prediction lacks 'groups'"):
+            unwrap_groups(dspy.Prediction(some_other_field="value"))
+
+    def test_legacy_shapes_still_pass_through(self) -> None:
+        legacy_prop = ProposerOutput(
+            feature_operation=FeatureOp.ADD, feature_name="f", feature_explanation="e"
+        )
+        legacy_tuple = (_make_plan("feat_a"), None)
+        legacy_groups = [{"feat_a": _make_plan("feat_a")}]
+        assert unwrap_proposal(legacy_prop) is legacy_prop
+        assert unwrap_planner_result(legacy_tuple) is legacy_tuple
+        assert unwrap_groups(legacy_groups) is legacy_groups
