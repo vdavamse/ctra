@@ -624,10 +624,11 @@ class TestGrouperPredictionUnwrap:
     ) -> None:
         """Prediction(groups=...) is unwrapped and each group reaches the builder intact.
 
-        Discriminating on purpose: without ``unwrap_groups`` the Prediction fails
-        ``is_valid_grouper``, Site 3 repairs it into one-feature-per-group and logs
-        a warning, and the builder sees singletons instead of the supplied
-        partition. The groups are non-singleton so the repair is observable.
+        Discriminating on purpose: ``is_valid_grouper`` unwraps internally, so an
+        un-unwrapped Prediction *passes* Site 3 and is then iterated as-is --
+        ``dspy.Prediction`` yields its keys, so the builder receives the string
+        ``'groups'`` as a "group" and ``dict(plans)`` raises inside the wrapper.
+        The Site 3 repair cannot catch a missing unwrap; this test is the fence.
         """
         nctids = ["NCT001"]
         task = "Test task"

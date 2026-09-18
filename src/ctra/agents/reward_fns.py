@@ -13,12 +13,13 @@ of :class:`dspy.Refine` -- see its docstring for why.
 FeatureProposer, FeaturePlanner and FeatureGrouper return ``dspy.Prediction``; the
 three ``unwrap_*`` helpers below normalise them back to the legacy shapes. (Note:
 ``FeatureBuilder`` does not yet -- it still returns ``(values, meta)`` and is wrapped
-in ``ResettingRefine`` at ``feature_builder.py:376``. That is unobservable today only
-because ``feature_builder.py:155`` raises before the feedback step is reached. Issue
-#6 removes that raise and **must** convert the builder to ``dspy.Prediction`` and add
-the matching ``unwrap_*``, or it will reintroduce exactly the bug #5 fixed. Note
-``_builder_reward`` (``feature_builder.py:295-303``) does ``values, _meta = result``
--- a tuple-unpack that would silently bind key strings.)
+in ``ResettingRefine`` inside ``WrappedFeatureBuilder.__call__``. That is unobservable
+today only because ``FeatureBuilder.forward`` raises
+``ValueError("Features not generated: ...")`` before the feedback step is reached.
+Issue #6 removes that raise and **must** convert the builder to ``dspy.Prediction``
+and add the matching ``unwrap_*``, or it will reintroduce exactly the bug #5 fixed.
+Note ``_builder_reward`` does ``values, _meta = result`` -- a tuple-unpack that would
+silently bind key strings.)
 
 Note: ``_builder_reward`` still lives in ``feature_builder`` and has no
 ``is_valid_builder`` counterpart here; that site was left alone deliberately.

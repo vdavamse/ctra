@@ -34,7 +34,6 @@ try:
         FeaturePlan,
         FeatureSource,
         FeatureType,
-        ProposerOutput,
     )
     from ctra.agents.feature_grouper import FeatureGrouper
     from ctra.agents.feature_planner import FeaturePlanner
@@ -42,9 +41,6 @@ try:
     from ctra.agents.reward_fns import (
         ResettingRefine,
         grouper_reward,
-        unwrap_groups,
-        unwrap_planner_result,
-        unwrap_proposal,
     )
     from tests.test_agents.conftest import (
         grouper_prediction,
@@ -91,36 +87,6 @@ def _clear_history():
     GLOBAL_HISTORY.clear()
 
 
-def test_real_grouper_returns_prediction():
-    """Real FeatureGrouper.forward() returns dspy.Prediction (core issue #5 fix).
-
-    This is the headline assertion: the modules return Predictions that can be
-    serialized by dict() in Refine's feedback step, enabling OfferFeedback.
-    The full Refine integration is tested in the other cases below (without
-    requiring full DSPy LM mocking).
-    """
-    grouper = FeatureGrouper(task_description="Test task")
-    feature_plans = {
-        "feat_a": _make_plan("feat_a"),
-        "feat_b": _make_plan("feat_b"),
-    }
-
-    # Mock the inner ChainOfThought to return valid groups
-    with patch.object(grouper, "feature_grouper") as mock_cot:
-        mock_cot.return_value = dspy.Prediction(groups=[["feat_a", "feat_b"]])
-
-        result = grouper.forward(feature_plans=feature_plans, task="Test task")
-
-    # THE FIX: result is now dspy.Prediction, not a bare list
-    assert isinstance(result, dspy.Prediction)
-    # dict() now succeeds (this is what Refine's feedback step does)
-    result_dict = dict(result)
-    assert "groups" in result_dict
-    # Unwrap works
-    groups = unwrap_groups(result)
-    assert isinstance(groups, list)
-
-
 def test_all_three_modules_return_predictions():
     """All three Refine-wrapped modules return dspy.Prediction (core issue #5 fix).
 
@@ -137,7 +103,7 @@ def test_all_three_modules_return_predictions():
         prev.feature_plans = {}
         result = proposer(previous_output=prev)
         assert isinstance(result, dspy.Prediction)
-        assert dict(result) is not None  # dict() succeeds
+        assert dict(result).keys() == {"proposal"}
 
     # Test planner
     planner = FeaturePlanner(task_description="Test task")
@@ -151,7 +117,7 @@ def test_all_three_modules_return_predictions():
         )
         result = planner(feature_name="test", feature_idea="idea")
         assert isinstance(result, dspy.Prediction)
-        assert dict(result) is not None
+        assert dict(result).keys() == {"plan", "raw"}
 
     # Test grouper
     grouper = FeatureGrouper(task_description="Test task")
@@ -159,113 +125,7 @@ def test_all_three_modules_return_predictions():
         mock_cot.return_value = dspy.Prediction(groups=[["feat_a"]])
         result = grouper(feature_plans={"feat_a": _make_plan("feat_a")}, task="Test task")
         assert isinstance(result, dspy.Prediction)
-        assert dict(result) is not None  # dict() succeeds - THE FIX!
-
-
-def test_dict_of_each_return_shape_is_the_operation_refine_needs():
-    """dict() succeeds on Prediction outputs (the core fix for refine.py:153).
-
-    Before: dict(ProposerOutput) → ValueError
-            dict((FeaturePlan, raw)) → ValueError
-            dict(list[dict]) → ValueError (sometimes; [] → {}, singleton → garbage)
-
-    After: dict(Prediction(proposal=...)) → {'proposal': ...}
-           dict(Prediction(plan=..., raw=...)) → {'plan': ..., 'raw': ...}
-           dict(Prediction(groups=...)) → {'groups': [...]}
-    """
-    # Test proposer shape
-    prop_pred = proposer_prediction(
-        feature_name="test",
-        feature_explanation="explanation",
-        feature_operation="add",
-    )
-    prop_dict = dict(prop_pred)
-    assert "proposal" in prop_dict
-
-    # Test planner shape
-    plan = _make_plan("test")
-    plan_pred = planner_prediction(plan, raw="raw_output")
-    plan_dict = dict(plan_pred)
-    assert "plan" in plan_dict and "raw" in plan_dict
-
-    # Test grouper shape (including empty edge case)
-    groups_pred_empty = grouper_prediction([])
-    groups_dict_empty = dict(groups_pred_empty)
-    assert "groups" in groups_dict_empty
-    assert groups_dict_empty["groups"] == []
-
-    groups_pred_full = grouper_prediction([{"feat_a": _make_plan("feat_a")}])
-    groups_dict_full = dict(groups_pred_full)
-    assert "groups" in groups_dict_full
-
-
-def test_prediction_keys_match_module_contracts():
-    """Verify Prediction fields match the module return contracts.
-
-    Ensures field names are correct: proposal, plan/raw, groups
-    """
-    plan = _make_plan("test")
-
-    # Proposer prediction has 'proposal' field
-    prop_pred = proposer_prediction(
-        feature_name="test",
-        feature_explanation="test",
-        feature_operation="add",
-    )
-    assert "proposal" in dict(prop_pred)
-    assert isinstance(dict(prop_pred)["proposal"], ProposerOutput)
-
-    # Planner prediction has 'plan' and 'raw' fields
-    plan_pred = planner_prediction(plan, raw="raw_output")
-    assert "plan" in dict(plan_pred)
-    assert "raw" in dict(plan_pred)
-
-    # Grouper prediction has 'groups' field
-    groups_pred = grouper_prediction([{"feat_a": plan}])
-    assert "groups" in dict(groups_pred)
-    assert isinstance(dict(groups_pred)["groups"], list)
-
-
-def test_unwrap_helpers_are_tolerant():
-    """Unwrap helpers accept both Prediction and legacy shapes (design decision #2).
-
-    This enables predicates to work with hand-built (plan, raw) calls and
-    existing tests without modification.
-    """
-    plan = _make_plan("test")
-
-    # unwrap_proposal is tolerant
-    prop_pred = proposer_prediction(
-        feature_name="test",
-        feature_explanation="test",
-        feature_operation="add",
-    )
-    unwrapped_prop = unwrap_proposal(prop_pred)
-    assert isinstance(unwrapped_prop, ProposerOutput)
-
-    legacy_prop = ProposerOutput(
-        feature_name="test",
-        feature_explanation="test",
-        feature_operation="add",
-    )
-    assert unwrap_proposal(legacy_prop) is legacy_prop  # Passes through
-
-    # unwrap_planner_result is tolerant
-    plan_pred = planner_prediction(plan, raw="raw")
-    unwrapped_plan, unwrapped_raw = unwrap_planner_result(plan_pred)
-    assert unwrapped_raw == "raw"
-    assert unwrapped_plan == plan
-
-    legacy_tuple = (plan, "raw")
-    assert unwrap_planner_result(legacy_tuple) is legacy_tuple  # Passes through
-
-    # unwrap_groups is tolerant
-    groups_pred = grouper_prediction([{"feat_a": plan}])
-    unwrapped_groups = unwrap_groups(groups_pred)
-    assert isinstance(unwrapped_groups, list)
-
-    legacy_list = [{"feat_a": plan}]
-    assert unwrap_groups(legacy_list) is legacy_list  # Passes through
+        assert dict(result).keys() == {"groups"}
 
 
 def test_helpers_match_the_real_modules():
@@ -353,10 +213,6 @@ def _rendered(entry: dict) -> str:
     return json.dumps(entry.get("messages") or entry.get("prompt") or "")
 
 
-def _global_history() -> list:
-    return GLOBAL_HISTORY
-
-
 @pytest.mark.usefixtures("_clear_history")
 def test_sub_threshold_attempts_trigger_offer_feedback_and_hints(capsys) -> None:
     """Headline: real grouper + real reward + ResettingRefine + DummyLM.
@@ -372,7 +228,7 @@ def test_sub_threshold_attempts_trigger_offer_feedback_and_hints(capsys) -> None
     with dspy.context(lm=_sub_threshold_lm(_advice(_GROUPER_PREDICTOR, SENTINEL))):
         result = refine(feature_plans=_two_plans(), task="t")
 
-    history = _global_history()
+    history = GLOBAL_HISTORY
     assert len(history) == 5, [_rendered(e)[:80] for e in history]
     assert "Attempt failed" not in capsys.readouterr().out
     assert refine.fail_count == 3
@@ -407,7 +263,7 @@ def test_legacy_raw_return_still_takes_the_blind_path(capsys) -> None:
     with dspy.context(lm=_sub_threshold_lm(_advice(_GROUPER_PREDICTOR, SENTINEL))):
         refine(feature_plans=_two_plans(), task="t")
 
-    history = _global_history()
+    history = GLOBAL_HISTORY
     assert len(history) == 3
     assert capsys.readouterr().out.count("Attempt failed") == 2
     assert refine.fail_count == 1
@@ -425,7 +281,7 @@ def test_advice_keyed_by_wrong_predictor_yields_na_hint() -> None:
     with dspy.context(lm=_sub_threshold_lm(_advice("nonexistent.predict", SENTINEL))):
         refine(feature_plans=_two_plans(), task="t")
 
-    history = _global_history()
+    history = GLOBAL_HISTORY
     assert len(history) == 5
     for attempt in (history[2], history[4]):
         text = _rendered(attempt)
@@ -446,6 +302,6 @@ def test_empty_advice_dict_runs_feedback_but_injects_no_hint() -> None:
     with dspy.context(lm=_sub_threshold_lm("{}")):
         refine(feature_plans=_two_plans(), task="t")
 
-    history = _global_history()
+    history = GLOBAL_HISTORY
     assert len(history) == 5
     assert all("hint_" not in _rendered(e) for e in history)
