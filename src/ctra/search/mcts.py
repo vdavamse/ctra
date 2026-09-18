@@ -408,6 +408,22 @@ class MCTSSearch:
 
         candidates = self._expand_fn(node, max_children=branch_factor)
 
+        # Issue #7 (R2): ``suggestion_index=i`` below indexes the *parent's*
+        # suggestion list, but a custom ``expand_fn`` knows nothing about that
+        # list and returns up to ``branch_factor`` candidates
+        # (``mlops/retraining.py:156-171`` and ten test modules do exactly
+        # this).  Cap the candidate count so no child is born past the end.
+        # The default ``_suggestion_expand`` already slices
+        # ``suggestions[:max_children]``, so this is a no-op for it.
+        n_suggestions = self._suggestion_count(node)
+        if n_suggestions is not None and len(candidates) > n_suggestions:
+            logger.debug(
+                "Expansion truncated to the suggestion list: %d candidates -> %d (issue #7)",
+                len(candidates),
+                n_suggestions,
+            )
+            candidates = candidates[:n_suggestions]
+
         children: list[MCTSNode] = []
         for i, (features, operation, detail) in enumerate(candidates):
             child = MCTSNode(
@@ -628,6 +644,56 @@ class MCTSSearch:
     # ------------------------------------------------------------------
     # Evaluation helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _suggestion_count(node: MCTSNode) -> int | None:
+        """How many suggestions this node's own ``eval_output`` offers.
+
+        Returns ``None`` when the question does not apply: no output yet, a
+        runner result that is not an ``AgentOutput`` (``mlops/retraining.py``
+        returns an ``ObjectiveResult``), or an empty suggestion list.  Empty is
+        deliberately *not* zero — ``FeatureProposer`` degrades to an empty
+        suggestion on purpose and ``AgentOutput.suggestions_exhausted`` treats
+        empty as "not exhausted" (``data_models.py``); returning ``None`` keeps
+        the two predicates agreeing.
+        """
+        output = node.eval_output
+        if output is None or not hasattr(output, "get_best_eval_output"):
+            return None
+        try:
+            best_eval, _ = output.get_best_eval_output()
+        except (ValueError, KeyError, AttributeError):
+            return None
+        suggestions = getattr(best_eval, "suggestions", None)
+        return len(suggestions) if suggestions else None
+
+    @staticmethod
+    def _output_exhausted(parent_output: Any) -> bool:
+        """Issue #7 predicate, evaluated on an output that already carries the
+        child's ``suggestion_index``.  Non-``AgentOutput`` runner results have
+        no such property and are never exhausted."""
+        return bool(getattr(parent_output, "suggestions_exhausted", False))
+
+    def _is_exhausted(self, node: MCTSNode) -> bool:
+        """Would evaluating ``node`` replay a suggestion past the end of the list?
+
+        Derived only (R8): builds the same probe ``_call_evaluate`` would build
+        and asks it.  The root (no parent, or a parent with no output) is never
+        exhausted.  ``_replace`` here is ``dataclasses.replace`` — it aliases
+        the mutable fields rather than copying them, so the probe is cheap and
+        must not be mutated.
+        """
+        parent = node.parent
+        if parent is None or parent.eval_output is None:
+            return False
+        parent_output = parent.eval_output
+        if not hasattr(parent_output, "_replace"):
+            return False
+        try:
+            probe = parent_output._replace(suggestion_index=node.suggestion_index)
+        except (TypeError, ValueError):
+            return False
+        return self._output_exhausted(probe)
 
     def _call_evaluate(self, node: MCTSNode, rollout: int) -> NDArray[Any]:
         """Invoke the external runner to evaluate a node's feature set and extract objective scores.
