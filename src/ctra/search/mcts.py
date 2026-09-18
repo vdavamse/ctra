@@ -533,6 +533,14 @@ class MCTSSearch:
             best_hv = self._point_hypervolume(start_obj)
             nodes_evaluated = 1
 
+        if start_obj is None and current.eval_output is None:
+            # Never evaluated: nothing to expand from.  Expanding here would
+            # hand every child ``previous_output=None`` — a root-style fresh
+            # initialization mid-tree (a full initializer subprocess on the
+            # real pipeline).  A skipped node that *was* evaluated earlier
+            # still carries its own output and may expand below.
+            return None, current
+
         depth = self._node_depth(current)
 
         while depth < self._config.max_depth:

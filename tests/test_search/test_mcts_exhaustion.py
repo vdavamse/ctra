@@ -434,3 +434,40 @@ def test_deep_simulation_filters_exhausted_children_before_picking() -> None:
     assert len(invocations) == 8  # root + viable child, four times over
     assert search.skips == 0
     assert all(obj is not None and obj.shape == (2,) for obj, _node in results)
+
+
+def test_skipped_unevaluated_start_node_is_not_expanded() -> None:
+    """A never-evaluated node skipped as exhausted must not be expanded (review M1).
+
+    Its ``eval_output`` is ``None``, so any child's ``_call_evaluate`` would
+    build ``parent_output=None`` — a root-style fresh initialization mid-tree.
+    R6 scenario: the parent is re-evaluated to fewer suggestions after its
+    children were born, retroactively exhausting the second child.
+    """
+    runner = make_orchestrator_like_runner(["s0", "s1"], initial_features=["f0"])
+    search = _SkipCountingSearch(
+        runner=runner,
+        task="phase2",
+        expand_fn=_wide_expand,
+        config=_config(num_rollouts=1, max_depth=3, min_branch_factor=4, max_branch_factor=4),
+    )
+    root = MCTSNode(features=["f0"], total_reward=np.zeros(2))
+    root.eval_output = runner("root", "phase2", None)
+    root.visit_count = 1
+    search._root, search._all_nodes = root, [root]
+    children = search._expand(root)
+    assert len(children) == 2
+    root.eval_output = _with_suggestions(root.eval_output, ["only"])
+    exhausted = children[1]
+    assert search._is_exhausted(exhausted) and exhausted.eval_output is None
+    invocations_before = runner.evaluations
+
+    best_obj, best_node = search._simulate_deep(exhausted, rollout=0)
+
+    assert best_obj is None and best_node is exhausted
+    assert search.skips == 1
+    assert runner.evaluations == invocations_before, "the runner was called for a skipped path"
+    assert runner.seen_indices == [], "a child was evaluated with previous_output=None"
+    assert exhausted.children == []
+    assert search.all_nodes == [root, *children]
+    assert exhausted.visit_count == 0 and exhausted.objective_history == []
