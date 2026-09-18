@@ -13,6 +13,8 @@ from unittest.mock import MagicMock
 import pytest
 
 try:
+    import dspy
+
     from ctra.agents.data_models import (
         AgentOutput,
         FeatureOp,
@@ -25,6 +27,11 @@ try:
         is_valid_grouper,
         is_valid_planner,
         is_valid_proposer,
+    )
+    from tests.test_agents.conftest import (
+        grouper_prediction,
+        planner_prediction,
+        proposer_prediction,
     )
 
     _HAS_DSPY = True
@@ -166,6 +173,22 @@ class TestIsValidProposer:
         )
         assert is_valid_proposer(kwargs, result) is False
 
+    def test_prediction_wrapped_proposal_is_valid(self) -> None:
+        """Proposer can return dspy.Prediction(proposal=...) and pass validation."""
+        kwargs = {"previous_output": _previous_output(["feat_a"])}
+        result = proposer_prediction(
+            feature_name="feat_b",
+            feature_explanation="new feature",
+            feature_operation=FeatureOp.ADD,
+        )
+        assert is_valid_proposer(kwargs, result) is True
+
+    def test_prediction_missing_proposal_field_is_false(self) -> None:
+        """Prediction without 'proposal' field falls through to exception handler."""
+        kwargs = {"previous_output": _previous_output(["feat_a"])}
+        result = dspy.Prediction(some_other_field="value")
+        assert is_valid_proposer(kwargs, result) is False
+
 
 # ======================================================================
 # is_valid_planner
@@ -227,6 +250,25 @@ class TestIsValidPlanner:
     def test_wrong_length_tuple_returns_false(self) -> None:
         assert is_valid_planner({}, (1, 2, 3)) is False
 
+    def test_prediction_wrapped_plan_and_raw_is_valid(self) -> None:
+        """Planner can return dspy.Prediction(plan=..., raw=...) and pass validation."""
+        plan = FeaturePlan(
+            feature_name="test",
+            feature_idea="idea",
+            feature_type={"cat_field": FeatureType.CATEGORICAL},
+            data_sources=[FeatureSource.PUBMED],
+            example_values=[],
+            possible_values={"cat_field": ["a", "b"]},
+            feature_instructions="test",
+        )
+        result = planner_prediction(plan, raw=MagicMock())
+        assert is_valid_planner({}, result) is True
+
+    def test_prediction_missing_plan_field_is_false(self) -> None:
+        """Prediction without 'plan' field falls through to exception handler."""
+        result = dspy.Prediction(raw="something")
+        assert is_valid_planner({}, result) is False
+
 
 # ======================================================================
 # is_valid_grouper
@@ -268,4 +310,22 @@ class TestIsValidGrouper:
             {"feat_a": plans["feat_a"], "feat_b": plans["feat_b"]},
             {"feat_a": plans["feat_a"]},
         ]
+        assert is_valid_grouper({"feature_plans": plans}, result) is False
+
+    def test_prediction_wrapped_groups_is_valid(self) -> None:
+        """Grouper can return dspy.Prediction(groups=...) and pass validation."""
+        plans = {"feat_a": _make_plan("feat_a"), "feat_b": _make_plan("feat_b")}
+        result = grouper_prediction([{"feat_a": plans["feat_a"]}, {"feat_b": plans["feat_b"]}])
+        assert is_valid_grouper({"feature_plans": plans}, result) is True
+
+    def test_prediction_empty_groups_is_invalid(self) -> None:
+        """Prediction(groups=[]) is invalid (empty partition)."""
+        plans = {"feat_a": _make_plan("feat_a")}
+        result = grouper_prediction([])
+        assert is_valid_grouper({"feature_plans": plans}, result) is False
+
+    def test_prediction_missing_groups_field_is_false(self) -> None:
+        """Prediction without 'groups' field falls through to exception handler."""
+        plans = {"feat_a": _make_plan("feat_a")}
+        result = dspy.Prediction(some_other_field="value")
         assert is_valid_grouper({"feature_plans": plans}, result) is False

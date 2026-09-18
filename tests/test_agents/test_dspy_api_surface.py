@@ -67,3 +67,14 @@ class TestDspyAPISurface:
     def test_suggest_does_not_exist(self) -> None:
         """Confirm dspy.Suggest is NOT available."""
         assert not hasattr(dspy, "Suggest")
+
+    def test_prediction_exists(self) -> None:
+        """dspy.Prediction is load-bearing for three modules after issue #5 fix."""
+        assert hasattr(dspy, "Prediction"), "dspy.Prediction missing — needed for return contracts"
+
+    def test_global_history_importable(self) -> None:
+        """GLOBAL_HISTORY is the observation channel for acceptance test of issue #5."""
+        try:
+            from dspy.clients.base_lm import GLOBAL_HISTORY  # noqa: F401
+        except ImportError:
+            pytest.fail("dspy.clients.base_lm.GLOBAL_HISTORY not importable — acceptance test channel missing")

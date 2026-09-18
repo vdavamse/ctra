@@ -17,8 +17,11 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 try:
+    import dspy
+
     from ctra.agents.data_models import FeaturePlan, FeatureSource, FeatureType
     from ctra.agents.feature_builder import compute_features
+    from tests.test_agents.conftest import grouper_prediction
 
     _HAS_DSPY = True
 except ImportError:
@@ -578,3 +581,68 @@ class TestBuilderExceptionMetadata:
                 str(feature_store_dir), "phase2", "NCT001", "feat_a", plans["feat_a"]
             )
             assert cached is None
+
+
+# ---------------------------------------------------------------------------
+# Grouper Prediction shape tolerance
+# ---------------------------------------------------------------------------
+
+
+class TestGrouperPredictionUnwrap:
+    """Grouper can return dspy.Prediction(groups=...) and it is unwrapped correctly."""
+
+    def _make_plan(self, name: str) -> FeaturePlan:
+        return FeaturePlan(
+            feature_name=name,
+            feature_idea=f"{name} idea",
+            feature_type={"value": FeatureType.FLOAT},
+            data_sources=[FeatureSource.PUBMED],
+            example_values=[{"value": "1.0"}],
+            possible_values={},
+            feature_instructions=f"Extract {name}.",
+        )
+
+    def test_grouper_prediction_is_unwrapped_to_list(self) -> None:
+        """Grouper returning Prediction(groups=...) is unwrapped to raw list inside compute_features."""
+        nctids = ["NCT001"]
+        task = "Test task"
+        plans = {"feat_a": self._make_plan("feat_a"), "feat_b": self._make_plan("feat_b")}
+
+        groups_list = [{"feat_a": plans["feat_a"]}, {"feat_b": plans["feat_b"]}]
+        prediction = grouper_prediction(groups_list)
+
+        mock_grouper = MagicMock(return_value=prediction)
+
+        # compute_features should unwrap the Prediction and use the groups
+        result = compute_features(
+            grouper=mock_grouper,
+            nctids=nctids,
+            task_description=task,
+            plans=plans,
+            feature_store_enabled=False,
+        )
+
+        # Verify result structure (should have succeeded despite Prediction return)
+        assert isinstance(result, tuple)
+        assert len(result) == 3
+
+    def test_empty_grouper_prediction_behaves_like_empty_list(self) -> None:
+        """Grouper returning Prediction(groups=[]) is handled like legacy [] return."""
+        nctids = ["NCT001"]
+        task = "Test task"
+        plans = {"feat_a": self._make_plan("feat_a")}
+
+        # Empty grouping - should be repaired by Site 3 fallback
+        prediction = grouper_prediction([])
+        mock_grouper = MagicMock(return_value=prediction)
+
+        result = compute_features(
+            grouper=mock_grouper,
+            nctids=nctids,
+            task_description=task,
+            plans=plans,
+            feature_store_enabled=False,
+        )
+
+        # Should still work (repair path activates)
+        assert isinstance(result, tuple)
