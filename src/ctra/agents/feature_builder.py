@@ -28,6 +28,7 @@ from ctra.agents.data_models import (
     BUILDER_EXCEPTION_MSG_MAXLEN,
     BUILDER_EXCEPTION_PREFIX,
     BUILDER_EXCEPTION_RESEARCH_SENTINEL,
+    BUILDER_OMITTED_PREFIX,
     FeaturePlan,
     FeatureType,
 )
@@ -332,6 +333,13 @@ class WrappedFeatureBuilder:
 
     On exception, returns all-None values and sentinel metadata documenting
     the crash. No store writes on the failure path — no negative caching.
+
+    After Refine returns, any uncached plan the builder never produced (the
+    Construct step omitted it on every attempt) is filled with all-``None``
+    sub-values and a ``builder_omitted`` explanation. The fill happens **after**
+    the store writes, so an omission is never negatively cached and is retried
+    on the next run, and **outside** the reward boundary, so Refine still sees
+    (and retries) the partial result.
     """
 
     def __init__(
@@ -420,7 +428,10 @@ class WrappedFeatureBuilder:
             # STRINGS with no error. The helper also passes a legacy tuple through.
             values, meta = unwrap_builder_result(result)
 
-            # Persist each freshly built feature individually
+            # Persist each freshly built feature individually. The
+            # ``feature_name not in values`` guard is what keeps the omission
+            # fill below out of the store: omitted names are not in ``values``
+            # yet, so nothing negative is ever cached.
             if self._feature_store_enabled:
                 assert self._feature_store_dir is not None
                 for feature_name, plan in uncached_plans.items():
@@ -437,6 +448,32 @@ class WrappedFeatureBuilder:
                             "builder_reasoning": meta.get("builder_reasoning", ""),
                         },
                     )
+
+            # Fill omissions -- AFTER the writes (no negative caching), BEFORE the
+            # merge (the column must exist downstream: features_to_df names
+            # columns from what the rows contain, and the orchestrator slices
+            # val/test by the train columns). Outside the reward boundary so
+            # is_valid_builder still saw the partial result and Refine retried.
+            # The explanation entry is what keeps the omission visible: none_rate
+            # in _build_builder_diagnostics counts explanation-map membership.
+            omitted = [name for name in uncached_plans if name not in values]
+            if omitted:
+                explanations = dict(meta.get("none_feature_explanations", {}))
+                for name in omitted:
+                    values[name] = {k: None for k in uncached_plans[name].feature_type}
+                    detail = str(explanations.get(name) or "no explanation provided")
+                    if len(detail) > BUILDER_EXCEPTION_MSG_MAXLEN:
+                        detail = detail[: BUILDER_EXCEPTION_MSG_MAXLEN - 3] + "..."
+                    explanations[name] = f"{BUILDER_OMITTED_PREFIX} {detail}"
+                # Rebuilt, not mutated: a shared metadata dict from a test double
+                # must not be corrupted; the happy path returns meta untouched.
+                meta = {**meta, "none_feature_explanations": explanations}
+                logger.warning(
+                    "Builder omitted %d feature(s) for %s after retries: %s",
+                    len(omitted),
+                    nctid,
+                    sorted(omitted),
+                )
 
             merged = {**cached_values, **values}
             return (nctid, merged, meta)

@@ -141,16 +141,29 @@ class Task(StrEnum):
 # Dataclasses for diagnostics
 # ---------------------------------------------------------------------------
 
-# Sentinels marking a trial-group build that crashed inside
-# ``WrappedFeatureBuilder.__call__``. Written by the builder's exception path,
-# read by ``_build_builder_diagnostics`` (reason classification) and by
-# ``BuilderDiagnostics.format_for_llm`` (attribution). Defined here -- the leaf
-# module both sides already import -- so the writer and the two readers cannot
-# drift apart.
+# Sentinels for the two distinct builder failure modes, written by
+# ``WrappedFeatureBuilder.__call__`` and read by ``_build_builder_diagnostics``
+# (reason classification) and ``BuilderDiagnostics.format_for_llm``
+# (attribution). Defined here -- the leaf module both sides already import --
+# so the writer and the two readers cannot drift apart.
+#
+# 1. A trial-group build that crashed inside ``WrappedFeatureBuilder.__call__``
+#    (the exception path).
 BUILDER_EXCEPTION_REASON = "builder_exception"
 BUILDER_EXCEPTION_PREFIX = f"{BUILDER_EXCEPTION_REASON}:"
 BUILDER_EXCEPTION_RESEARCH_SENTINEL = "[builder_exception]"
+# Caps either builder reason string (the exception detail, or the LLM's own
+# explanation appended after ``BUILDER_OMITTED_PREFIX``).
 BUILDER_EXCEPTION_MSG_MAXLEN = 200
+
+# 2. A feature the Construct step never produced, after ``ResettingRefine``
+#    exhausted its retries. Distinct from ``BUILDER_EXCEPTION_*``: the builder
+#    did not crash, it researched the trial and then silently skipped this
+#    feature. Written by ``WrappedFeatureBuilder.__call__``'s omission fill.
+#    No research sentinel: research genuinely ran on this path and
+#    ``research_results`` keeps its real value.
+BUILDER_OMITTED_REASON = "builder_omitted"
+BUILDER_OMITTED_PREFIX = f"{BUILDER_OMITTED_REASON}:"
 
 
 @dataclass
@@ -189,10 +202,13 @@ class BuilderDiagnostics:
             #   crash: the feature idea was never actually tested, so it must not
             #   be charged to the RESEARCHER, and research_coverage is meaningless
             #   on that path (nothing was researched).
+            # - BUILDER, unconditionally, when the Construct LLM omitted the
+            #   feature after retries: research ran but the value was never
+            #   attempted, so again not evidence against the plan.
             # - RESEARCHER if very high none rate and low research coverage.
             # - BUILDER if moderate none rate but good research coverage.
             # - else UNCLEAR.
-            if fd.dominant_failure_reason == BUILDER_EXCEPTION_REASON:
+            if fd.dominant_failure_reason in (BUILDER_EXCEPTION_REASON, BUILDER_OMITTED_REASON):
                 attribution = "BUILDER"
             elif fd.none_rate > 0.8 and fd.research_coverage_score < 0.3:
                 attribution = "RESEARCHER"
@@ -206,10 +222,15 @@ class BuilderDiagnostics:
                 f"research_coverage={fd.research_coverage_score:.0%}, "
                 f"attribution={attribution}"
             )
-            # Add note for builder crashes
+            # Add note for builder crashes / omissions
             if fd.dominant_failure_reason == BUILDER_EXCEPTION_REASON:
                 line += (
                     " note=builder crashed; feature never evaluated, not evidence against the plan"
+                )
+            elif fd.dominant_failure_reason == BUILDER_OMITTED_REASON:
+                line += (
+                    " note=construct LLM omitted this feature; retries exhausted, "
+                    "not evidence against the plan"
                 )
             lines.append(line)
         return "\n".join(lines) if len(lines) > 1 else "All features have low None rates."

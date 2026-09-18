@@ -24,6 +24,8 @@ from sklearn.preprocessing import FunctionTransformer
 from ctra.agents.data_models import (
     BUILDER_EXCEPTION_PREFIX,
     BUILDER_EXCEPTION_REASON,
+    BUILDER_OMITTED_PREFIX,
+    BUILDER_OMITTED_REASON,
     AgentOutput,
     BuilderDiagnostics,
     EvalOutput,
@@ -133,14 +135,20 @@ def _build_builder_diagnostics(
         reason_categories: Counter[str] = Counter()
         for reason in reasons:
             r_lower = reason.lower()
-            # Checked first: the sentinel contains the word "exception" and the
-            # extraction_error branch below would swallow it, collapsing "the
-            # extractor produced nothing useful" into the same bucket as "the
-            # builder crashed and never ran". startswith (not `in`) so an
+            # Both sentinel arms are checked first: the exception sentinel
+            # contains the word "exception" and the extraction_error branch
+            # below would swallow it, collapsing "the extractor produced nothing
+            # useful" into the same bucket as "the builder crashed and never
+            # ran"; the omission sentinel carries the LLM's own explanation
+            # appended, which can contain any of the keywords the arms further
+            # down match on (a "builder_omitted: no data found" would otherwise
+            # be mis-attributed to the RESEARCHER). startswith (not `in`) so an
             # LLM-authored explanation that merely mentions a builder exception
-            # cannot impersonate the sentinel.
+            # or omission cannot impersonate either sentinel.
             if r_lower.startswith(BUILDER_EXCEPTION_PREFIX.lower()):
                 reason_categories[BUILDER_EXCEPTION_REASON] += 1
+            elif r_lower.startswith(BUILDER_OMITTED_PREFIX.lower()):
+                reason_categories[BUILDER_OMITTED_REASON] += 1
             elif any(
                 kw in r_lower for kw in ["insufficient", "no data", "not found", "unavailable"]
             ):
