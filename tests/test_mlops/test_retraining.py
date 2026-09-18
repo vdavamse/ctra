@@ -20,7 +20,8 @@ import pytest
 
 from ctra.config.settings import MCTSConfig
 from ctra.mlops.retraining import RetrainingPipeline
-from ctra.search.mcts import MCTSNode
+from ctra.search.mcts import MCTSNode, MCTSSearch
+from ctra.search.objectives import ObjectiveResult
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -63,6 +64,8 @@ def test_expand_fn_branch_factor_unchanged(tmp_path: Path, monkeypatch: pytest.M
 
     import ctra.search.mcts as mcts_module
 
+    # ``retrain`` imports ``MCTSSearch`` from the module at call time, so the
+    # recorder captures the real closure; the real class is bound above.
     monkeypatch.setattr(mcts_module, "MCTSSearch", _RecordingSearch)
 
     tracker = MagicMock()
@@ -94,6 +97,28 @@ def test_expand_fn_branch_factor_unchanged(tmp_path: Path, monkeypatch: pytest.M
         assert len(child_features) == len(features) - 1
         assert detail == f"remove:{removed}"
 
-    # The runner is the ObjectiveResult-returning evaluate_fn: no suggestion
-    # list is attached, so the issue #7 cap in ``_expand`` cannot apply.
-    assert not hasattr(captured["runner"], "get_best_eval_output")
+    # Run the real ``_expand`` cap against this pipeline's shape: the runner
+    # returns an ``ObjectiveResult`` (no suggestion list), so
+    # ``_suggestion_count`` is ``None`` and all four candidates survive.
+    search = MCTSSearch(
+        runner=captured["runner"],
+        task="retrain",
+        expand_fn=expand_fn,
+        config=config,
+    )
+    root = MCTSNode(features=list(features), total_reward=np.zeros(2))
+    root.eval_output = ObjectiveResult(
+        values=np.array([0.7, 0.9]),
+        names=["accuracy", "parsimony"],
+        details={},
+    )
+    root.visit_count = 1
+    search._root, search._all_nodes = root, [root]
+
+    children = search._expand(root)
+
+    assert search._suggestion_count(root) is None
+    assert len(children) == 4
+    assert [c.suggestion_index for c in children] == [0, 1, 2, 3]
+    assert [c.operation_detail for c in children] == [f"remove:{f}" for f in features[:4]]
+    assert not any(search._is_exhausted(c) for c in children)

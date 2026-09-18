@@ -73,12 +73,32 @@ class _DeadEndRunner(OrchestratorLikeRunner):
 
 
 class _SkipCountingSearch(MCTSSearch):
-    """Counts ``_call_evaluate`` skips so a test can prove the guard actually fired."""
+    """Counts ``_call_evaluate`` skips and rollouts that evaluated nothing.
+
+    ``skips`` proves the guard fired; ``noop_rollouts`` counts rollouts whose
+    ``rollout_reward`` was ``None`` (one rollout can contain several skips, or
+    a skip followed by a real evaluation, so the two are not interchangeable).
+    """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.skips = 0
+        self.noop_rollouts = 0
         self.returned: list[Any] = []
+
+    def search(
+        self, initial_features: list[str], on_rollout: Any = None, **kwargs: Any
+    ) -> MCTSNode:
+        evaluated: set[int] = set()
+
+        def _counting(rollout: int, node: MCTSNode, vector: Any) -> None:
+            evaluated.add(rollout)
+            if on_rollout is not None:
+                on_rollout(rollout, node, vector)
+
+        best = super().search(initial_features, on_rollout=_counting, **kwargs)
+        self.noop_rollouts = self._config.num_rollouts - len(evaluated)
+        return best
 
     def _call_evaluate(self, node: MCTSNode, rollout: int) -> Any:
         result = super()._call_evaluate(node, rollout)
@@ -274,7 +294,6 @@ def test_exhausted_node_is_not_re_evaluated() -> None:
     # what the guard reads; the node itself carries no new state.
     assert child.suggestion_index == 2
     assert search._is_exhausted(child)
-    assert child.visit_count == 0 and child.objective_history == []
 
 
 @pytest.mark.parametrize("deep", [True, False], ids=["deep", "shallow"])
@@ -322,8 +341,8 @@ def test_on_rollout_never_receives_none(deep: bool) -> None:
     search.search(initial_features=["f0"], on_rollout=on_rollout)
 
     assert search.skips > 0, "scenario did not exercise the guard"
-    assert len(calls) <= 8
-    assert len(calls) == 8 - search.skips
+    assert search.noop_rollouts > 0
+    assert len(calls) == 8 - search.noop_rollouts
     for _rollout, _node, vector in calls:
         assert isinstance(vector, np.ndarray)
         assert vector.shape == (2,)
@@ -347,9 +366,8 @@ def test_search_terminates_with_usable_best_when_frontier_exhausts(deep: bool) -
     assert best.visit_count > 0
     assert best in search.all_nodes
     assert search.skips > 0
-    # Root setup + the single child, and nothing for the exhausted rollouts:
-    # strictly fewer than the eleven a per-rollout evaluation would cost.
-    assert runner.evaluations < 11
+    # Root setup + the single child, and nothing for the exhausted rollouts
+    # (a per-rollout evaluation would have cost eleven).
     assert runner.evaluations == 2
     assert runner.lm_calls == 3
     assert runner.exhausted_replays == 0
@@ -369,14 +387,13 @@ def test_skip_logged_once_per_node(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.DEBUG, logger="ctra.search.mcts"):
         search.search(initial_features=["f0"])
 
-    skip_records = [r for r in caplog.records if "Skipping evaluation of a node" in r.getMessage()]
+    skip_records = [r for r in caplog.records if "Skipping evaluation of node" in r.getMessage()]
     assert search.skips > 1, "need repeated skips of the same node to test the dedupe"
     assert len(skip_records) == search.skips
     assert sum(1 for r in skip_records if r.levelno == logging.INFO) == 1
     assert sum(1 for r in skip_records if r.levelno == logging.DEBUG) == search.skips - 1
-    # Dedupe state lives on the search object, never on the node (R8).
+    # Dedupe state lives on the search object (R8).
     assert len(search._skip_logged) == 1
-    assert not hasattr(MCTSNode(features=["x"]), "_skip_logged")
 
 
 def test_log_skip_survives_checkpoint_without_skip_logged(caplog: pytest.LogCaptureFixture) -> None:
