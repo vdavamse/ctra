@@ -174,7 +174,12 @@ class TestCacheMissException:
         assert result_nctid == nctid
         # All sub-feature keys should be None
         assert result_values == {"feat_a": {"value": None}}
-        assert result_meta == {}
+        # Exception path now returns metadata with sentinels (not empty)
+        assert "research_results" in result_meta
+        assert result_meta["research_results"] == "[builder_exception]"
+        assert "none_feature_explanations" in result_meta
+        assert "feat_a" in result_meta["none_feature_explanations"]
+        assert result_meta["none_feature_explanations"]["feat_a"].startswith("builder_exception:")
 
     def test_multi_plan_exception_returns_all_none(
         self,

@@ -385,3 +385,196 @@ class TestResultAggregation:
         assert "NCT001" in raw_features
         assert "NCT002" in raw_features
         assert "NCT003" in raw_features
+
+
+class TestBuilderExceptionMetadata:
+    """Tests for builder exception metadata handling."""
+
+    def test_builder_exception_emits_none_explanations(self, tmp_path: Path) -> None:
+        """Builder exception should emit none_explanations with sentinel."""
+        from ctra.agents.data_models import BUILDER_EXCEPTION_PREFIX
+        from ctra.agents.feature_builder import WrappedFeatureBuilder
+
+        plans = {"feat_a": _make_plan("feat_a"), "feat_b": _make_plan("feat_b")}
+
+        with patch("ctra.agents.feature_builder.FeatureBuilder") as mock_builder_cls:
+            # Raise exception on builder call
+            mock_builder_cls.side_effect = RuntimeError("Test exception")
+
+            builder = WrappedFeatureBuilder(
+                task_description="test",
+                feature_store_dir=None,
+                feature_store_enabled=False,
+            )
+
+            nctid = "NCT001"
+            _, _, meta = builder((nctid, plans))
+
+            # Extract from meta (the third returned element from __call__)
+            none_feature_explanations = meta.get("none_feature_explanations", {})
+
+            # All uncached plans should have sentinel explanations
+            assert "feat_a" in none_feature_explanations
+            assert "feat_b" in none_feature_explanations
+            assert none_feature_explanations["feat_a"].startswith(BUILDER_EXCEPTION_PREFIX)
+            assert none_feature_explanations["feat_b"].startswith(BUILDER_EXCEPTION_PREFIX)
+            assert meta["research_results"] == "[builder_exception]"
+
+    def test_builder_exception_is_visible_to_diagnostics(self, tmp_path: Path) -> None:
+        """Builder exception should surface as builder_exception reason in diagnostics."""
+        from ctra.agents.feature_builder import WrappedFeatureBuilder
+        from ctra.agents.orchestrator import _build_builder_diagnostics
+
+        plans = {"feat_a": _make_plan("feat_a")}
+
+        with patch("ctra.agents.feature_builder.FeatureBuilder") as mock_builder_cls:
+            mock_builder_cls.side_effect = RuntimeError("Test exception")
+
+            builder = WrappedFeatureBuilder(
+                task_description="test",
+                feature_store_dir=None,
+                feature_store_enabled=False,
+            )
+
+            nctid = "NCT001"
+            _, _, meta = builder((nctid, plans))
+
+            none_explanations = {nctid: meta.get("none_feature_explanations", {})}
+            builder_meta = {nctid: meta}
+
+            # Build diagnostics
+            diagnostics = _build_builder_diagnostics(none_explanations, plans, builder_meta)
+
+            # Check the diagnostic for feat_a
+            diag = next(d for d in diagnostics.feature_diagnostics if d.feature_name == "feat_a")
+            assert diag.none_rate == 1.0
+            assert diag.dominant_failure_reason == "builder_exception"
+
+            # format_for_llm should not report as "All features have low None rates"
+            formatted = diagnostics.format_for_llm()
+            assert "All features have low None rates" not in formatted
+            assert "BUILDER" in formatted
+
+    def test_builder_exception_preserves_cached_siblings(self, tmp_path: Path) -> None:
+        """Exception on uncached features should not stamp exception metadata onto cached siblings."""
+        from ctra.agents.feature_builder import compute_features
+        from ctra.agents.feature_store import put_cached_feature
+
+        plans = {"feat_a": _make_plan("feat_a"), "feat_b": _make_plan("feat_b")}
+
+        # Pre-cache feat_a
+        feature_store_dir = tmp_path / "feature_store"
+        feature_store_dir.mkdir()
+
+        nctid = "NCT001"
+        nctids = [nctid]
+        put_cached_feature(
+            str(feature_store_dir),
+            "phase2",
+            nctid,
+            "feat_a",
+            plans["feat_a"],
+            {"feat_a": {"value": 1.5}},
+            metadata={"research_results": "cached"},
+        )
+
+        with patch("ctra.agents.feature_builder.FeatureBuilder") as mock_builder_cls:
+            # Raise on uncached plans
+            mock_builder_cls.side_effect = RuntimeError("Test exception")
+
+            # Use compute_features with a dummy grouper (will be overridden by single plan)
+            _, _, builder_meta = compute_features(
+                grouper=lambda feature_plans, task: [feature_plans],
+                nctids=nctids,
+                task_description="test",
+                plans=plans,
+                feature_store_dir=feature_store_dir,
+                task_namespace="phase2",
+                feature_store_enabled=True,
+            )
+
+            # feat_a (cached) should have "[cached]" sentinel, not exception metadata
+            assert builder_meta[nctid]["feat_a"]["research_results"] == "[cached]"
+            assert builder_meta[nctid]["feat_a"]["builder_reasoning"] == "[cached]"
+
+            # feat_b (failed) should have exception metadata
+            assert builder_meta[nctid]["feat_b"]["research_results"] == "[builder_exception]"
+            assert "builder_exception:" in builder_meta[nctid]["feat_b"]["builder_reasoning"]
+
+    def test_builder_exception_message_is_truncated(self, tmp_path: Path) -> None:
+        """Long exception messages should be truncated to BUILDER_EXCEPTION_MSG_MAXLEN."""
+        from ctra.agents.data_models import (
+            BUILDER_EXCEPTION_MSG_MAXLEN,
+            BUILDER_EXCEPTION_PREFIX,
+        )
+        from ctra.agents.feature_builder import WrappedFeatureBuilder
+
+        plans = {"feat_a": _make_plan("feat_a")}
+
+        with patch("ctra.agents.feature_builder.FeatureBuilder") as mock_builder_cls:
+            # Create a very long exception message
+            long_msg = "X" * 5000
+            mock_builder_cls.side_effect = RuntimeError(long_msg)
+
+            builder = WrappedFeatureBuilder(
+                task_description="test",
+                feature_store_dir=None,
+                feature_store_enabled=False,
+            )
+
+            _, _, meta = builder(("NCT001", plans))
+
+            reason = meta.get("none_feature_explanations", {}).get("feat_a", "")
+            # Reason format: f"{BUILDER_EXCEPTION_PREFIX} {detail}" where detail is
+            # "RuntimeError: " + message, truncated to MAXLEN - 3 chars plus "...".
+            assert reason.endswith("...")
+            # Exact length: prefix + one space + MAXLEN (truncation is deterministic).
+            expected_length = len(BUILDER_EXCEPTION_PREFIX) + 1 + BUILDER_EXCEPTION_MSG_MAXLEN
+            assert len(reason) == expected_length
+
+    def test_builder_exception_reason_names_the_exception_type(self, tmp_path: Path) -> None:
+        """Exception type name should be included in the reason."""
+        from ctra.agents.feature_builder import WrappedFeatureBuilder
+
+        plans = {"feat_a": _make_plan("feat_a")}
+
+        with patch("ctra.agents.feature_builder.FeatureBuilder") as mock_builder_cls:
+            mock_builder_cls.side_effect = ValueError("Test value error")
+
+            builder = WrappedFeatureBuilder(
+                task_description="test",
+                feature_store_dir=None,
+                feature_store_enabled=False,
+            )
+
+            _, _, meta = builder(("NCT001", plans))
+
+            reason = meta.get("none_feature_explanations", {}).get("feat_a", "")
+            assert "ValueError" in reason
+
+    def test_builder_exception_writes_nothing_to_the_store(self, tmp_path: Path) -> None:
+        """Exception path should not write to feature store (no negative caching)."""
+        from ctra.agents.feature_builder import WrappedFeatureBuilder
+        from ctra.agents.feature_store import get_cached_feature
+
+        plans = {"feat_a": _make_plan("feat_a")}
+        feature_store_dir = tmp_path / "feature_store"
+        feature_store_dir.mkdir()
+
+        with patch("ctra.agents.feature_builder.FeatureBuilder") as mock_builder_cls:
+            mock_builder_cls.side_effect = RuntimeError("Test exception")
+
+            builder = WrappedFeatureBuilder(
+                task_description="test",
+                feature_store_dir=feature_store_dir,
+                task_namespace="phase2",
+                feature_store_enabled=True,
+            )
+
+            _, _, _ = builder(("NCT001", plans))
+
+            # Check that no feature store entry was created using get_cached_feature
+            cached = get_cached_feature(
+                str(feature_store_dir), "phase2", "NCT001", "feat_a", plans["feat_a"]
+            )
+            assert cached is None

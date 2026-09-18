@@ -24,7 +24,13 @@ from typing import TYPE_CHECKING, Any
 import dspy
 import numpy as np
 
-from ctra.agents.data_models import FeaturePlan, FeatureType
+from ctra.agents.data_models import (
+    BUILDER_EXCEPTION_MSG_MAXLEN,
+    BUILDER_EXCEPTION_PREFIX,
+    BUILDER_EXCEPTION_RESEARCH_SENTINEL,
+    FeaturePlan,
+    FeatureType,
+)
 from ctra.agents.feature_store import (
     get_cached_feature,
     get_cached_features_batch,
@@ -305,8 +311,8 @@ class WrappedFeatureBuilder:
     to FeatureBuilder. After a successful build, each freshly built feature
     is persisted individually.
 
-    On exception, returns all-None values (unchanged contract). No store
-    writes on the failure path — no negative caching.
+    On exception, returns all-None values and sentinel metadata documenting
+    the crash. No store writes on the failure path — no negative caching.
     """
 
     def __init__(
@@ -399,11 +405,29 @@ class WrappedFeatureBuilder:
             logger.warning("Failed to build features for %s: %s", nctid, e)
             traceback.print_exc()
             # All uncached plans come back as None. Cached values are still
-            # returned — they are independent successful builds.
+            # returned -- they are independent successful builds.
             all_none = {
                 k: {kk: None for kk in uncached_plans[k].feature_type} for k in uncached_plans
             }
-            return (nctid, {**cached_values, **all_none}, {})
+            # Report the crash instead of returning empty metadata. ``none_rate``
+            # in _build_builder_diagnostics counts membership in the explanation
+            # map, so a feature that crashed on *every* trial used to report
+            # none_rate=0.0 and be dropped by format_for_llm as healthy. Mirrors
+            # the "[cached]" rehydration in compute_features: a sentinel entry
+            # keeps the feature visible instead of erasing it.
+            detail = f"{type(e).__name__}: {e}"
+            if len(detail) > BUILDER_EXCEPTION_MSG_MAXLEN:
+                detail = detail[: BUILDER_EXCEPTION_MSG_MAXLEN - 3] + "..."
+            reason = f"{BUILDER_EXCEPTION_PREFIX} {detail}"
+            return (
+                nctid,
+                {**cached_values, **all_none},
+                {
+                    "research_results": BUILDER_EXCEPTION_RESEARCH_SENTINEL,
+                    "builder_reasoning": reason,
+                    "none_feature_explanations": dict.fromkeys(uncached_plans, reason),
+                },
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -436,6 +460,7 @@ def compute_features(
         - ``raw_features``: ``{nctid: {feature: {sub: val}}}``
         - ``none_explanations``: ``{nctid: {feature: reason}}``
         - ``builder_metadata``: ``{nctid: {feature: {research_results, builder_reasoning}}}``
+          where ``research_results`` may carry ``"[cached]"`` or ``"[builder_exception]"`` sentinels.
     """
     # Group features (skip grouping for single plan)
     if len(plans) == 1:
@@ -540,12 +565,24 @@ def compute_features(
         none_feature_reasons[nctid] = none_feature_reasons[nctid] | metadata.get(
             "none_feature_explanations", {}
         )
-        # Preserve per-feature builder metadata for diagnostic analysis
+        # Preserve per-feature builder metadata for diagnostic analysis.
+        # When the builder crashed (exception sentinel), only stamp exception metadata
+        # on the features that actually failed; give cached siblings the "[cached]" sentinel.
+        is_exception = metadata.get("research_results") == BUILDER_EXCEPTION_RESEARCH_SENTINEL
+        crashed_features = (
+            set(metadata.get("none_feature_explanations", {})) if is_exception else set()
+        )
+        group_meta = {
+            "research_results": metadata.get("research_results", ""),
+            "builder_reasoning": metadata.get("builder_reasoning", ""),
+        }
+        cached_meta = {"research_results": "[cached]", "builder_reasoning": "[cached]"}
         builder_meta[nctid] = builder_meta[nctid] | {
-            feat_name: {
-                "research_results": metadata.get("research_results", ""),
-                "builder_reasoning": metadata.get("builder_reasoning", ""),
-            }
+            feat_name: (
+                dict(cached_meta)
+                if is_exception and feat_name not in crashed_features
+                else dict(group_meta)
+            )
             for feat_name in feature_values
         }
 

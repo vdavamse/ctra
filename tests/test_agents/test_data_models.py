@@ -325,3 +325,109 @@ class TestTask:
         assert Task.TRIAL_OUTCOME_PHASE_1.output_subdir == "phase1"
         assert Task.TRIAL_OUTCOME_PHASE_2.output_subdir == "phase2"
         assert Task.TRIAL_OUTCOME_PHASE_3.output_subdir == "phase3"
+
+
+class TestBuilderDiagnosticsAttribution:
+    """Tests for builder exception attribution in format_for_llm.
+
+    Note: the three legacy attribution cases (RESEARCHER, BUILDER, UNCLEAR)
+    are already covered at test_shapiq_helpers.py:210-244. These tests
+    focus on the new builder_exception override only.
+    """
+
+    def test_builder_exception_beats_researcher_heuristic(self) -> None:
+        """Builder exception should override RESEARCHER heuristic."""
+        from ctra.agents.data_models import BuilderDiagnostics, FeatureDiagnostic
+
+        fd = FeatureDiagnostic(
+            feature_name="feat",
+            none_rate=1.0,
+            dominant_failure_reason="builder_exception",
+            research_coverage_score=0.0,
+        )
+        diag = BuilderDiagnostics(feature_diagnostics=[fd])
+        formatted = diag.format_for_llm()
+
+        # Without the override, this would be RESEARCHER (high none_rate + low coverage)
+        assert "attribution=BUILDER" in formatted
+        # Should include note about crash
+        assert "note=builder crashed" in formatted
+
+    def test_builder_exception_beats_unclear_heuristic(self) -> None:
+        """Builder exception should override UNCLEAR heuristic."""
+        from ctra.agents.data_models import BuilderDiagnostics, FeatureDiagnostic
+
+        fd = FeatureDiagnostic(
+            feature_name="feat",
+            none_rate=0.5,
+            dominant_failure_reason="builder_exception",
+            research_coverage_score=0.1,
+        )
+        diag = BuilderDiagnostics(feature_diagnostics=[fd])
+        formatted = diag.format_for_llm()
+
+        # Without the override, this would be UNCLEAR (moderate none_rate + low coverage)
+        assert "attribution=BUILDER" in formatted
+
+    def test_attribution_vocabulary_unchanged(self) -> None:
+        """All emitted attributions must be in {RESEARCHER, BUILDER, UNCLEAR}."""
+        import re
+
+        from ctra.agents.data_models import BuilderDiagnostics, FeatureDiagnostic
+
+        # Test cases: (none_rate, research_coverage, reason, expected_attribution)
+        test_cases = [
+            # builder_exception overrides all heuristics -> BUILDER
+            (0.9, 0.1, "builder_exception", "BUILDER"),
+            # High none_rate + low coverage -> RESEARCHER
+            (0.9, 0.1, "extraction_error", "RESEARCHER"),
+            # Moderate none_rate + good coverage -> BUILDER
+            (0.5, 0.6, "insufficient_data", "BUILDER"),
+            # Moderate none_rate + low coverage -> UNCLEAR
+            (0.3, 0.2, "ambiguity", "UNCLEAR"),
+            # Low none_rate + medium coverage -> UNCLEAR
+            (0.4, 0.5, "other", "UNCLEAR"),
+            # Low none_rate + low coverage -> UNCLEAR
+            (0.1, 0.1, "insufficient_data", "UNCLEAR"),
+        ]
+
+        valid_attributions = {"RESEARCHER", "BUILDER", "UNCLEAR"}
+
+        for i, (none_rate, coverage, reason, expected) in enumerate(test_cases):
+            fd = FeatureDiagnostic(
+                feature_name=f"feat_{i}",
+                none_rate=none_rate,
+                dominant_failure_reason=reason,
+                research_coverage_score=coverage,
+            )
+            diag = BuilderDiagnostics(feature_diagnostics=[fd])
+            formatted = diag.format_for_llm()
+
+            feat_key = f"feat_{i}"
+            if f"**{feat_key}**" not in formatted:
+                # Feature was skipped due to none_rate < 0.05
+                continue
+
+            # Extract all attribution values from formatted output
+            emitted = re.findall(r"attribution=(\w+)", formatted)
+            assert emitted == [expected], f"Expected {[expected]}, got {emitted} in: {formatted}"
+            # Verify only valid attributions are used
+            assert set(emitted) <= valid_attributions
+
+    def test_low_rate_builder_exception_is_still_skipped(self) -> None:
+        """Builder exception with none_rate < 0.05 should still be skipped."""
+        from ctra.agents.data_models import BuilderDiagnostics, FeatureDiagnostic
+
+        fd = FeatureDiagnostic(
+            feature_name="myfeature",
+            none_rate=0.02,
+            dominant_failure_reason="builder_exception",
+            research_coverage_score=1.0,
+        )
+        diag = BuilderDiagnostics(feature_diagnostics=[fd])
+        formatted = diag.format_for_llm()
+
+        # Should report the default message
+        assert "All features have low None rates" in formatted
+        # Should not contain the specific feature (use ** markers to identify features in the output)
+        assert "**myfeature**" not in formatted

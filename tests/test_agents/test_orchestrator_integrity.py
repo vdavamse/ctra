@@ -138,9 +138,7 @@ class TestEmptyEvalOutputs:
         from ctra.agents.orchestrator import Agent
 
         # Bypass the Refine wrapper
-        monkeypatch.setattr(
-            "ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module
-        )
+        monkeypatch.setattr("ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module)
 
         mock_orchestrator_settings = MagicMock()
         mock_orchestrator_settings.mcts.feature_cache_dir = "/tmp/test_cache"
@@ -199,9 +197,7 @@ class TestNoneExplanationsCoverage:
         """none_explanations from training set should be included in AgentOutput."""
         from ctra.agents.orchestrator import Agent
 
-        monkeypatch.setattr(
-            "ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module
-        )
+        monkeypatch.setattr("ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module)
 
         mock_orchestrator_settings = MagicMock()
         mock_orchestrator_settings.mcts.feature_cache_dir = "/tmp/test_cache"
@@ -282,9 +278,7 @@ class TestNoneExplanationsCoverage:
         """none_explanations from test set should be included in AgentOutput."""
         from ctra.agents.orchestrator import Agent
 
-        monkeypatch.setattr(
-            "ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module
-        )
+        monkeypatch.setattr("ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module)
 
         mock_orchestrator_settings = MagicMock()
         mock_orchestrator_settings.mcts.feature_cache_dir = "/tmp/test_cache"
@@ -369,9 +363,7 @@ class TestIterNDiagnosticsPreservation:
         from ctra.agents.data_models import FeatureOp, ProposerOutput
         from ctra.agents.orchestrator import Agent
 
-        monkeypatch.setattr(
-            "ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module
-        )
+        monkeypatch.setattr("ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module)
 
         mock_orchestrator_settings = MagicMock()
         mock_orchestrator_settings.mcts.feature_cache_dir = "/tmp/test_cache"
@@ -588,9 +580,7 @@ class TestIterNDiagnosticsPreservation:
         """Helper: build a fully-mocked Agent for iter-N tests."""
         from ctra.agents.orchestrator import Agent
 
-        monkeypatch.setattr(
-            "ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module
-        )
+        monkeypatch.setattr("ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module)
 
         mock_orchestrator_settings = MagicMock()
         mock_orchestrator_settings.mcts.feature_cache_dir = "/tmp/test_cache"
@@ -816,3 +806,150 @@ class TestModelFailurePerClassifier:
         )
         clf = ModelRegistry.create_classifier(ClassifierType.XGBOOST, config=config)
         assert type(clf).__name__ == "XGBClassifier"
+
+
+class TestBuilderExceptionDiagnostics:
+    """Tests for builder exception diagnostics.
+
+    Note: the three legacy attribution cases (RESEARCHER, BUILDER, UNCLEAR)
+    are already covered at test_shapiq_helpers.py:210-244. These tests
+    focus on the new builder_exception path only.
+    """
+
+    def test_all_exception_feature_is_not_reported_healthy(self) -> None:
+        """Feature with all-exception none_explanations should be visible."""
+        from ctra.agents.orchestrator import _build_builder_diagnostics
+
+        plans = {"feat_a": _make_plan("feat_a")}
+
+        # All 10 trials have exception
+        none_explanations = {
+            f"NCT{i:03d}": {"feat_a": "builder_exception: RuntimeError: Test exception"}
+            for i in range(10)
+        }
+
+        builder_meta = {
+            f"NCT{i:03d}": {
+                "feat_a": {
+                    "research_results": "[builder_exception]",
+                    "builder_reasoning": "builder_exception: RuntimeError: Test",
+                }
+            }
+            for i in range(10)
+        }
+
+        diagnostics = _build_builder_diagnostics(none_explanations, plans, builder_meta)
+        diag = next(d for d in diagnostics.feature_diagnostics if d.feature_name == "feat_a")
+
+        assert diag.none_rate == 1.0
+        assert diag.dominant_failure_reason == "builder_exception"
+
+        # format_for_llm must NOT report as "All features have low None rates"
+        formatted = diagnostics.format_for_llm()
+        assert "All features have low None rates" not in formatted
+        assert "BUILDER" in formatted
+
+    def test_builder_exception_not_folded_into_extraction_error(self) -> None:
+        """Builder exception sentinel should not fold into extraction_error."""
+        from ctra.agents.orchestrator import _build_builder_diagnostics
+
+        plans = {"feat_a": _make_plan("feat_a"), "feat_b": _make_plan("feat_b")}
+
+        # One feature with sentinel, one with plain error
+        none_explanations = {
+            "NCT001": {
+                "feat_a": "builder_exception: RuntimeError: Crash",
+                "feat_b": "API call failed with timeout exception",
+            }
+        }
+        builder_meta = {
+            "NCT001": {
+                "feat_a": {"research_results": "[builder_exception]"},
+                "feat_b": {"research_results": ""},
+            }
+        }
+
+        diagnostics = _build_builder_diagnostics(none_explanations, plans, builder_meta)
+
+        diag_a = next(d for d in diagnostics.feature_diagnostics if d.feature_name == "feat_a")
+        diag_b = next(d for d in diagnostics.feature_diagnostics if d.feature_name == "feat_b")
+
+        assert diag_a.dominant_failure_reason == "builder_exception"
+        assert diag_b.dominant_failure_reason == "extraction_error"
+
+    def test_dominant_reason_follows_the_majority(self) -> None:
+        """Dominant reason should be the most common category."""
+        from ctra.agents.orchestrator import _build_builder_diagnostics
+
+        plans = {"feat_a": _make_plan("feat_a")}
+
+        # 7 insufficient_data, 3 builder_exception
+        none_explanations = {}
+        for i in range(7):
+            none_explanations[f"NCT{i:03d}"] = {"feat_a": "No data found in PubMed"}
+        for i in range(7, 10):
+            none_explanations[f"NCT{i:03d}"] = {"feat_a": "builder_exception: RuntimeError: Test"}
+
+        builder_meta = {nctid: {} for nctid in none_explanations}
+
+        diagnostics = _build_builder_diagnostics(none_explanations, plans, builder_meta)
+        diag = next(d for d in diagnostics.feature_diagnostics if d.feature_name == "feat_a")
+
+        # Majority should win
+        assert diag.dominant_failure_reason == "insufficient_data"
+
+        # Now test the reverse: 7 builder_exception, 3 insufficient_data
+        none_explanations = {}
+        for i in range(7):
+            none_explanations[f"NCT{i:03d}"] = {"feat_a": "builder_exception: RuntimeError: Test"}
+        for i in range(7, 10):
+            none_explanations[f"NCT{i:03d}"] = {"feat_a": "No data found in PubMed"}
+
+        builder_meta = {nctid: {} for nctid in none_explanations}
+
+        diagnostics = _build_builder_diagnostics(none_explanations, plans, builder_meta)
+        diag = next(d for d in diagnostics.feature_diagnostics if d.feature_name == "feat_a")
+
+        assert diag.dominant_failure_reason == "builder_exception"
+
+    def test_partial_exception_reports_partial_none_rate(self) -> None:
+        """4 of 10 trials with exception should yield none_rate=0.4."""
+        from ctra.agents.orchestrator import _build_builder_diagnostics
+
+        plans = {"feat_a": _make_plan("feat_a")}
+
+        # 4 exceptions, 6 successful
+        none_explanations = {}
+        for i in range(4):
+            none_explanations[f"NCT{i:03d}"] = {"feat_a": "builder_exception: RuntimeError: Test"}
+        # Trials 4-9 have no explanation (successful)
+
+        builder_meta = {f"NCT{i:03d}": {} for i in range(10)}
+
+        diagnostics = _build_builder_diagnostics(none_explanations, plans, builder_meta)
+        diag = next(d for d in diagnostics.feature_diagnostics if d.feature_name == "feat_a")
+
+        assert diag.none_rate == 0.4
+        assert diag.dominant_failure_reason == "builder_exception"
+
+    def test_lookalike_explanation_does_not_impersonate_the_sentinel(self) -> None:
+        """Lookalike containing 'builder_exception:' should not impersonate if not prefixed."""
+        from ctra.agents.orchestrator import _build_builder_diagnostics
+
+        plans = {"feat_a": _make_plan("feat_a")}
+
+        # An explanation that contains "builder_exception:" but does NOT start with it.
+        # Our check uses startswith(), so this should NOT be classified as builder_exception.
+        none_explanations = {
+            "NCT001": {
+                "feat_a": "See logs: builder_exception: may have occurred during rehydration"
+            }
+        }
+        builder_meta = {"NCT001": {}}
+
+        diagnostics = _build_builder_diagnostics(none_explanations, plans, builder_meta)
+        diag = next(d for d in diagnostics.feature_diagnostics if d.feature_name == "feat_a")
+
+        # Should classify as extraction_error (contains "exception"), NOT builder_exception
+        # because it doesn't START with the sentinel prefix
+        assert diag.dominant_failure_reason == "extraction_error"
