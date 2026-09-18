@@ -1,11 +1,14 @@
 """Shared test fixtures for MCTS search tests.
 
 Provides ``make_stub_runner`` to wrap simple ``(features -> objectives)``
-functions into the runner protocol expected by ``MCTSSearch``.
+functions into the runner protocol expected by ``MCTSSearch``, and
+``make_orchestrator_like_runner`` for tests that need the runner to honour
+``suggestion_index`` the way ``Agent.forward`` does (issue #7).
 """
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -135,3 +138,77 @@ def make_stub_runner(
         return make_stub_output(features, roc_auc, suggestions)
 
     return runner
+
+
+class OrchestratorLikeRunner:
+    """Runner that mimics ``Agent.forward``'s iter-N contract.
+
+    ``make_stub_runner`` hard-codes ``suggestion_index=0`` on every output and
+    ignores the index it is handed, so no test built on it can ever *reach*
+    suggestion exhaustion.  This runner keeps the counter honest:
+
+    - ``previous_output is None`` -> fresh root output at ``suggestion_index=0``.
+    - exhausted input -> early skip (``orchestrator.py:365``): returns
+      ``deepcopy(previous_output)`` unchanged, zero LM calls.
+    - otherwise -> the always-invalid-proposer path: ``lm_calls += 3`` (the
+      N=3 ``Refine`` attempts) and the returned output advances
+      ``suggestion_index`` by one, as ``forward`` does on a skipped iteration.
+
+    Counters: ``evaluations`` (runner invocations), ``lm_calls``,
+    ``exhausted_replays`` (invocations whose input was already exhausted —
+    work the search layer should never have sent), ``seen_indices`` (the
+    ``suggestion_index`` of every non-root input, in call order).
+    """
+
+    def __init__(
+        self,
+        suggestions: list[str],
+        *,
+        roc_auc: float = 0.7,
+        initial_features: list[str],
+    ) -> None:
+        self.suggestions = list(suggestions)
+        self.roc_auc = roc_auc
+        self.initial_features = list(initial_features)
+        self.evaluations = 0
+        self.lm_calls = 0
+        self.exhausted_replays = 0
+        self.seen_indices: list[int] = []
+
+    def __call__(self, node_id: str, task: Any, previous_output: AgentOutput | None) -> AgentOutput:
+        self.evaluations += 1
+        if previous_output is None:
+            return make_stub_output(self.initial_features, self.roc_auc, list(self.suggestions))
+
+        self.seen_indices.append(previous_output.suggestion_index)
+        if previous_output.suggestions_exhausted:
+            self.exhausted_replays += 1
+            return deepcopy(previous_output)
+
+        self.lm_calls += 3
+        features = list(previous_output.feature_plans.keys()) or list(self.initial_features)
+        output = make_stub_output(features, self.roc_auc, list(self.suggestions))
+        return output._replace(suggestion_index=previous_output.suggestion_index + 1)
+
+
+def make_orchestrator_like_runner(
+    suggestions: list[str] | None = None,
+    *,
+    roc_auc: float = 0.7,
+    initial_features: list[str] | None = None,
+) -> OrchestratorLikeRunner:
+    """Build an ``OrchestratorLikeRunner`` (see its docstring).
+
+    Parameters:
+        suggestions: The evaluator's suggestion list carried by every output.
+            Defaults to two entries so exhaustion is reachable in a handful
+            of rollouts.
+        roc_auc: ROC-AUC reported by every output (constant, so the reward
+            vector cannot hide a duplicate backpropagation behind noise).
+        initial_features: Features for the root node.
+    """
+    return OrchestratorLikeRunner(
+        suggestions if suggestions is not None else ["Suggestion 0", "Suggestion 1"],
+        roc_auc=roc_auc,
+        initial_features=initial_features or ["base"],
+    )

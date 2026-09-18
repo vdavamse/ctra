@@ -186,7 +186,10 @@ class MCTSSearch:
         task: Task identifier forwarded to the runner (e.g. ``Task.TRIAL_OUTCOME_PHASE_2``
             or ``"phase2"``).
         expand_fn: Optional override for child generation. Default reads suggestions
-            from ``node.eval_output`` to generate candidates.
+            from ``node.eval_output`` to generate candidates.  Candidates beyond the
+            parent's suggestion count are dropped when the parent output is an
+            ``AgentOutput`` with suggestions (issue #7): each child's
+            ``suggestion_index`` must index that list.
         config: MCTS configuration override.
     """
 
@@ -214,6 +217,13 @@ class MCTSSearch:
         self._expand_fn = expand_fn or self._suggestion_expand
         self._root: MCTSNode | None = None
         self._all_nodes: list[MCTSNode] = []
+        # Issue #7: nodes whose exhaustion skip has already been logged at INFO.
+        # Read via ``getattr(self, "_skip_logged", None)`` in ``_log_skip`` so
+        # checkpoints pickled before this attribute existed still resume.
+        self._skip_logged: set[int] = set()
+        # Issue #7: once-per-search INFO markers, also ``getattr``-guarded.
+        self._frontier_logged = False
+        self._truncation_logged = False
 
         # Resolve the number of objectives from config
         self._n_objectives = len(self._config.objectives)
@@ -251,7 +261,11 @@ class MCTSSearch:
             initial_features: Starting feature set (from initial proposal).
             on_rollout: Optional callback ``(rollout_idx, node, objective_vector) -> None``
                 called after each rollout's backpropagation. Useful for progress
-                bars, logging, and checkpointing.
+                bars, logging, and checkpointing.  It is **not** invoked for a
+                rollout that evaluated nothing (the selected node and its children
+                were exhausted, issue #7) — the tree state is unchanged, so a
+                periodic checkpoint keyed on the rollout index may land one
+                interval later and a progress bar may end short of ``total``.
             start_rollout: Resume from this rollout index. When > 0, root evaluation is
                 skipped (assumed restored from checkpoint).
 
@@ -269,12 +283,20 @@ class MCTSSearch:
 
             # Evaluate root
             root_obj = self._call_evaluate(self._root, rollout=0)
+            # The root has no parent output, so it can never be exhausted.
+            if root_obj is None:
+                raise RuntimeError("root evaluation returned no objective")
             self._root.total_reward = root_obj.copy()
             self._root.visit_count = 1
             self._root.objective_history.append(self._wrap_result(root_obj))
         else:
             # Resuming: root and previous nodes already restored
             assert self._root is not None, "Cannot resume: no root node. Load checkpoint first."
+            # Issue #7: the pickled dedupe set holds ``id()`` values from the
+            # previous process.  A fresh node can collide with one of them and
+            # have its first skip logged at DEBUG (a missing line), so start
+            # clean — one INFO line per node per process is the contract.
+            self._skip_logged = set()
 
         logger.info(
             "MCTS starting: %d initial features, %d rollouts planned (from %d)",
@@ -294,24 +316,49 @@ class MCTSSearch:
             node = self._select(self._root)
 
             # 2. EXPAND — generate children from feature operations
+            all_children_exhausted = False
             if node.visit_count > 0 and len(node.features) > 0:
                 children = self._expand(node)
                 if children:
-                    node = children[0]  # pick first unvisited child
+                    # Issue #7 (R6): pick the first child that can still make
+                    # progress.  With the expansion cap this is ``children[0]``
+                    # in every current scenario — children are born capped in
+                    # this same rollout — so the empty branch is unreachable
+                    # today; it covers a predicate or expander change that
+                    # could exhaust fresh children.  Re-evaluating the visited
+                    # leaf instead would be a pointless subprocess, so the
+                    # rollout ends with no evaluation.
+                    viable = [c for c in children if not self._is_exhausted(c)]
+                    if viable:
+                        node = viable[0]
+                    else:
+                        logger.info(
+                            "Rollout %d: every child of the selected leaf is exhausted (issue #7)",
+                            rollout + 1,
+                        )
+                        all_children_exhausted = True
 
             # 3. SIMULATE + 4. BACKPROPAGATE
             try:
-                if self._config.deep_simulation:
+                if all_children_exhausted:
+                    rollout_reward = None
+                elif self._config.deep_simulation:
                     best_obj, _best_node = self._simulate_deep(node, rollout)
                     # Backpropagation is handled inside _simulate_deep
-                    # for each node on the deep path.
+                    # for each node on the deep path.  ``None`` = the whole
+                    # path was exhausted (issue #7): nothing was evaluated.
                     rollout_reward = best_obj
                 else:
                     # Shallow mode: evaluate only this single node
                     obj_vector = self._call_evaluate(node, rollout=rollout)
-                    node.objective_history.append(self._wrap_result(obj_vector))
-                    self._backpropagate(node, obj_vector)
-                    rollout_reward = obj_vector
+                    if obj_vector is None:
+                        # Issue #7 (R7): a skipped evaluation has no reward to
+                        # record — no history entry, no backprop, no visit.
+                        rollout_reward = None
+                    else:
+                        node.objective_history.append(self._wrap_result(obj_vector))
+                        self._backpropagate(node, obj_vector)
+                        rollout_reward = obj_vector
             except Exception:
                 logger.warning(
                     "Rollout %d failed, skipping",
@@ -329,7 +376,28 @@ class MCTSSearch:
             )
 
             # Per-rollout callback (for checkpointing, progress bars, etc.)
-            if on_rollout is not None:
+            if rollout_reward is None:
+                # Issue #7 (R9): scripts/train_mcts.py indexes
+                # objective_vector[0]/[1]; a skipped rollout has no vector to
+                # hand it, so the callback (and its checkpoint) is skipped too.
+                logger.debug(
+                    "Rollout %d ended without an evaluation: the selected node and its "
+                    "children are exhausted (issue #7)",
+                    rollout + 1,
+                )
+                if not node.children and not getattr(self, "_frontier_logged", False):
+                    # Nothing left to expand anywhere on this path.  Say so once;
+                    # the remaining rollouts still run (``num_rollouts`` is a
+                    # contract) but are no-ops until the frontier changes.
+                    self._frontier_logged = True
+                    logger.info(
+                        "Rollout %d: search frontier is exhausted — the remaining %d "
+                        "rollouts will be no-ops unless selection reaches an "
+                        "unexhausted node (issue #7)",
+                        rollout + 1,
+                        self._config.num_rollouts - rollout - 1,
+                    )
+            elif on_rollout is not None:
                 on_rollout(rollout, node, rollout_reward)
 
         # Return best node
@@ -408,6 +476,23 @@ class MCTSSearch:
 
         candidates = self._expand_fn(node, max_children=branch_factor)
 
+        # Issue #7 (R2): ``suggestion_index=i`` below indexes the *parent's*
+        # suggestion list, but a custom ``expand_fn`` knows nothing about that
+        # list and returns up to ``branch_factor`` candidates
+        # (``mlops/retraining.py:156-171`` and ten test modules do exactly
+        # this).  Cap the candidate count so no child is born past the end.
+        # The default ``_suggestion_expand`` already slices
+        # ``suggestions[:max_children]``, so this is a no-op for it.
+        n_suggestions = self._suggestion_count(node)
+        if n_suggestions is not None and len(candidates) > n_suggestions:
+            msg = "Expansion truncated to the suggestion list: %d candidates -> %d (issue #7)"
+            if getattr(self, "_truncation_logged", False):
+                logger.debug(msg, len(candidates), n_suggestions)
+            else:
+                self._truncation_logged = True
+                logger.warning(msg, len(candidates), n_suggestions)
+            candidates = candidates[:n_suggestions]
+
         children: list[MCTSNode] = []
         for i, (features, operation, detail) in enumerate(candidates):
             child = MCTSNode(
@@ -431,7 +516,9 @@ class MCTSSearch:
         )
         return children
 
-    def _simulate_deep(self, start_node: MCTSNode, rollout: int) -> tuple[NDArray[Any], MCTSNode]:
+    def _simulate_deep(
+        self, start_node: MCTSNode, rollout: int
+    ) -> tuple[NDArray[Any] | None, MCTSNode]:
         """Phase 3 (deep mode) — SIMULATION: run a full rollout from start_node down to max_depth.
 
         This is the AutoCT-style "deep simulation" used when
@@ -458,8 +545,11 @@ class MCTSSearch:
 
         Returns:
             Tuple of (best_obj, best_node) where:
-                - best_obj: Objective vector of the best node found on the path.
-                - best_node: The corresponding tree node.
+                - best_obj: Objective vector of the best node found on the path,
+                  or ``None`` when nothing on the path could be evaluated
+                  because every candidate was exhausted (issue #7).
+                - best_node: The corresponding tree node (``start_node`` when
+                  ``best_obj`` is ``None``).
         """
         rng = np.random.default_rng(rollout)
         current = start_node
@@ -472,15 +562,29 @@ class MCTSSearch:
 
         # Evaluate start node and backpropagate
         start_obj = self._call_evaluate(current, rollout=rollout)
-        current.objective_history.append(self._wrap_result(start_obj))
-        self._backpropagate(current, start_obj)
-
-        best_obj = start_obj
-        best_hv = self._point_hypervolume(best_obj)
         best_node = current
+        if start_obj is None:
+            # Issue #7: nothing was evaluated — no history entry, no backprop,
+            # no visit increment (R7).  A later child on this path may still win.
+            best_obj: NDArray[Any] | None = None
+            best_hv = -np.inf
+            nodes_evaluated = 0
+        else:
+            current.objective_history.append(self._wrap_result(start_obj))
+            self._backpropagate(current, start_obj)
+            best_obj = start_obj
+            best_hv = self._point_hypervolume(start_obj)
+            nodes_evaluated = 1
+
+        if start_obj is None and current.eval_output is None:
+            # Never evaluated: nothing to expand from.  Expanding here would
+            # hand every child ``previous_output=None`` — a root-style fresh
+            # initialization mid-tree (a full initializer subprocess on the
+            # real pipeline).  A skipped node that *was* evaluated earlier
+            # still carries its own output and may expand below.
+            return None, current
 
         depth = self._node_depth(current)
-        nodes_evaluated = 1
 
         while depth < self._config.max_depth:
             # Expand current node if not already expanded
@@ -491,16 +595,37 @@ class MCTSSearch:
             elif not current.children:
                 break
 
+            # Issue #7 (decision 2): a child whose suggestion_index is past the
+            # parent's suggestions can only replay a rejected suggestion.
+            # Filter before picking, so the rng is only ever asked about
+            # children that can make progress; if nothing is left, the path
+            # stops here rather than burning a subprocess.
+            viable = [c for c in current.children if not self._is_exhausted(c)]
+            if not viable:
+                logger.debug(
+                    "Deep rollout stopped at depth %d: all children exhausted (issue #7)",
+                    depth,
+                )
+                break
+
             # Pick a random unvisited child (AutoCT's simulation policy)
-            unvisited = [c for c in current.children if c.visit_count == 0]
+            unvisited = [c for c in viable if c.visit_count == 0]
             if unvisited:
                 child = unvisited[rng.integers(len(unvisited))]
             else:
                 # All children visited — pick random (exploration)
-                child = current.children[rng.integers(len(current.children))]
+                child = viable[rng.integers(len(viable))]
 
             # Evaluate the child and backpropagate
             child_obj = self._call_evaluate(child, rollout=rollout)
+            if child_obj is None:
+                # Defensive only.  ``_is_exhausted`` reads the same parent output
+                # ``_call_evaluate`` builds, so a child filtered as viable is
+                # not exhausted at this point; this branch exists so a future
+                # change cannot turn a skip into a phantom reward.  Because it
+                # masks the pre-pick filter, that filter has its own test
+                # (``test_deep_simulation_filters_exhausted_children_before_picking``).
+                break
             child.objective_history.append(self._wrap_result(child_obj))
             self._backpropagate(child, child_obj)
             nodes_evaluated += 1
@@ -629,7 +754,59 @@ class MCTSSearch:
     # Evaluation helpers
     # ------------------------------------------------------------------
 
-    def _call_evaluate(self, node: MCTSNode, rollout: int) -> NDArray[Any]:
+    @staticmethod
+    def _suggestion_count(node: MCTSNode) -> int | None:
+        """How many suggestions this node's own ``eval_output`` offers.
+
+        Returns ``None`` when the question does not apply: no output yet, a
+        runner result that is not an ``AgentOutput`` (``mlops/retraining.py``
+        returns an ``ObjectiveResult``), or an empty suggestion list.  Empty is
+        deliberately *not* zero — ``FeatureProposer`` degrades to an empty
+        suggestion on purpose and ``AgentOutput.suggestions_exhausted`` treats
+        empty as "not exhausted" (``data_models.py``); returning ``None`` keeps
+        the two predicates agreeing.
+        """
+        output = node.eval_output
+        if output is None or not hasattr(output, "get_best_eval_output"):
+            return None
+        try:
+            best_eval, _ = output.get_best_eval_output()
+        except (ValueError, KeyError, AttributeError):
+            return None
+        suggestions = getattr(best_eval, "suggestions", None)
+        return len(suggestions) if suggestions else None
+
+    @staticmethod
+    def _output_exhausted(parent_output: Any) -> bool:
+        """Issue #7 predicate, evaluated on an output that already carries the
+        child's ``suggestion_index``.  Non-``AgentOutput`` runner results have
+        no such property and are never exhausted."""
+        # ``is True`` rather than ``bool(...)``: a Mock (or any truthy stand-in)
+        # standing in for the parent output must not be silently skipped.
+        return getattr(parent_output, "suggestions_exhausted", False) is True
+
+    def _is_exhausted(self, node: MCTSNode) -> bool:
+        """Would evaluating ``node`` replay a suggestion past the end of the list?
+
+        Derived only (R8): builds the same probe ``_call_evaluate`` would build
+        and asks it.  The root (no parent, or a parent with no output) is never
+        exhausted.  ``_replace`` here is ``dataclasses.replace`` — it aliases
+        the mutable fields rather than copying them, so the probe is cheap and
+        must not be mutated.
+        """
+        parent = node.parent
+        if parent is None or parent.eval_output is None:
+            return False
+        parent_output = parent.eval_output
+        if not hasattr(parent_output, "_replace"):
+            return False
+        try:
+            probe = parent_output._replace(suggestion_index=node.suggestion_index)
+        except (TypeError, ValueError):
+            return False
+        return self._output_exhausted(probe)
+
+    def _call_evaluate(self, node: MCTSNode, rollout: int) -> NDArray[Any] | None:
         """Invoke the external runner to evaluate a node's feature set and extract objective scores.
 
         This is the bridge between the MCTS tree and the agent pipeline.  The
@@ -642,27 +819,36 @@ class MCTSSearch:
            this child.  For the root node, ``parent_output`` is None and the
            runner starts a fresh initialization.
 
-        2. **Call the runner** — ``self._runner(node_id, task, parent_output)``
+        2. **Skip exhausted nodes** (issue #7) — If that parent output, now
+           carrying this child's ``suggestion_index``, reports
+           ``suggestions_exhausted``, the runner could only replay a
+           suggestion the proposer already rejected.  Return ``None`` without
+           calling it.  The root is never exhausted (no parent output).
+
+        3. **Call the runner** — ``self._runner(node_id, task, parent_output)``
            spawns a subprocess (by default) that runs the full agent pipeline
            (initializer -> proposer -> planner -> builder -> grouper ->
            evaluator) and returns an ``AgentOutput`` containing feature plans,
            built features, and evaluation metrics.
 
-        3. **Store output** — The ``AgentOutput`` is saved on
+        4. **Store output** — The ``AgentOutput`` is saved on
            ``node.eval_output`` so future children can use it as context and
            so ``_suggestion_expand`` can read the evaluator's suggestions.
 
-        4. **Sync features** — If the subprocess produced different features
+        5. **Sync features** — If the subprocess produced different features
            than expected (the proposer may modify the set), update
            ``node.features`` to reflect reality.
 
-        5. **Extract objectives** — Pull the objective scores (e.g. ROC-AUC,
+        6. **Extract objectives** — Pull the objective scores (e.g. ROC-AUC,
            parsimony) from the output, pad or truncate to ``n_objectives``,
            and return as an ndarray.
 
         Returns:
             An ndarray of shape ``(n_objectives,)`` containing the objective scores for
-            this node, ready for backpropagation.
+            this node, ready for backpropagation — or ``None`` when the evaluation
+            was skipped because the node's suggestion is exhausted.  Callers must
+            treat ``None`` as "no evaluation happened": nothing to append to
+            ``objective_history``, backpropagate, or hand to ``on_rollout``.
         """
         # Build parent output with correct suggestion_index.
         # For root (no parent), pass None — the runner/subprocess handles
@@ -676,6 +862,19 @@ class MCTSSearch:
                 parent_output = parent_output._replace(
                     suggestion_index=node.suggestion_index,
                 )
+
+        # Issue #7: the parent's output, carrying *this child's*
+        # suggestion_index, is past the end of the evaluator's suggestions.
+        # ``get_next_suggestion`` would clamp and hand the proposer a suggestion
+        # already tried and rejected (``data_models.py``), the orchestrator would
+        # early-skip it (``orchestrator.py``) and return the input unchanged — a
+        # full subprocess round-trip (dill-serialised AgentOutput incl. pipelines
+        # and DataFrames) for a guaranteed no-op, whose duplicate objective
+        # vector would then be backpropagated.  Skip it: ``None`` means "no
+        # evaluation happened".
+        if parent_output is not None and self._output_exhausted(parent_output):
+            self._log_skip(node)
+            return None
 
         node_id = self._make_node_id(node, rollout)
         output = self._runner(node_id, self._task, parent_output)
@@ -714,6 +913,33 @@ class MCTSSearch:
         if len(obj) < self._n_objectives:
             obj = np.pad(obj, (0, self._n_objectives - len(obj)))
         return obj[: self._n_objectives]
+
+    def _log_skip(self, node: MCTSNode) -> None:
+        """Log an exhaustion skip: INFO the first time for a given node, DEBUG after.
+
+        The dedupe set lives on the search object, not the node: no new
+        ``MCTSNode`` state (R8) means dill checkpoints stay round-trippable and
+        #14 keeps a clean slate for its ``skipped`` flag.  ``getattr`` with a
+        default is what lets a checkpoint pickled *before* this change resume —
+        it unpickles without ``_skip_logged``.  ``id(node)`` is stable for the
+        lifetime of a process and meaningless across a resume — a pickled set
+        would carry stale ids that a fresh node can collide with, silencing its
+        first INFO line — so ``search()`` resets the set on resume.
+        """
+        logged = getattr(self, "_skip_logged", None)
+        if logged is None:
+            logged = self._skip_logged = set()
+        msg = (
+            "Skipping evaluation of node %r whose suggestion_index=%d is past its "
+            "parent's suggestions — the runner would replay a rejected suggestion "
+            "(issue #7)"
+        )
+        detail = getattr(node, "operation_detail", "") or "<no detail>"
+        if id(node) in logged:
+            logger.debug(msg, detail, node.suggestion_index)
+        else:
+            logged.add(id(node))
+            logger.info(msg, detail, node.suggestion_index)
 
     def _make_node_id(self, node: MCTSNode, rollout: int) -> str:
         """Generate a deterministic, unique string identifier for a node evaluation.
