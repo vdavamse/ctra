@@ -7,10 +7,10 @@ Standalone script for debugging or subprocess invocation from
 Usage::
 
     # Iteration 0 (no previous output)
-    python scripts/run_agent.py --task phase2 --output result.pkl
+    python scripts/run_agent.py --task phase2 --output .output/result.pkl
 
     # Iteration N (resume from previous output)
-    python scripts/run_agent.py --task phase2 --input prev.pkl --output result.pkl
+    python scripts/run_agent.py --task phase2 --input .output/prev.pkl --output .output/result.pkl
 """
 
 from __future__ import annotations

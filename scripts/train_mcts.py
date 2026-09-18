@@ -14,7 +14,7 @@ Usage::
     python scripts/train_mcts.py --task phase2 --resume .output/checkpoint.pkl
 
     # Custom output directory
-    python scripts/train_mcts.py --task phase2 --output-dir runs/phase2_v1/
+    python scripts/train_mcts.py --task phase2 --output-dir .output/phase2_v1/
 """
 
 from __future__ import annotations
