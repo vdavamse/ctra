@@ -445,10 +445,18 @@ def grouper_reward(kwargs: Any, result: Any) -> float:
 def builder_reward(kwargs: Any, result: Any) -> float:
     """Reward function for DSPy Refine on FeatureBuilder (MCTS reward signal).
 
-    Returns 1.0 if every planned feature was built, 0.0 otherwise. A 0.0 here is
-    a *retry request*, not a failure: Refine re-runs the builder with
+    Returns the fraction of planned features the builder produced: 1.0 for a
+    complete build (which meets the ``threshold=1.0`` and stops the retries --
+    the same retry semantics as ``is_valid_builder``), anything below 1.0 is a
+    *retry request*, not a failure. Refine re-runs the builder with
     ``OfferFeedback`` guidance, and only after all N attempts does
     ``WrappedFeatureBuilder`` fill what is still missing.
+
+    Graded rather than 0/1 because Refine keeps the best attempt only on a
+    strict ``reward > best_reward`` (``refine.py:139``): with a boolean reward,
+    three partial attempts building 3/5, 4/5 and 4/5 all score 0.0 and Refine
+    returns the *first* (3/5), so the wrapper would fill two features a later
+    attempt had built. The fraction makes Refine return the fullest build.
 
     Args:
         kwargs: Dict with "feature_plan_group" -- the plans requested of the builder.
@@ -456,6 +464,15 @@ def builder_reward(kwargs: Any, result: Any) -> float:
             ``(values, meta)`` tuple.
 
     Returns:
-        1.0 if every planned feature is present, 0.0 otherwise.
+        ``|planned & built| / |planned|`` (1.0 for an empty plan group); 0.0 if
+        the result cannot be unwrapped.
     """
-    return 1.0 if is_valid_builder(kwargs, result) else 0.0
+    try:
+        values, _meta = unwrap_builder_result(result)
+        planned = set(kwargs["feature_plan_group"])
+        if not planned:
+            return 1.0
+        return len(planned & set(values)) / len(planned)
+    except Exception:
+        logger.debug("builder_reward failed", exc_info=True)
+        return 0.0

@@ -460,3 +460,61 @@ def test_partial_build_reaches_offer_feedback_on_the_budget_lm(capsys) -> None:
     assert values["feat_a"] == {"value": "1.0"}
     assert values["feat_b"] == {"value": None}
     assert meta["none_feature_explanations"]["feat_b"].startswith("builder_omitted:")
+
+
+@pytest.mark.usefixtures("_clear_history")
+def test_refine_keeps_the_fullest_partial_build() -> None:
+    """``builder_reward`` is graded so Refine returns the best attempt.
+
+    Refine keeps an attempt only on a strict ``reward > best_reward``
+    (refine.py:139). With a 0/1 reward the sequence 3/5, 4/5, 4/5 all scored
+    0.0 and the FIRST attempt (3/5) came back, so the wrapper filled two
+    features attempt 2 had actually built. With the coverage fraction the
+    scores are 0.6, 0.8, 0.8 and attempt 2 wins (attempt 3 ties, so does not
+    replace it).
+    """
+    names = [f"feat_{i}" for i in range(5)]
+    plans = {n: _make_plan(n) for n in names}
+    # Attempt 2 and 3 build different 4-feature subsets so the result proves
+    # WHICH attempt came back, not merely how many features it had.
+    attempts = iter(
+        [
+            {n: {"value": "1.0"} for n in names[:3]},  # 3/5 -> 0.6
+            {n: {"value": "2.0"} for n in names[:4]},  # 4/5 -> 0.8  (kept)
+            {n: {"value": "3.0"} for n in names[1:]},  # 4/5 -> 0.8  (tie, dropped)
+        ]
+    )
+
+    class _SequencedBuilder(dspy.Module):  # type: ignore[misc]
+        """Like ``_PartialBuilder`` but each Refine attempt (a deepcopy of this
+        module) pulls the next canned build from the closure iterator."""
+
+        def __init__(self, task_description: str) -> None:
+            super().__init__()
+            self.constructor = dspy.Predict("nctid -> value")
+
+        def forward(
+            self, nctid: str, feature_plan_group: dict[str, FeaturePlan]
+        ) -> dspy.Prediction:
+            self.constructor(nctid=nctid)
+            return builder_prediction(next(attempts))
+
+    with (
+        patch("ctra.agents.feature_builder.FeatureBuilder", _SequencedBuilder),
+        dspy.context(lm=_builder_dummy_lm()),
+    ):
+        wrapper = WrappedFeatureBuilder(
+            task_description="t", feature_store_dir=None, feature_store_enabled=False
+        )
+        wrapper._budget_lm = _builder_dummy_lm()
+        _, values, meta = wrapper(("NCT001", plans))
+
+    # All three attempts ran (none reached threshold 1.0), with feedback between.
+    assert len(GLOBAL_HISTORY) == 5
+    # Attempt 2's four features came back, not attempt 1's three.
+    built = {n for n, v in values.items() if v != {"value": None}}
+    assert built == set(names[:4])
+    assert all(values[n] == {"value": "2.0"} for n in names[:4])
+    # Only the one feature no kept attempt built was filled.
+    assert values["feat_4"] == {"value": None}
+    assert set(meta["none_feature_explanations"]) == {"feat_4"}

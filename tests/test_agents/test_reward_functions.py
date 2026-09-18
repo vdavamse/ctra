@@ -247,12 +247,13 @@ class TestBuilderReward:
         result = ({"feat_a": {"value": 1.0}, "feat_b": {"value": 2.0}}, {})
         assert builder_reward(kwargs, result) == 1.0
 
-    def test_missing_feature_invalid(self) -> None:
+    def test_missing_feature_scores_below_threshold(self) -> None:
+        """A partial build never reaches the ``threshold=1.0`` that stops retries."""
         kwargs = {
             "feature_plan_group": {"feat_a": _make_plan("feat_a"), "feat_b": _make_plan("feat_b")}
         }
         result = ({"feat_a": {"value": 1.0}}, {})  # missing feat_b
-        assert builder_reward(kwargs, result) == 0.0
+        assert builder_reward(kwargs, result) < 1.0
 
     def test_extra_features_still_valid(self) -> None:
         kwargs = {"feature_plan_group": {"feat_a": _make_plan("feat_a")}}
@@ -278,12 +279,37 @@ class TestBuilderReward:
         result = builder_prediction({"feat_a": {"value": 1.0}, "feat_b": {"value": 2.0}})
         assert builder_reward(kwargs, result) == 1.0
 
-    def test_partial_prediction_scores_zero(self) -> None:
+    def test_partial_prediction_scores_the_coverage_fraction(self) -> None:
+        """Graded, not 0/1: Refine keeps the best attempt on a strict ``>``
+        (refine.py:139), so equal 0.0 scores would return the FIRST partial
+        build. 1 of 2 planned -> 0.5."""
         kwargs = {
             "feature_plan_group": {"feat_a": _make_plan("feat_a"), "feat_b": _make_plan("feat_b")}
         }
         result = builder_prediction({"feat_a": {"value": 1.0}})  # missing feat_b
-        assert builder_reward(kwargs, result) == 0.0
+        assert builder_reward(kwargs, result) == 0.5
+
+    def test_partial_legacy_tuple_scores_the_coverage_fraction(self) -> None:
+        names = [f"feat_{i}" for i in range(5)]
+        kwargs = {"feature_plan_group": {n: _make_plan(n) for n in names}}
+        result = ({n: {"value": 1.0} for n in names[:3]}, {})
+        assert builder_reward(kwargs, result) == 0.6
+
+    def test_only_planned_features_count_toward_coverage(self) -> None:
+        """Extra, unplanned keys neither raise the fraction above 1.0 nor pad a
+        partial build."""
+        kwargs = {
+            "feature_plan_group": {"feat_a": _make_plan("feat_a"), "feat_b": _make_plan("feat_b")}
+        }
+        result = builder_prediction({"feat_a": {"value": 1.0}, "feat_extra": {"value": 3.0}})
+        assert builder_reward(kwargs, result) == 0.5
+
+    def test_empty_plan_group_scores_one(self) -> None:
+        assert builder_reward({"feature_plan_group": {}}, builder_prediction({})) == 1.0
+
+    def test_empty_build_scores_zero(self) -> None:
+        kwargs = {"feature_plan_group": {"feat_a": _make_plan("feat_a")}}
+        assert builder_reward(kwargs, builder_prediction({})) == 0.0
 
     def test_malformed_prediction_scores_zero(self) -> None:
         """A Prediction lacking 'feature_values' is a retry, not a crash."""
