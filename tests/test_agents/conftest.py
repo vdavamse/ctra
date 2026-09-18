@@ -8,17 +8,14 @@ modules so the helpers cannot silently drift from production.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 try:
     import dspy
+
     from ctra.agents.data_models import FeatureOp, FeaturePlan, ProposerOutput
+
     _HAS_DSPY = True
 except ImportError:
     _HAS_DSPY = False
-
-if TYPE_CHECKING:
-    pass
 
 
 def proposer_prediction(

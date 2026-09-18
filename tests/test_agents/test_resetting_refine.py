@@ -58,9 +58,7 @@ def _always_invalid(kwargs, result) -> float:
 
 def _dummy_lm() -> DummyLM:
     # Supplies OfferFeedback's fields too, so the feedback path itself succeeds.
-    return DummyLM(
-        [{"a": "ok", "discussion": "d", "advice": "{}", "reasoning": "r"}] * 80
-    )
+    return DummyLM([{"a": "ok", "discussion": "d", "advice": "{}", "reasoning": "r"}] * 80)
 
 
 def test_repeated_invalid_outputs_do_not_exhaust_the_budget() -> None:

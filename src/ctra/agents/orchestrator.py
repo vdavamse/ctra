@@ -374,7 +374,9 @@ class Agent(dspy.Module):  # type: ignore[misc]
 
             # Propose operation
             proposer_prediction = self.proposer(previous_output=previous_output)
-            assert proposer_prediction is not None  # Refine returns None only if every attempt raised
+            assert (
+                proposer_prediction is not None
+            )  # Refine returns None only if every attempt raised
             proposer_result = unwrap_proposal(proposer_prediction)
 
             # Validate proposer result; skip iteration if all retries failed

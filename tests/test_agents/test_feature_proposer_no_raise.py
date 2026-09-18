@@ -88,6 +88,7 @@ def test_proposer_add_with_existing_name_no_raise():
     Asserts: dspy.Prediction(proposal=ProposerOutput) is returned without raising ValueError.
     """
     import dspy
+
     proposer = FeatureProposer(
         task_description="Predict trial outcome",
     )
@@ -121,6 +122,7 @@ def test_proposer_remove_nonexistent_name_no_raise():
     Asserts: dspy.Prediction(proposal=ProposerOutput) is returned without raising ValueError.
     """
     import dspy
+
     proposer = FeatureProposer(
         task_description="Predict trial outcome",
     )
@@ -219,6 +221,7 @@ def test_proposer_with_no_suggestions_does_not_raise():
     fixed to eliminate. Degrade to an empty suggestion instead.
     """
     import dspy
+
     proposer = FeatureProposer(task_description="Predict trial outcome")
 
     base = _make_output()

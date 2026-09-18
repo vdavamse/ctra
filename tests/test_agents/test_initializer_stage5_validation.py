@@ -82,12 +82,10 @@ def _stubbed_idea_stages(initializer: Initializer, feature_ideas: dict[str, str]
     combined = MagicMock()
     combined.feature_ideas = feature_ideas
 
-    with patch.object(
-        initializer, "feature_initializer_zero_shot", return_value=zero_shot
-    ), patch.object(
-        initializer, "feature_initializer_from_factors", return_value=factors
-    ), patch.object(
-        initializer, "feature_initializer_combined", return_value=combined
+    with (
+        patch.object(initializer, "feature_initializer_zero_shot", return_value=zero_shot),
+        patch.object(initializer, "feature_initializer_from_factors", return_value=factors),
+        patch.object(initializer, "feature_initializer_combined", return_value=combined),
     ):
         yield
 
@@ -107,9 +105,11 @@ def test_initializer_stage5_invalid_plan_skipped(caplog):
 
     ideas = {"feat_b": "Idea for feat_b", "feat_c": "Idea for feat_c"}
 
-    with patch.object(initializer, "feature_planner") as mock_planner, _stubbed_idea_stages(
-        initializer, ideas
-    ), caplog.at_level("WARNING"):
+    with (
+        patch.object(initializer, "feature_planner") as mock_planner,
+        _stubbed_idea_stages(initializer, ideas),
+        caplog.at_level("WARNING"),
+    ):
         # Mock planner to return invalid result for feat_b, valid for feat_c
         def planner_side_effect(feature_name: str, feature_idea: str):
             if feature_name == "feat_b":
@@ -142,9 +142,11 @@ def test_initializer_stage5_llm_exception_caught_narrowly(caplog):
 
     ideas = {"feat_b": "Idea for feat_b", "feat_c": "Idea for feat_c"}
 
-    with patch.object(initializer, "feature_planner") as mock_planner, _stubbed_idea_stages(
-        initializer, ideas
-    ), caplog.at_level("WARNING"):
+    with (
+        patch.object(initializer, "feature_planner") as mock_planner,
+        _stubbed_idea_stages(initializer, ideas),
+        caplog.at_level("WARNING"),
+    ):
 
         def planner_side_effect(feature_name: str, feature_idea: str):
             if feature_name == "feat_b":
@@ -177,9 +179,11 @@ def test_initializer_stage5_non_llm_exception_is_skipped_not_propagated(caplog):
 
     ideas = {"feat_b": "Idea for feat_b", "feat_c": "Idea for feat_c"}
 
-    with patch.object(initializer, "feature_planner") as mock_planner, _stubbed_idea_stages(
-        initializer, ideas
-    ), caplog.at_level("WARNING"):
+    with (
+        patch.object(initializer, "feature_planner") as mock_planner,
+        _stubbed_idea_stages(initializer, ideas),
+        caplog.at_level("WARNING"),
+    ):
 
         def planner_side_effect(feature_name: str, feature_idea: str):
             if feature_name == "feat_b":

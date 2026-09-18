@@ -54,7 +54,7 @@ def test_planner_missing_possible_values_for_categorical_no_raise():
             feature_name="trial_status",
             feature_idea="Status of the trial",
         )
-        plan, raw = pred.plan, pred.raw
+        plan = pred.plan
 
         # Assert we got a dspy.Prediction with plan and raw fields
         assert isinstance(pred, dspy.Prediction)
@@ -94,7 +94,7 @@ def test_planner_possible_values_key_not_in_feature_type_no_raise():
             feature_name="trial_status",
             feature_idea="Status of the trial",
         )
-        plan, raw = pred.plan, pred.raw
+        plan = pred.plan
 
         # Assert we got a dspy.Prediction with plan and raw fields
         assert isinstance(pred, dspy.Prediction)

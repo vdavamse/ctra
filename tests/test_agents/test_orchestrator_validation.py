@@ -267,8 +267,9 @@ def test_unhandled_operation_skips_instead_of_removing(caplog):
     """
     previous_output = _make_output(feature_plans={"feat_a": _make_plan("feat_a")})
 
-    with patch("ctra.agents.orchestrator.get_settings"), patch(
-        "ctra.agents.orchestrator.is_valid_proposer", return_value=True
+    with (
+        patch("ctra.agents.orchestrator.get_settings"),
+        patch("ctra.agents.orchestrator.is_valid_proposer", return_value=True),
     ):
         agent = _make_agent()
         mock_proposer = MagicMock()
@@ -306,8 +307,9 @@ def test_invalid_planner_skips_planning_with_warning(caplog):
     """
     previous_output = _make_output(feature_plans={"feat_a": _make_plan("feat_a")})
 
-    with patch("ctra.agents.orchestrator.get_settings"), patch(
-        "ctra.agents.orchestrator.compute_features"
+    with (
+        patch("ctra.agents.orchestrator.get_settings"),
+        patch("ctra.agents.orchestrator.compute_features"),
     ):
         agent = _make_agent()
 

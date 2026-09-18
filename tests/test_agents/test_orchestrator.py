@@ -227,9 +227,7 @@ class TestForwardIteration0:
         monkeypatch.setattr("ctra.agents.orchestrator.get_settings", lambda: mock_settings)
 
         # Bypass the Refine wrapper — return the module unchanged
-        monkeypatch.setattr(
-            "ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module
-        )
+        monkeypatch.setattr("ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module)
 
         # Mock sub-agent constructors
         with (
@@ -319,9 +317,7 @@ class TestForwardIterationN:
         monkeypatch.setattr("ctra.agents.orchestrator.get_settings", lambda: mock_settings)
 
         # Bypass the Refine wrapper — return the module unchanged
-        monkeypatch.setattr(
-            "ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module
-        )
+        monkeypatch.setattr("ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module)
 
         with (
             patch("ctra.agents.orchestrator.Initializer") as mock_init_cls,
@@ -493,9 +489,7 @@ class TestTaskNamespaceResolution:
         mock_settings.mcts.feature_store_enabled = True
         mock_settings.model.classifiers = []
         monkeypatch.setattr("ctra.agents.orchestrator.get_settings", lambda: mock_settings)
-        monkeypatch.setattr(
-            "ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module
-        )
+        monkeypatch.setattr("ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module)
 
         with (
             patch("ctra.agents.orchestrator.Initializer") as mock_init_cls,

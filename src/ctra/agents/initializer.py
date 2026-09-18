@@ -62,11 +62,13 @@ _LLM_RUNTIME_EXCEPTIONS: tuple[type[BaseException], ...] = (
 )
 try:
     from dspy.utils.exceptions import AdapterParseError
+
     _LLM_RUNTIME_EXCEPTIONS = (*_LLM_RUNTIME_EXCEPTIONS, AdapterParseError)
 except ImportError:
     logger.debug("dspy.utils.exceptions.AdapterParseError not available")
 try:
     from litellm.exceptions import APIError as _LiteLLMAPIError
+
     _LLM_RUNTIME_EXCEPTIONS = (*_LLM_RUNTIME_EXCEPTIONS, _LiteLLMAPIError)
 except ImportError:
     logger.debug("litellm.exceptions.APIError not available")
