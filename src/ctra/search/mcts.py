@@ -166,8 +166,11 @@ class MCTSNode:
 
         Args:
             reference: Lower-bound corner of the hypervolume rectangle. Defaults to the
-                origin ``[0, 0, ...]``. In practice, ``MCTSSearch`` uses the
-                configured ``reference_point`` from ``MCTSConfig``.
+                origin ``[0, 0, ...]``, **not** to the configured
+                ``MCTSConfig.reference_point`` (``[0.5, 0.0]``, issue #18):
+                production code never calls this method, so nothing passes the
+                search's reference in.  A caller that wants the search's
+                geometry must pass it explicitly.
 
         Reporting helper for external callers.  ``_select_best`` does not use
         it: it ranks nodes by their own evaluations, not by the subtree mean
@@ -761,9 +764,11 @@ class MCTSSearch:
         parsimony (it is a function of ``len(node.features)``) and differ in
         accuracy, so "best" is decided by
         ``(self._point_hypervolume(v), v[0])`` — the file's one notion of
-        vector quality, with accuracy as the tie-break so that vectors sitting
-        entirely below the reference point (all hypervolume 0) still rank
-        against each other.
+        vector quality, with accuracy as the tie-break.  The tie-break is
+        load-bearing, not a corner case: the reference point sits at the
+        ROC-AUC chance baseline (``[0.5, 0.0]``, issue #18), so every entry
+        of a below-chance feature set has hypervolume 0 and only its
+        accuracy ranks it against the node's other entries.
 
         Returns a *copy*, so a caller cannot mutate the stored history.
 
@@ -866,7 +871,9 @@ class MCTSSearch:
            as it represents the most valuable trade-off point.
 
         Ties at either step are resolved by ``_break_ties`` (fewer features,
-        then earliest in ``_all_nodes``).  A tie is decided with
+        then earliest in ``_all_nodes``); a front whose every contribution is
+        0 — no candidate above the reference point — is logged at WARNING
+        first.  A tie is decided with
         ``np.isclose`` at an absolute tolerance of ``_TIE_ATOL`` (1e-9): two
         contributions (or accuracies) that are equal on paper can differ by a
         few ULPs in floating point, and exact equality would hand the pick to
@@ -910,8 +917,18 @@ class MCTSSearch:
         # 2. Among front nodes, rank by hypervolume contribution.  All-zero
         # contributions (every point below the reference point) are a tie, so
         # the answer stays deterministic instead of falling to ``argmax``'s
-        # first index.
+        # first index.  Say so: under the production reference (accuracy at
+        # the ROC-AUC chance baseline, issue #18) it means no feature set
+        # scored above chance, which the operator should know.
         contributions = self._front_contributions(points[front_idx])
+        if not np.any(contributions > 0.0):
+            logger.warning(
+                "No Pareto-front candidate scores above the reference point %s: "
+                "all %d hypervolume contributions are 0, so the smallest feature "
+                "set is selected",
+                self._reference.tolist(),
+                len(front_idx),
+            )
         winners = front_idx[
             np.isclose(contributions, contributions.max(), rtol=0.0, atol=_TIE_ATOL)
         ]

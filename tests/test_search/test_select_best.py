@@ -9,6 +9,7 @@ tree by hand so the ranking rule is exercised directly, with no rollouts.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -17,6 +18,7 @@ import pytest
 from ctra.config.settings import MCTSConfig
 from ctra.search.mcts import MCTSNode, MCTSSearch
 from ctra.search.objectives import ObjectiveResult
+from ctra.search.pareto import pareto_front_indices
 
 from .conftest import make_stub_output
 
@@ -498,3 +500,83 @@ class TestTolerances:
         _wire(search, root, better)
 
         assert search._select_best() is better
+
+
+class TestReferencePoint:
+    """The reference point sits at the ROC-AUC chance baseline, ``[0.5, 0.0]`` (issue #18)."""
+
+    def test_chance_baseline_collapses_the_parsimony_margin(self):
+        """Issue #18's worked example: 5 features at AUC 0.70 vs 20 features at AUC 0.78.
+
+        Dominance is reference-free, so both sit on the front under either
+        reference and the 5-feature set wins both times; what the chance
+        baseline changes is the *margin*.  At the origin the 0.5 of ROC-AUC
+        every classifier gets for free counts as accuracy and the small set's
+        contribution is 4.375x the large set's; at ``[0.5, 0]`` that dead
+        volume is gone and the ratio is 1.25x (point hypervolumes 1.346x ->
+        1.071x).
+        """
+        max_features = MCTSConfig().max_features
+        small = [0.70, 1 - 5 / max_features]
+        large = [0.78, 1 - 20 / max_features]
+        points = np.array([small, large])
+        margins = {(0.0, 0.0): (4.375, 1.346), (0.5, 0.0): (1.25, 1.071)}
+
+        for reference, (contribution_ratio, point_ratio) in margins.items():
+            search = _search(["accuracy", "parsimony"], list(reference))
+            root = _node([f"f{i}" for i in range(5)], own=[small], visit_count=1)
+            deep = _node([f"f{i}" for i in range(20)], own=[large], visit_count=1, parent=root)
+            _wire(search, root, deep)
+
+            assert pareto_front_indices(points).tolist() == [0, 1], reference
+            contributions = search._front_contributions(points)
+            assert contributions[0] / contributions[1] == pytest.approx(contribution_ratio)
+            assert search._point_hypervolume(points[0]) / search._point_hypervolume(
+                points[1]
+            ) == pytest.approx(point_ratio, abs=1e-3)
+            assert search._select_best() is root, reference
+
+    def test_all_below_chance_front_is_a_tie_and_warns(self, caplog):
+        """Production geometry: no candidate clears the ROC-AUC chance baseline.
+
+        Every contribution is 0 under ``[0.5, 0.0]``, the smallest set wins
+        the tie (it is the last candidate, so ``argmax`` would disagree), and
+        ``_select_best`` says so once at WARNING.
+        """
+        search = _search(["accuracy", "parsimony"], [0.5, 0.0])
+        root = _node(["a", "b", "c"], own=[[0.48, 0.94]], visit_count=1)
+        wide = _node(["a", "b", "c", "d"], own=[[0.49, 0.92]], visit_count=1, parent=root)
+        narrow = _node(["a"], own=[[0.45, 0.98]], visit_count=1, parent=root)
+        _wire(search, root, wide, narrow)
+
+        with caplog.at_level(logging.WARNING, logger="ctra.search.mcts"):
+            assert search._select_best() is narrow
+
+        warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1, warnings
+        assert "above the reference point [0.5, 0.0]" in warnings[0]
+        assert "all 3 hypervolume contributions are 0" in warnings[0]
+
+    def test_a_front_point_above_chance_does_not_warn(self, caplog):
+        search = _search(["accuracy", "parsimony"], [0.5, 0.0])
+        root = _node(["a"], own=[[0.45, 0.98]], visit_count=1)
+        deep = _node(["a", "b", "c"], own=[[0.80, 0.94]], visit_count=1, parent=root)
+        _wire(search, root, deep)
+
+        with caplog.at_level(logging.WARNING, logger="ctra.search.mcts"):
+            assert search._select_best() is deep
+
+        assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+
+    def test_below_chance_entries_of_one_node_rank_by_accuracy(self):
+        """The ``(hypervolume, accuracy)`` key, live under the production reference.
+
+        Three evaluations of one set, all below chance: every hypervolume is
+        0, and the highest accuracy — neither the first nor the last entry —
+        is the node's own vector.
+        """
+        search = _search(["accuracy", "parsimony"], [0.5, 0.0])
+        node = _node(["a", "b"], own=[[0.41, 0.96], [0.47, 0.96], [0.44, 0.96]], visit_count=3)
+        _wire(search, node)
+
+        assert search.best_own_objectives(node) == pytest.approx(np.array([0.47, 0.96]))
