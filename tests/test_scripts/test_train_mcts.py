@@ -402,10 +402,11 @@ class TestOnRolloutCallback:
         # Checkpoint should have been saved at rollout index 1 (since (1+1)%2==0)
         assert 1 in dill_dump_calls
         # Every checkpoint carries what rebuilds the per-run agent cache dir
-        # (output_dir / task subdir / "agent_cache") on resume.
+        # (output_dir / task subdir / "agent_cache" / run_id) on resume.
         for ckpt_args in checkpoint_args:
             assert ckpt_args["output_dir"] == str(output_dir)
             assert ckpt_args["task"] == "phase2"
+            assert ckpt_args["run_id"]
 
 
 # ---------------------------------------------------------------------------
@@ -430,18 +431,30 @@ class TestPerRunAgentCache:
     ``output/agent_cache``; with a run-stable key a fresh run would load the
     previous run's root pickle (same ``initial_features=[]``, rollout 0, no
     parent) and replay rollout 0 wholesale instead of running the agent.
+    The same holds for two fresh runs over one output directory, so the
+    cache lives under ``<output_dir>/<task>/agent_cache/<run_id>`` with the
+    run id persisted in every checkpoint's ``args``.
     """
 
-    def test_fresh_start_scopes_cache_to_output_dir(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        output_dir = tmp_path / "output"
+    @staticmethod
+    def _capture_checkpoints(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+        checkpoints: list[dict] = []
+
+        def tracking_dill_dump(obj, f):
+            if isinstance(obj, dict) and "rollout" in obj:
+                checkpoints.append(obj)
+
+        monkeypatch.setattr("dill.dump", tracking_dill_dump)
+        return checkpoints
+
+    @staticmethod
+    def _fresh_main(monkeypatch: pytest.MonkeyPatch, output_dir: Path) -> MagicMock:
+        """Run a fresh ``main()`` with ``MCTSSearch`` mocked; return the mocked class."""
         monkeypatch.setattr(
             sys,
             "argv",
             ["train_mcts.py", "--task", "phase2", "--output-dir", str(output_dir)],
         )
-
         best_node = _make_best_node()
         best_node.eval_output = _make_mock_output()
         mock_mcts = MagicMock()
@@ -449,28 +462,31 @@ class TestPerRunAgentCache:
         mock_mcts.all_nodes = [best_node]
         mock_mcts_cls = MagicMock(return_value=mock_mcts)
         monkeypatch.setattr("ctra.search.mcts.MCTSSearch", mock_mcts_cls)
-
         mock_settings = _make_mock_settings(num_rollouts=3)
         monkeypatch.setattr(
             "ctra.config.settings.get_settings", MagicMock(return_value=mock_settings)
         )
         monkeypatch.setattr("ctra.agents.feature_utils.dump_as_json", MagicMock(return_value="{}"))
-        monkeypatch.setattr("dill.dump", MagicMock())
 
         from train_mcts import main
 
         main()
-
         mock_mcts_cls.assert_called_once()
-        runner = mock_mcts_cls.call_args.kwargs["runner"]
-        _assert_per_run_runner(runner, output_dir / "phase2" / "agent_cache")
+        return mock_mcts_cls
 
-    def test_resume_repoints_runner_to_per_run_cache(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        """A dill-loaded search object keeps hitting *this* run's cache, not the global one."""
-        from ctra.agents.runner import run_agent_as_subprocess
+    @staticmethod
+    def _resume_main(
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        *,
+        cli_task: str,
+        ckpt_args: dict,
+    ) -> tuple[MagicMock, Path]:
+        """Run ``main()`` in resume mode against a mocked checkpoint.
 
+        Returns the restored ``mcts`` mock and the checkpoint path.  The
+        checkpoint's ``args`` are what a previous run's ``vars(args)`` dumped.
+        """
         output_dir = tmp_path / "output"
         ckpt_path = tmp_path / "checkpoint.pkl"
         ckpt_path.touch()
@@ -480,23 +496,20 @@ class TestPerRunAgentCache:
             [
                 "train_mcts.py",
                 "--task",
-                "phase3",
+                cli_task,
                 "--resume",
                 str(ckpt_path),
                 "--output-dir",
                 str(output_dir),
             ],
         )
-
         best_node = _make_best_node()
         best_node.eval_output = _make_mock_output()
         mock_mcts = MagicMock()
-        mock_mcts._runner = run_agent_as_subprocess  # what an old checkpoint pickled
         mock_mcts.search.return_value = best_node
         mock_mcts.all_nodes = [best_node]
-        checkpoint = {"mcts": mock_mcts, "rollout": 4, "args": {"task": "phase3"}}
+        checkpoint = {"mcts": mock_mcts, "rollout": 4, "args": ckpt_args}
         monkeypatch.setattr("dill.load", MagicMock(return_value=checkpoint))
-        monkeypatch.setattr("dill.dump", MagicMock())
 
         mock_mcts_cls = MagicMock()
         monkeypatch.setattr("ctra.search.mcts.MCTSSearch", mock_mcts_cls)
@@ -509,9 +522,104 @@ class TestPerRunAgentCache:
         from train_mcts import main
 
         main()
-
         mock_mcts_cls.assert_not_called()
-        _assert_per_run_runner(mock_mcts._runner, output_dir / "phase3" / "agent_cache")
+        return mock_mcts, ckpt_path
+
+    def test_fresh_start_scopes_cache_to_run_id_under_output_dir(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        output_dir = tmp_path / "output"
+        checkpoints = self._capture_checkpoints(monkeypatch)
+        mock_mcts_cls = self._fresh_main(monkeypatch, output_dir)
+
+        runner = mock_mcts_cls.call_args.kwargs["runner"]
+        cache_dir = runner.keywords["cache_dir"]
+        assert cache_dir.parent == output_dir / "phase2" / "agent_cache"
+        _assert_per_run_runner(runner, cache_dir)
+        # The run id is persisted in every checkpoint so a resume rebuilds the dir.
+        assert checkpoints, "the final checkpoint was not dumped"
+        for checkpoint in checkpoints:
+            assert checkpoint["args"]["run_id"] == cache_dir.name
+            assert checkpoint["args"]["output_dir"] == str(output_dir)
+            assert checkpoint["args"]["task"] == "phase2"
+
+    def test_two_fresh_starts_get_different_cache_dirs(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Same ``--output-dir`` twice: the second run must not replay the first."""
+        output_dir = tmp_path / "output"
+        monkeypatch.setattr("dill.dump", MagicMock())
+        first = self._fresh_main(monkeypatch, output_dir).call_args.kwargs["runner"]
+        second = self._fresh_main(monkeypatch, output_dir).call_args.kwargs["runner"]
+        first_dir, second_dir = first.keywords["cache_dir"], second.keywords["cache_dir"]
+        assert first_dir != second_dir
+        assert first_dir.parent == second_dir.parent == output_dir / "phase2" / "agent_cache"
+
+    def test_resume_reuses_persisted_run_id(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A dill-loaded search object keeps hitting *its own* pre-crash cache."""
+        checkpoints = self._capture_checkpoints(monkeypatch)
+        output_dir = tmp_path / "output"
+        mock_mcts, _ckpt_path = self._resume_main(
+            monkeypatch,
+            tmp_path,
+            cli_task="phase3",
+            ckpt_args={
+                "task": "phase3",
+                "output_dir": str(output_dir),
+                "run_id": "20260101T000000-deadbeef",
+            },
+        )
+        mock_mcts.set_runner.assert_called_once()
+        runner = mock_mcts.set_runner.call_args.args[0]
+        _assert_per_run_runner(
+            runner, output_dir / "phase3" / "agent_cache" / "20260101T000000-deadbeef"
+        )
+        assert checkpoints
+        assert all(c["args"]["run_id"] == "20260101T000000-deadbeef" for c in checkpoints)
+
+    def test_resume_without_run_id_falls_back_to_checkpoint_stem(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Checkpoints written before run ids existed still get a stable, private dir."""
+        monkeypatch.setattr("dill.dump", MagicMock())
+        output_dir = tmp_path / "output"
+        mock_mcts, ckpt_path = self._resume_main(
+            monkeypatch,
+            tmp_path,
+            cli_task="phase3",
+            ckpt_args={"task": "phase3", "output_dir": str(output_dir)},
+        )
+        runner = mock_mcts.set_runner.call_args.args[0]
+        _assert_per_run_runner(runner, output_dir / "phase3" / "agent_cache" / ckpt_path.stem)
+
+    def test_resume_rejects_task_mismatch(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """``--task phase2 --resume <phase-3 checkpoint>`` is an error, not a phase-3 tree in phase-2 dirs."""
+        monkeypatch.setattr("dill.dump", MagicMock())
+        with pytest.raises(SystemExit, match=r"--task phase2 does not match .*'phase3'"):
+            self._resume_main(
+                monkeypatch,
+                tmp_path,
+                cli_task="phase2",
+                ckpt_args={"task": "phase3", "output_dir": str(tmp_path / "output")},
+            )
+
+    def test_resume_warns_on_output_dir_mismatch(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.setattr("dill.dump", MagicMock())
+        with caplog.at_level("WARNING", logger="ctra.train"):
+            self._resume_main(
+                monkeypatch,
+                tmp_path,
+                cli_task="phase3",
+                ckpt_args={"task": "phase3", "output_dir": "/elsewhere", "run_id": "x"},
+            )
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert any("differs from the checkpoint's /elsewhere" in w for w in warnings), warnings
 
     def test_runner_partial_survives_dill_checkpoint(self, tmp_path: Path) -> None:
         """The partial is what the checkpoint pickles; dill must round-trip it intact."""

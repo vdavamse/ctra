@@ -253,6 +253,15 @@ class MCTSSearch:
     # Public API
     # ------------------------------------------------------------------
 
+    def set_runner(self, runner: Callable[..., Any]) -> None:
+        """Replace the evaluation runner, e.g. after loading a checkpoint.
+
+        A checkpoint pickles the runner the search was built with; a resumed
+        process re-binds it here so evaluations hit *this* run's agent cache
+        (``scripts/train_mcts.py``).  The tree is untouched.
+        """
+        self._runner = runner
+
     def search(
         self,
         initial_features: list[str],
@@ -316,8 +325,11 @@ class MCTSSearch:
                 self._config.num_rollouts,
             )
 
-            # 1. SELECT — Pareto UCT traversal to a leaf
-            node = self._select(self._root)
+            # 1. SELECT — Pareto UCT traversal to a leaf.  Seeded per rollout
+            # (like ``_simulate_deep``) so a resumed run replays the pre-crash
+            # path and finds its cached evaluations (issue #12); an unseeded
+            # pick of an unvisited child would hit only by chance.
+            node = self._select(self._root, rng=np.random.default_rng(rollout))
 
             # 2. EXPAND — generate children from feature operations
             all_children_exhausted = False
@@ -417,7 +429,7 @@ class MCTSSearch:
     # MCTS phases
     # ------------------------------------------------------------------
 
-    def _select(self, node: MCTSNode) -> MCTSNode:
+    def _select(self, node: MCTSNode, rng: np.random.Generator | None = None) -> MCTSNode:
         """Phase 1 — SELECTION: walk down the tree from root to a leaf node.
 
         Starting at ``node`` (usually the root), repeatedly pick the best
@@ -428,7 +440,10 @@ class MCTSSearch:
         The returned leaf is the node where the next expansion + simulation
         will happen.  Because UCB scores give ``inf`` to unvisited children,
         any child that has never been evaluated will be selected before
-        revisiting an already-explored child.
+        revisiting an already-explored child.  ``rng`` drives the random
+        picks among unvisited children (and the zero-contribution fallback);
+        ``search()`` seeds it with the rollout index so the traversal is
+        reproducible across a resume.  ``None`` uses numpy's global RNG.
         """
         current = node
         depth = 0
@@ -437,6 +452,7 @@ class MCTSSearch:
             current = pareto_select(
                 current.children,
                 exploration_constant=self._config.exploration_constant,
+                rng=rng,
             )
             depth += 1
 
@@ -959,13 +975,16 @@ class MCTSSearch:
         - ``rollout``: re-evaluating a node in a later rollout is intentional
           exploration of a stochastic pipeline (deep-mode revisits), never a
           replay.
-        - ``depth``: the orchestrator's proposer-failure skip returns the
-          parent's plans unchanged, so a child can otherwise agree with its
-          parent on every field below.
-        - ``suggestion_index``: the sibling discriminator.  Read here, *before*
-          the write-back at the call site overwrites it with the output's
-          index (issue #14); a non-``int`` stand-in left by that write-back is
-          folded to a sentinel rather than raised on.
+        - ``lineage``: the child-position path from the root (``_lineage``).
+          Its length is the depth, which separates a child from a parent
+          whose plans it repeats verbatim (the orchestrator's proposer-failure
+          skip and the exhausted early-skip both return the input plans);
+          its last element is the sibling index *assigned at expansion*, so
+          it is immune to the ``suggestion_index`` write-back at the call
+          site (issue #14) and to numpy integer indices; and cousins whose
+          parents both returned content-identical plans differ structurally
+          (``[0, 0]`` vs ``[1, 0]``) instead of colliding on
+          ``(depth, index)``.
         - parent plan digest: the plan *content* the child is built from.  A
           REFINE keeps the feature name and changes only ``feature_idea``, so
           the feature-name set alone cannot tell a refined child from its
@@ -979,20 +998,48 @@ class MCTSSearch:
         ``scripts/train_mcts.py`` does with ``<output_dir>/agent_cache``): a
         shared directory would replay results across unrelated runs, starting
         with the root evaluation at rollout 0.  Runner stand-ins
-        (``Mock``, plain objects, outputs without plans) never raise: a raise
-        here would land in ``search()``'s rollout ``try``/``except`` and skip
-        the rollout silently (R9).
+        (``Mock``, plain objects, outputs without plans, detached nodes)
+        never raise: in later rollouts a raise here would land in
+        ``search()``'s rollout ``try``/``except`` and skip the rollout
+        silently (R9); the rollout-0 root evaluation sits outside that
+        ``try`` and would abort the search.
         """
-        index = getattr(node, "suggestion_index", 0)
         payload = {
             "rollout": int(rollout),
-            "depth": self._node_depth(node),
-            "suggestion_index": index if isinstance(index, int) else "opaque-index",
+            "lineage": self._lineage(node),
             "parent": self._parent_plan_digest(parent_output),
             "features": sorted(node.features),
         }
         raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         return f"r{rollout}-{hashlib.sha256(raw).hexdigest()[:16]}"
+
+    @staticmethod
+    def _lineage(node: MCTSNode) -> list[int | str]:
+        """Child-position path from the root to ``node`` (see ``_make_node_id``).
+
+        ``[]`` for the root, ``[1, 0]`` for the first child of the root's
+        second child.  Each entry is the node's position in
+        ``node.parent.children`` — fixed by ``_expand`` when the child is
+        created and preserved by dill across a checkpoint — found by
+        identity, because the dataclass ``__eq__`` compares fields (numpy
+        arrays included) and ``list.index`` would misfire on it.  O(depth).
+        A node whose parent does not list it among its children (a detached
+        test stand-in) contributes the ``"opaque-position"`` sentinel for
+        that level rather than raising.
+        """
+        path: list[int | str] = []
+        current = node
+        while current.parent is not None:
+            siblings = getattr(current.parent, "children", None) or []
+            position: int | str = "opaque-position"
+            for index, sibling in enumerate(siblings):
+                if sibling is current:
+                    position = index
+                    break
+            path.append(position)
+            current = current.parent
+        path.reverse()
+        return path
 
     @staticmethod
     def _parent_plan_digest(parent_output: Any) -> str | list[str]:

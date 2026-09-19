@@ -11,7 +11,7 @@ Usage::
     python scripts/train_mcts.py --task phase2 --rollouts 20 --depth 10
 
     # Resume from checkpoint
-    python scripts/train_mcts.py --task phase2 --resume .output/checkpoint.pkl
+    python scripts/train_mcts.py --task phase2 --resume .output/phase2/checkpoint.pkl
 
     # Custom output directory
     python scripts/train_mcts.py --task phase2 --output-dir .output/phase2_v1/
@@ -24,6 +24,7 @@ import functools
 import json
 import logging
 import time
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -51,7 +52,8 @@ def parse_args() -> argparse.Namespace:
 
     Returns:
         Namespace with task, rollouts, depth, resume, output_dir, and
-        checkpoint_every arguments.
+        checkpoint_every arguments.  ``main`` adds ``run_id`` before the
+        first checkpoint is written, so ``vars(args)`` persists it.
     """
     parser = argparse.ArgumentParser(
         description="Train a clinical trial outcome prediction model via MCTS feature search.",
@@ -124,26 +126,52 @@ def main() -> None:
     if args.depth is not None:
         settings.mcts.max_depth = args.depth
 
-    # The runner's cache is keyed on a run-stable node id (rollout, depth,
-    # sibling index, parent plans, features), so it must live inside this
-    # run's output directory: a shared cache would hand a fresh run the
-    # previous run's pickles instead of running the agent.  ``output_dir``
-    # is rebuilt from ``args`` (persisted in every checkpoint), so a resume
-    # with the same ``--output-dir`` keeps hitting its own pre-crash entries.
-    agent_cache_dir = output_dir / "agent_cache"
-    runner = functools.partial(run_agent_as_subprocess, cache_dir=agent_cache_dir)
-
     start_rollout = 0
     mcts = None
+    checkpoint: dict[str, Any] | None = None
 
     if args.resume:
         # ---- Resume from checkpoint ----
         logger.info("Resuming from checkpoint: %s", args.resume)
         with open(args.resume, "rb") as f:
             checkpoint = dill.load(f)
+        ckpt_args: dict[str, Any] = checkpoint.get("args") or {}
+        if ckpt_args.get("task") != args.task:
+            raise SystemExit(
+                f"--task {args.task} does not match the checkpoint's task "
+                f"{ckpt_args.get('task')!r} ({args.resume}); a checkpoint resumes "
+                "the phase it was trained on."
+            )
+        if ckpt_args.get("output_dir") != args.output_dir:
+            logger.warning(
+                "--output-dir %s differs from the checkpoint's %s: outputs and the "
+                "agent cache land under the new directory",
+                args.output_dir,
+                ckpt_args.get("output_dir"),
+            )
+        # The run id persisted in the checkpoint keeps the resumed process on
+        # its own agent cache; checkpoints written before run ids existed
+        # fall back to the checkpoint file's stem.
+        run_id = ckpt_args.get("run_id") or Path(args.resume).stem
+    else:
+        run_id = f"{time.strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
+    # Set before any checkpoint is dumped: ``vars(args)`` persists it.
+    args.run_id = run_id
+
+    # The runner's cache is keyed on a run-stable node id (rollout, lineage,
+    # parent plans, features), so it must be scoped per *run*, not per
+    # output directory: a second fresh run over the same ``--output-dir``
+    # would otherwise replay the first run's pickles (starting with the
+    # root evaluation at rollout 0) instead of running the agent.  A resume
+    # reuses its run id and keeps hitting its own pre-crash entries.
+    agent_cache_dir = output_dir / "agent_cache" / run_id
+    runner = functools.partial(run_agent_as_subprocess, cache_dir=agent_cache_dir)
+    logger.info("Run id %s — agent cache at %s", run_id, agent_cache_dir)
+
+    if checkpoint is not None:
         mcts = checkpoint["mcts"]
         # Re-point the pickled runner at this run's cache directory.
-        mcts._runner = runner
+        mcts.set_runner(runner)
         start_rollout = checkpoint["rollout"] + 1
         logger.info("Resumed at rollout %d", start_rollout)
     else:
