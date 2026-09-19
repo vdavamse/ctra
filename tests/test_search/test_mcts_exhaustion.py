@@ -61,8 +61,10 @@ class _DeadEndRunner(OrchestratorLikeRunner):
     output with no suggestions cannot be expanded (``_suggestion_expand``
     returns ``[]``).  ``search()`` then keeps the visited leaf as the node to
     simulate, which is the one path that re-evaluates a node whose
-    ``suggestion_index`` the write-back has already advanced past its parent's
-    list — i.e. the path issue #7's evaluation guard exists for.
+    ``suggestion_index`` the skip-advance write-back has already pushed past
+    its parent's list — every non-root call here is a skipped iteration, so it
+    returns ``sent + 1``, the one shape issue #14 leaves the node adopting —
+    i.e. the path issue #7's evaluation guard exists for.
     """
 
     def __call__(self, node_id: str, task: Any, previous_output: AgentOutput | None) -> AgentOutput:
@@ -104,10 +106,12 @@ def _subtree_history(node: MCTSNode) -> int:
 class _BirthRecordingSearch(MCTSSearch):
     """Records every child's exhaustion state at the moment it is created.
 
-    End-of-search state cannot be used for this invariant: a successfully
-    evaluated node has its counter advanced by the write-back in
-    ``_call_evaluate`` (issue #14), so evaluated last-index children are
-    legitimately past the end afterwards.  Birth is the moment R2 governs.
+    End-of-search state cannot be used for this invariant: an evaluated node
+    whose iteration the orchestrator *skipped* has its counter advanced to
+    ``sent + 1`` by the write-back in ``_call_evaluate`` (issue #14 honours
+    that advance; a successful iteration no longer resets the counter), so
+    evaluated last-index children are legitimately past the end afterwards.
+    Birth is the moment R2 governs.
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:

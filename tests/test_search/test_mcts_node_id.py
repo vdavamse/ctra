@@ -337,9 +337,12 @@ def test_stand_in_parent_outputs_never_raise(stand_in: Any) -> None:
 
 
 def test_mock_suggestion_index_never_raises() -> None:
-    """Issue #14's write-back leaves a Mock runner's ``suggestion_index`` on the node.
+    """A node carrying a ``Mock`` in ``suggestion_index`` still yields a well-formed id.
 
-    The lineage reads the tree position instead, so the Mock is never touched.
+    Issue #14's write-back no longer copies a stand-in runner's
+    ``suggestion_index`` onto the node, but a hand-built node or a stubbed
+    expansion can still put one there.  The lineage reads the tree position
+    instead, so the Mock is never touched.
     """
     search = _search()
     _root, child = _lineage()
