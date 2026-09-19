@@ -934,16 +934,25 @@ class MCTSSearch:
         # Defensive about stand-in runners (R5: this runs outside ``search()``'s
         # rollout try/except for the root): a Mock, a missing attribute or a bool
         # leaves the node's int alone rather than raising or poisoning the counter.
+        # ``isinstance`` alone is not enough — ``Mock(spec=int)`` passes it and
+        # then raises from ``int()`` — so the conversion is guarded too.
         sent_index = node.suggestion_index
         returned_index = getattr(output, "suggestion_index", None)
+        returned: int | None = None
+        sent: int | None = None
         if (
             isinstance(returned_index, (int, np.integer))
             and not isinstance(returned_index, bool)
             and isinstance(sent_index, (int, np.integer))
             and not isinstance(sent_index, bool)
-            and int(returned_index) > int(sent_index)
         ):
-            node.suggestion_index = int(returned_index)
+            try:
+                returned = int(returned_index)
+                sent = int(sent_index)
+            except (TypeError, ValueError):
+                returned = sent = None
+        if returned is not None and sent is not None and returned > sent:
+            node.suggestion_index = returned
 
         # Update node features to match actual output (subprocess may
         # produce different features via the proposer). Skip if the output
@@ -974,9 +983,9 @@ class MCTSSearch:
         """Log an exhaustion skip: INFO the first time for a given node, DEBUG after.
 
         The dedupe set lives on the search object, not the node: no new
-        ``MCTSNode`` state (R8) means dill checkpoints stay round-trippable and
-        #14 keeps a clean slate for its ``skipped`` flag.  ``getattr`` with a
-        default is what lets a checkpoint pickled *before* this change resume —
+        ``MCTSNode`` state (R8) means dill checkpoints stay round-trippable
+        (issue #14 likewise added no node state).  ``getattr`` with a default
+        is what lets a checkpoint pickled *before* this change resume —
         it unpickles without ``_skip_logged``.  ``id(node)`` is stable for the
         lifetime of a process and meaningless across a resume — a pickled set
         would carry stale ids that a fresh node can collide with, silencing its
