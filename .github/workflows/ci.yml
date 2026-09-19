@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # setup-uv publishes no floating major tag past v7; pin the full release SHA.
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
@@ -33,12 +33,16 @@ jobs:
     name: Tests (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # Use uv-managed interpreters on every leg; otherwise 3.12 silently picks
+      # the runner image's /usr/bin/python3.12 and its patch level drifts with the image.
+      UV_PYTHON_PREFERENCE: only-managed
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # setup-uv publishes no floating major tag past v7; pin the full release SHA.
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
@@ -55,7 +59,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # setup-uv publishes no floating major tag past v7; pin the full release SHA.
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
