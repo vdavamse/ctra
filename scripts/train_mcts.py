@@ -116,7 +116,6 @@ def main() -> None:
 
     task = Task.from_cli_arg(args.task)
     output_dir = Path(args.output_dir) / task.output_subdir
-    output_dir.mkdir(parents=True, exist_ok=True)
 
     settings = get_settings()
 
@@ -142,7 +141,8 @@ def main() -> None:
                 f"{ckpt_args.get('task')!r} ({args.resume}); a checkpoint resumes "
                 "the phase it was trained on."
             )
-        if ckpt_args.get("output_dir") != args.output_dir:
+        ckpt_output_dir = Path(ckpt_args.get("output_dir") or "").resolve()
+        if ckpt_output_dir != Path(args.output_dir).resolve():
             logger.warning(
                 "--output-dir %s differs from the checkpoint's %s: outputs and the "
                 "agent cache land under the new directory",
@@ -164,6 +164,7 @@ def main() -> None:
     # would otherwise replay the first run's pickles (starting with the
     # root evaluation at rollout 0) instead of running the agent.  A resume
     # reuses its run id and keeps hitting its own pre-crash entries.
+    output_dir.mkdir(parents=True, exist_ok=True)
     agent_cache_dir = output_dir / "agent_cache" / run_id
     runner = functools.partial(run_agent_as_subprocess, cache_dir=agent_cache_dir)
     logger.info("Run id %s — agent cache at %s", run_id, agent_cache_dir)

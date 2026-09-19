@@ -329,7 +329,10 @@ class MCTSSearch:
             # (like ``_simulate_deep``) so a resumed run replays the pre-crash
             # path and finds its cached evaluations (issue #12); an unseeded
             # pick of an unvisited child would hit only by chance.
-            node = self._select(self._root, rng=np.random.default_rng(rollout))
+            # SELECT gets its own stream: ``_simulate_deep`` seeds
+            # ``default_rng(rollout)``, and sharing that state would rank-link
+            # the two picks made in the same rollout.
+            node = self._select(self._root, rng=np.random.default_rng([rollout, 1]))
 
             # 2. EXPAND — generate children from feature operations
             all_children_exhausted = False
