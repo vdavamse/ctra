@@ -858,6 +858,18 @@ class MCTSSearch:
            ``node.eval_output`` so future children can use it as context and
            so ``_suggestion_expand`` can read the evaluator's suggestions.
 
+           The output's own ``suggestion_index`` is written back to the node
+           **only when it advances** past the one sent (issue #14).  A skipped
+           iteration returns ``sent + 1`` and the node must take it, or the
+           next rollout replays the dead suggestion; a *successful* iteration
+           returns a hard-coded ``0`` that says nothing about which suggestion
+           this node followed, and adopting it wiped the index assigned at
+           expansion — every re-evaluation then asked the proposer for
+           suggestion 0.  The counter is therefore monotonic: what a skip
+           burned stays burned, which is the semantics
+           ``suggestions_exhausted`` — and the guard in step 2 — is defined
+           against.
+
         5. **Sync features** — If the subprocess produced different features
            than expected (the proposer may modify the set), update
            ``node.features`` to reflect reality.
@@ -905,12 +917,33 @@ class MCTSSearch:
         # Store full AgentOutput on the node
         node.eval_output = output
 
-        # Honor suggestion_index advance from orchestrator (M1 fix: Site 1 fallback).
-        # When orchestrator skips an iteration due to proposer failure, it returns
-        # an AgentOutput with suggestion_index advanced by 1. Honor that advance on
-        # the node so subsequent rollouts don't replay the same exhausted suggestion.
-        if hasattr(output, "suggestion_index"):
-            node.suggestion_index = output.suggestion_index
+        # Honour a suggestion_index *advance* from the orchestrator (issue #14).
+        # ``Agent.forward`` returns three shapes, and only the middle one carries
+        # a counter the node should adopt:
+        #   - skipped iteration (proposer failure ``orchestrator.py:396-399``,
+        #     unhandled operation ``:522-525``) -> ``sent + 1``: the suggestion was
+        #     consumed and must not be replayed, so take it.
+        #   - successful iteration (``:619-633``) -> a hard-coded ``0`` that says
+        #     nothing about which suggestion this node followed.  Taking it reset
+        #     the child's expansion-assigned index and made every re-evaluation
+        #     replay suggestion 0 (issue #14).
+        #   - exhausted early-skip (``:370``) -> the input index unchanged (no
+        #     suggestion was consumed), so there is nothing to adopt.
+        # ``returned > sent`` separates them without a schema change: indices are
+        # non-negative, so a success (0) never advances and the early-skip is equal.
+        # Defensive about stand-in runners (R5: this runs outside ``search()``'s
+        # rollout try/except for the root): a Mock, a missing attribute or a bool
+        # leaves the node's int alone rather than raising or poisoning the counter.
+        sent_index = node.suggestion_index
+        returned_index = getattr(output, "suggestion_index", None)
+        if (
+            isinstance(returned_index, (int, np.integer))
+            and not isinstance(returned_index, bool)
+            and isinstance(sent_index, (int, np.integer))
+            and not isinstance(sent_index, bool)
+            and int(returned_index) > int(sent_index)
+        ):
+            node.suggestion_index = int(returned_index)
 
         # Update node features to match actual output (subprocess may
         # produce different features via the proposer). Skip if the output
