@@ -28,6 +28,7 @@ from ctra.agents.data_models import (
     BUILDER_OMITTED_REASON,
     AgentOutput,
     BuilderDiagnostics,
+    CacheStats,
     EvalOutput,
     FeatureOp,
     ModelEvalResult,
@@ -287,6 +288,10 @@ class Agent(dspy.Module):  # type: ignore[misc]
         train_nctids = self._extract_nctids(self.X_train)
         val_nctids = self._extract_nctids(self.X_val)
         test_nctids = self._extract_nctids(self.X_test)
+        # Fresh per call (issue #17): the six compute_features calls below
+        # share it, and it leaves with the returned output.  The three skip
+        # paths return a parent copy with its own zeroed set instead.
+        cache_stats = CacheStats()
 
         # =================================================================
         # Iteration 0: Initialize from scratch
@@ -304,6 +309,8 @@ class Agent(dspy.Module):  # type: ignore[misc]
                 feature_store_dir=feature_store_dir,
                 task_namespace=task_namespace,
                 feature_store_enabled=feature_store_enabled,
+                counters=cache_stats,
+                plan_origin="initializer",
             )
             logger.info("Computing features for val set (%d trials)", len(val_nctids))
             current_val_feature_values, val_none, val_meta = compute_features(
@@ -314,6 +321,8 @@ class Agent(dspy.Module):  # type: ignore[misc]
                 feature_store_dir=feature_store_dir,
                 task_namespace=task_namespace,
                 feature_store_enabled=feature_store_enabled,
+                counters=cache_stats,
+                plan_origin="initializer",
             )
             logger.info("Computing features for test set (%d trials)", len(test_nctids))
             current_test_feature_values, test_none, test_meta = compute_features(
@@ -324,6 +333,8 @@ class Agent(dspy.Module):  # type: ignore[misc]
                 feature_store_dir=feature_store_dir,
                 task_namespace=task_namespace,
                 feature_store_enabled=feature_store_enabled,
+                counters=cache_stats,
+                plan_origin="initializer",
             )
             none_explanations: dict[str, dict[str, str]] = {}
             _merge_two_level_dicts(none_explanations, train_none)
@@ -367,7 +378,8 @@ class Agent(dspy.Module):  # type: ignore[misc]
                 )
                 # Index is left where it is: no suggestion was consumed here, so
                 # advancing would inflate the "burned" count for work never done.
-                return deepcopy(previous_output)
+                # Zeroed counters: this iteration touched no store.
+                return deepcopy(previous_output)._replace(cache_stats=CacheStats())
 
             current_feature_values = deepcopy(previous_output.raw_features)
             current_val_feature_values = deepcopy(previous_output.raw_val_features)
@@ -396,6 +408,7 @@ class Agent(dspy.Module):  # type: ignore[misc]
                 safe_prev = deepcopy(previous_output)
                 return safe_prev._replace(
                     suggestion_index=safe_prev.suggestion_index + 1,
+                    cache_stats=CacheStats(),
                 )
 
             if proposer_result.feature_operation in (FeatureOp.ADD, FeatureOp.REFINE):
@@ -437,6 +450,8 @@ class Agent(dspy.Module):  # type: ignore[misc]
                         feature_store_dir=feature_store_dir,
                         task_namespace=task_namespace,
                         feature_store_enabled=feature_store_enabled,
+                        counters=cache_stats,
+                        plan_origin="planner",
                     )
                     new_val, val_none, val_meta = compute_features(
                         self.grouper,
@@ -446,6 +461,8 @@ class Agent(dspy.Module):  # type: ignore[misc]
                         feature_store_dir=feature_store_dir,
                         task_namespace=task_namespace,
                         feature_store_enabled=feature_store_enabled,
+                        counters=cache_stats,
+                        plan_origin="planner",
                     )
                     new_test, test_none, test_meta = compute_features(
                         self.grouper,
@@ -455,6 +472,8 @@ class Agent(dspy.Module):  # type: ignore[misc]
                         feature_store_dir=feature_store_dir,
                         task_namespace=task_namespace,
                         feature_store_enabled=feature_store_enabled,
+                        counters=cache_stats,
+                        plan_origin="planner",
                     )
 
                     # Merge into existing
@@ -522,6 +541,7 @@ class Agent(dspy.Module):  # type: ignore[misc]
                 safe_prev = deepcopy(previous_output)
                 return safe_prev._replace(
                     suggestion_index=safe_prev.suggestion_index + 1,
+                    cache_stats=CacheStats(),
                 )
 
         # =================================================================
@@ -630,4 +650,5 @@ class Agent(dspy.Module):  # type: ignore[misc]
             none_explanations=none_explanations,
             builder_meta=all_builder_meta,
             builder_diagnostics=diagnostics,
+            cache_stats=cache_stats,
         )

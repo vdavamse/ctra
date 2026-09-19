@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import MISSING, dataclass, field, fields, replace
 
 if sys.version_info >= (3, 11):
     from enum import StrEnum
@@ -387,6 +387,20 @@ class FeatureStoreCounters:
         return out
 
 
+@dataclass
+class CacheStats(FeatureStoreCounters):
+    """One agent iteration's cache counters, carried in ``AgentOutput.cache_stats``.
+
+    ``llm_calls_made`` is the calibration field: ``scripts/run_agent.py`` sets
+    it to the number of LLM calls the whole iteration made (every agent, not
+    only the builder) from ``dspy``'s global history, so a real run can check
+    ``LLM_CALLS_PER_GROUP_BUILD`` against ``groups_dispatched``.  It stays
+    ``0`` when the iteration ran in-process.
+    """
+
+    llm_calls_made: int = 0
+
+
 @dataclass(eq=False)
 class AgentOutput:
     """Full iteration state container (adapted from AutoCT line 266).
@@ -420,6 +434,25 @@ class AgentOutput:
     none_explanations: dict[str, dict[str, str]]
     builder_meta: dict[str, dict[str, Any]] = field(default_factory=dict)
     builder_diagnostics: BuilderDiagnostics = field(default_factory=BuilderDiagnostics)
+    # Counters for the compute_features calls *this* iteration made (issue
+    # #17).  Zeroed on every skipped iteration, so an output copied from its
+    # parent never replays the parent's counts; read with ``getattr`` by
+    # consumers that may see an output pickled before the field existed.
+    cache_stats: CacheStats = field(default_factory=CacheStats)
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Backfill ``default_factory`` fields missing from an older pickle.
+
+        Pickles and deepcopies restore instances through this hook.  An
+        ``AgentOutput`` dumped before ``cache_stats`` (or any later
+        defaulted field) existed would otherwise come back without the
+        attribute and break ``_replace`` -- ``dataclasses.replace`` reads
+        every field -- on the resume and skip paths.
+        """
+        self.__dict__.update(state)
+        for f in fields(self):
+            if f.name not in self.__dict__ and f.default_factory is not MISSING:
+                self.__dict__[f.name] = f.default_factory()
 
     def _replace(self, **kwargs: Any) -> AgentOutput:
         """Return a copy with specified fields replaced (NamedTuple compat).

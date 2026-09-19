@@ -62,6 +62,15 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _llm_calls_made() -> int:
+    """Number of LM calls dspy recorded in this process; 0 if unavailable."""
+    try:
+        from dspy.clients.base_lm import GLOBAL_HISTORY
+    except ImportError:
+        return 0
+    return len(GLOBAL_HISTORY)
+
+
 def main() -> None:
     """Run a single Agent iteration for feature engineering.
 
@@ -133,6 +142,16 @@ def main() -> None:
     logger.info("Running Agent iteration %s...", iteration)
 
     output = agent.forward(previous_output=previous_output)
+
+    # ---- Calibration for the cache instrumentation (issue #17) ----
+    # dspy appends every LM call made in this process to GLOBAL_HISTORY, so
+    # its length is the iteration's real LLM call count (all agents, not only
+    # the builder).  It rides along in the output's cache_stats so the parent
+    # can compare it with the groups_skipped * LLM_CALLS_PER_GROUP_BUILD
+    # estimate.  Guarded: an older dspy without the list just reports 0.
+    cache_stats = getattr(output, "cache_stats", None)
+    if cache_stats is not None:
+        cache_stats.llm_calls_made = _llm_calls_made()
 
     # ---- Serialize output ----
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
