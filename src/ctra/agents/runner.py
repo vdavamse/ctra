@@ -91,7 +91,7 @@ def run_agent_as_subprocess(
         task: ``Task`` enum member or CLI arg string (e.g. ``"phase2"``).
         previous_output: ``None`` for iteration 0, or previous ``AgentOutput``.
         cache_dir: Directory for caching results.  Defaults to
-            ``settings.mcts.feature_cache_dir.parent / "agent_cache"``.
+            ``settings.output_dir / "agent_cache"``.
 
     Returns:
         The ``AgentOutput`` from the subprocess.
@@ -107,7 +107,7 @@ def run_agent_as_subprocess(
     else:
         task_cli = task
     settings = get_settings()
-    cache_dir = cache_dir or settings.mcts.feature_cache_dir.parent / "agent_cache"
+    cache_dir = cache_dir or settings.output_dir / "agent_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     # Check disk cache

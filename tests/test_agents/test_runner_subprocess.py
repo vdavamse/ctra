@@ -63,10 +63,8 @@ def _make_mock_output(roc_auc: float = 0.85) -> AgentOutput:
 def _mock_settings(monkeypatch, cache_dir: Path | None = None):
     """Mock get_settings for run_agent_as_subprocess."""
     mock_s = MagicMock()
-    # Use a mock for feature_cache_dir so .parent / "agent_cache" works
-    mock_cache_dir = MagicMock()
-    mock_cache_dir.parent.__truediv__ = lambda self, other: Path("/tmp") / other
-    mock_s.mcts.feature_cache_dir = mock_cache_dir
+    # Mock output_dir for agent_cache derivation
+    mock_s.output_dir = Path("/tmp")
     monkeypatch.setattr("ctra.agents.runner.get_settings", MagicMock(return_value=mock_s))
     return mock_s
 
