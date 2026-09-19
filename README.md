@@ -178,6 +178,8 @@ Fallback location (`output/agent_cache/`, i.e. `settings.output_dir / "agent_cac
 
 **Measured reuse:** _pending — see issue #17._
 
+`results.json` carries a `cache` block with the run's feature-store and agent-cache hit rates (also logged per rollout, and to MLflow with `--mlflow`). What each counter means, how "LLM calls avoided" is estimated and the offline measurement are in [research/cache-reuse-measurement.md](./research/cache-reuse-measurement.md).
+
 ### 4. Prediction
 
 Predict the outcome of a single clinical trial using a trained phase-specific model.
