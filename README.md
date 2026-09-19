@@ -157,14 +157,24 @@ python scripts/train_mcts.py --task phase3 --rollouts 20
 python scripts/train_mcts.py --task phase2 --resume .output/phase2/checkpoint.pkl
 ```
 
-Output structure:
-```
-.output/
-  phase1/feature_plans.json, best_model.pkl, results.json, mcts_state.pkl
-  phase2/...
-  phase3/...
-  feature_cache/   # Shared across phases (feature values are trial-specific)
-```
+### Outputs and caches
+
+The MCTS training pipeline produces two separate output trees (one for training, one for feature storage), both covered by `.gitignore`:
+
+**Training artifacts** (`.output/<phase>/`):
+- `feature_plans.json` — the Pareto front of feature sets discovered by MCTS for this phase
+- `best_model.pkl` — the final trained XGBoost or TabPFN model
+- `results.json` — trial-level predictions and evaluation metrics
+- `mcts_state.pkl` — the complete MCTS tree (nodes, rewards, rollout history)
+- `checkpoint.pkl` — intermediate checkpoint for resuming long runs (see `--resume` above)
+- `agent_cache/<run_id>/` — cached LLM agent outputs (feature plans + rationales) from this training run
+
+**Feature cache** (`output/feature_store/<phase>/<feature_name>--<plan_hash>/`):
+- `<nctid>.json` — cached computed feature values for a trial, scoped by phase and plan content
+
+Both directories are per-phase intentionally: each phase's MCTS search generates phase-specific task descriptions (prompts to the LLM agent), so feature plan text rarely collides across phases, and a shared namespace would widen the `dill.loads` trust boundary without gains. See issue #17 for ongoing measurement of cross-phase cache reuse.
+
+Fallback location (`output/agent_cache/`): if no `--cache-dir` is passed to `train_mcts.py`, agent outputs are cached under this cross-phase directory with phase-prefixed keys; the per-phase-per-run structure under `.output/` is preferred.
 
 ### 4. Prediction
 
