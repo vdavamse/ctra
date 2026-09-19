@@ -189,6 +189,20 @@ def main() -> None:
                 ckpt_reference,
                 current_reference,
             )
+        # Same for the backpropagation rule (issue #16): the tree's UCB state
+        # was folded under the checkpoint's rule, and switching rules mid-run
+        # would mix aggregates.  A checkpoint pickled before the field existed
+        # ran under ``mean``.
+        ckpt_backprop = getattr(mcts.config, "backprop", "mean")
+        current_backprop = settings.mcts.backprop
+        if ckpt_backprop != current_backprop:
+            logger.warning(
+                "Checkpoint %s was started with backprop %r; the current settings "
+                "say %r. The resumed search keeps the checkpoint's rule.",
+                args.resume,
+                ckpt_backprop,
+                current_backprop,
+            )
         start_rollout = checkpoint["rollout"] + 1
         logger.info("Resumed at rollout %d", start_rollout)
     else:
@@ -308,14 +322,23 @@ def main() -> None:
     # Before that fix this field held ``mean_reward``, the average over the
     # node's subtree, which is a different (usually lower) number; it is kept
     # alongside as ``best_mean_objectives`` for continuity with older runs.
+    # That value is ``value_estimate(best_node)``, the vector UCB exploited
+    # under the run's backprop rule (issue #16): a subtree mean under
+    # ``mean``, the elementwise maximum under ``max``, the best realised
+    # vector under ``max_hv``.  The key is kept for continuity and
+    # ``backprop`` records the rule; a checkpoint from before the field
+    # existed ran under ``mean``.
     best_own = mcts.best_own_objectives(best_node)
+    backprop = getattr(mcts.config, "backprop", "mean")
+    best_estimate = mcts.value_estimate(best_node)
     results = {
         "task": args.task,
         "rollouts": total_rollouts,
         "depth": settings.mcts.max_depth,
+        "backprop": backprop,
         "best_features": best_node.features,
         "best_objectives": best_own.tolist(),
-        "best_mean_objectives": best_node.mean_reward.tolist(),
+        "best_mean_objectives": best_estimate.tolist(),
         "total_nodes": len(mcts.all_nodes),
         "elapsed_seconds": round(total_elapsed, 1),
     }
@@ -333,7 +356,10 @@ def main() -> None:
     for feat in best_node.features:
         print(f"    - {feat}")
     print(f"  Best objectives: {np.round(best_own, 4)}")
-    print(f"  Subtree mean:    {np.round(best_node.mean_reward, 4)}")
+    estimate_label = {"mean": "Subtree mean", "max": "Subtree max"}.get(
+        backprop, "Best subtree point"
+    )
+    print(f"  {estimate_label + ':':<16} {np.round(best_estimate, 4)}")
     print(f"  Time: {total_elapsed:.0f}s")
     print(f"  Output: {output_dir}")
     print(f"{'=' * 60}")

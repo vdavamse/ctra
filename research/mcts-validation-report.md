@@ -48,6 +48,7 @@ All of the following were independently verified via web sources:
 
 ### Deep Analysis Section
 - AutoCT `treesearch.py` behavior (max-reward backpropagation, undiscounted, exploration_weight=1.0) — confirmed
+  - CTRA ablated this rule against its PMMG-style vector mean (issue #16): [backprop-ablation.md](backprop-ablation.md). The vectorised max is within noise where UCB decides and the default stays `mean`.
 - PMMG `mcts.py` structure (hardcoded 0.2 vs configured c_val=1.0, Pareto dominance filtering, random selection from non-dominated set) — confirmed
 - Structural isomorphism analysis (molecules vs feature sets) — well-reasoned and internally consistent
 

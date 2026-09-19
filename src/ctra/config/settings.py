@@ -416,6 +416,20 @@ class MCTSConfig(BaseSettings):
     # When disabled, each rollout evaluates a single node (shallow mode).
     deep_simulation: bool = True
 
+    # Backpropagation rule for the objective vectors (issue #16 ablation).
+    # ``mean``: every ancestor accumulates each vector backpropagated through
+    # it, so ``MCTSNode.mean_reward`` is the subtree mean (PMMG-style; the
+    # default).  ``max``: the elementwise running maximum of those vectors,
+    # the vectorised reading of AutoCT's max-reward backpropagation; it can
+    # combine coordinates no single evaluation scored.  ``max_hv``: the one
+    # realised vector with the largest ``(hypervolume above reference_point,
+    # accuracy)`` key, the key ``MCTSSearch._best_own_objectives`` ranks by.
+    # ``visit_count`` counts evaluations under all three, and the final pick
+    # (issue #15) reads each node's own history, so the rule changes only
+    # which nodes get evaluated.  Measured in research/backprop-ablation.md;
+    # a resumed checkpoint keeps the rule it was started under.
+    backprop: Literal["mean", "max", "max_hv"] = "mean"
+
     # Subprocess execution
     subprocess_timeout: int = 3600
     """Timeout in seconds for each subprocess agent evaluation."""
