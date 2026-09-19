@@ -470,14 +470,21 @@ class TestTolerances:
     def test_twins_straddling_a_decimal_grid_boundary_are_deduped(self):
         """Merging is by tolerance, not by rounding to a decimal grid.
 
-        These twins are 2e-15 apart but round to different 12-decimal values,
-        so a round-then-unique dedupe would keep both and let the root win.
+        These twins are ~2e-15 apart (offset in opposite directions so both
+        stay on the front) but their parsimony values round to different
+        12-decimal values, so a round-then-unique dedupe would keep both and
+        let the root win.
         """
         search = _search(["accuracy", "parsimony"], [0.0, 0.0])
         root = _node(["a"], own=[[0.50, 0.98]], visit_count=1)
         twins = [
-            _node(["a", "b", "c"], own=[[0.85, 0.940000000000499]], visit_count=1, parent=root),
-            _node(["a", "b", "d"], own=[[0.85, 0.940000000000501]], visit_count=1, parent=root),
+            _node(["a", "b", "c"], own=[[0.85, 0.940000000000501]], visit_count=1, parent=root),
+            _node(
+                ["a", "b", "d"],
+                own=[[0.850000000000002, 0.940000000000499]],
+                visit_count=1,
+                parent=root,
+            ),
         ]
         _wire(search, root, *twins)
 
