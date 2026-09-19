@@ -165,14 +165,14 @@ The MCTS training pipeline produces two separate output trees (one for training,
 - `feature_plans.json` — the feature plans of the selected best node (one feature set, not the whole Pareto front; the front lives in `mcts_state.pkl`)
 - `best_model.pkl` — the final trained XGBoost or TabPFN model
 - `results.json` — run summary: task, rollouts, depth, backprop rule, best feature set with its own objective vector (`best_objectives`) and value estimate (`best_mean_objectives`), node count, elapsed time
-- `mcts_state.pkl` — the complete MCTS tree (nodes, rewards, rollout history)
+- `mcts_state.pkl` — the pickled `MCTSSearch` (the full tree; each node keeps its `objective_history`) plus the last rollout index and the CLI args, in the same `{"mcts", "rollout", "args"}` format as `checkpoint.pkl`
 - `checkpoint.pkl` — intermediate checkpoint for resuming long runs (see `--resume` above)
 - `agent_cache/<run_id>/` — pickled `AgentOutput` per evaluated node (`<phase>--<node_id>.output.pkl`: feature plans, evaluation results, trained model pipelines and the train/val frames) — crash-recovery cache for this run; loaded with `dill`, so the same trust boundary as the feature store applies
 
 **Feature cache** (`output/feature_store/<phase>/<feature_name>--<plan_hash>/`):
 - `<nctid>.json` — cached computed feature values for a trial, scoped by phase and plan content
 
-The two caches are per-phase for different reasons. The feature store is namespaced by `Task.output_subdir` (the orchestrator passes it as the store's `task_namespace`) so that phase-specific task descriptions never collide; the store is loaded with `dill.loads`, which `feature_store.py` documents as a trust boundary. The agent cache is per-phase only because `train_mcts.py` nests it under `<output_dir>/<phase>/agent_cache/<run_id>/`; its entries are keyed by a run-stable node id that does not encode the run itself, so a second fresh run over the same `--output-dir` would replay the first run's pickles unless each run gets its own directory. Issue #17 instruments the cross-branch hit rate and will recommend whether a shared namespace is worth it; no hit rate has been measured yet.
+The two caches are per-phase for different reasons. The feature store is namespaced by `Task.output_subdir` (the orchestrator passes it as the store's `task_namespace`) so that phase-specific task descriptions never collide; the store is loaded with `dill.loads`, which `feature_store.py` documents as a trust boundary. The agent cache is per-phase only because `train_mcts.py` nests it under `<output_dir>/<phase>/agent_cache/<run_id>/`; its entries are keyed by a run-stable node id that does not encode the run itself, so a second fresh run over the same `--output-dir` would replay the first run's pickles unless each run gets its own directory.
 
 Fallback location (`output/agent_cache/`, i.e. `settings.output_dir / "agent_cache"`): used only when `run_agent_as_subprocess` is called without a `cache_dir` — for example when it is passed bare as the `runner` of an `MCTSSearch` constructed programmatically (`MCTSSearch` has no default runner; the caller supplies one). `train_mcts.py` never uses it; it always passes the per-run directory above. Keys are still phase-prefixed (`phase2--<node_id>.output.pkl`), so phases cannot collide there.
 
@@ -405,11 +405,7 @@ For the deep learning baseline models, the standard three modalities apply:
 
 ## Reference Implementations
 
-The `repositories/` directory contains only the TrialBench benchmark dataset. All other reference implementations have been removed from the repository — see their original GitHub repos linked in the references below.
-
-| Directory | Paper | Ref | Role in CTRA |
-|-----------|-------|-----|-------------|
-| `ML2ClinicalTrials/Trialbench/` | TrialBench — Multi-Modal AI-Ready Datasets | [[20]](#ref-20) | **Benchmark dataset** — 23 datasets, 8 tasks; source of AutoCT training/evaluation splits |
+Reference implementations are not vendored in this repository (no `repositories/` directory is tracked); see their original GitHub repos linked in the table below. The TrialBench benchmark dataset [[20]](#ref-20) (23 datasets, 8 tasks; source of AutoCT training/evaluation splits) is not checked in either — it is available via the `trialbench` package, see [TrialBench](#trialbench) above.
 
 **External reference repositories** (not included in this repo):
 

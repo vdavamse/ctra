@@ -33,7 +33,7 @@ This plan transforms the AutoCT research prototype into a production-grade CTRA 
 - **MCTS:** 6 targeted fixes + Pareto multi-objective search (2 objectives per phase) + AB-MCTS adaptive branching. See `research/mcts-implementation-design.md` § "As Implemented" for current design vs. planned design.
 - **Data:** TrialBench + TOP + CTOD benchmarks; training expanded to 200-500 samples
 - **Rollouts:** Minimum 20 MCTS rollouts (up from default 10)
-- **Feature Caching:** Global feature value store for cross-branch reuse — projected 49-66% reduction in LLM calls
+- **Feature Caching:** Per-phase feature value store (namespaced by `Task.output_subdir`, so reuse is cross-branch within one phase's tree, not global) — projected 49-66% reduction in LLM calls
 
 ---
 

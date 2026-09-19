@@ -1,6 +1,6 @@
 # AutoCT Search Strategy: Implementation Design
 
-> **⚠ SUPERSEDED** — This document specifies a design with 3 objectives (accuracy + calibration + stability across phases). The current implementation uses per-phase isolation with 2 objectives (accuracy + parsimony). See "As Implemented" section below for what was built.
+> **⚠ SUPERSEDED** — This document specifies a design with 3 objectives (cross-phase weighted ROC-AUC + calibration/ECE + parsimony). The current implementation uses per-phase isolation with 2 objectives (per-phase ROC-AUC + parsimony): the weighted AUC became each phase's own ROC-AUC, calibration was dropped, and parsimony was kept. See "As Implemented" section below for what was built.
 
 > Synthesized from codebase analysis, convergence validation, approach comparison, and augmentation compatibility research (2026-03-26). This document resolves the Pareto MCTS vs LLM-FE debate and specifies a concrete implementation plan for multi-objective feature search in CTRA.
 
@@ -45,11 +45,11 @@ The right answer: **build both, compare empirically, commit to the winner.**
 
 ## As Implemented (Current State)
 
-The recommendation to "build both" was set aside; Pareto MCTS was built and deployed with modifications to the original design:
+The recommendation to "build both" was set aside; Pareto MCTS was built with modifications to the original design:
 
 - **Per-phase isolation:** Each clinical trial phase (I, II, III) runs a completely independent MCTS tree with its own objectives and Pareto front. The original design expected cross-phase weighted AUC as the accuracy objective. Per-phase isolation (each phase is an independent `Task`, matching AutoCT) makes a cross-phase weighted AUC undefined within one tree; the accuracy objective is the phase's own validation ROC-AUC.
 
-- **Two objectives, not three:** Implementation uses accuracy (validation ROC-AUC) + parsimony (feature count efficiency). The original design included calibration (ECE, expected calibration error) as a third objective. It was never implemented; `MCTSConfig.objectives` is typed `Literal["accuracy", "parsimony"]`, so no third objective can be enabled without a code change. No rationale for dropping it is recorded.
+- **Two objectives, not three:** Implementation uses accuracy (validation ROC-AUC) + parsimony (feature count efficiency). The original design's three objectives were weighted AUC, calibration (ECE, expected calibration error) and parsimony; calibration was never implemented, and `MCTSConfig.objectives` is typed `Literal["accuracy", "parsimony"]`, so no third objective can be enabled without a code change. No rationale for dropping it is recorded.
 
 - **Reference point `[0.5, 0.0]`:** Each phase's MCTS ranks hypervolume contributions against `[0.5, 0.0]` — accuracy at the ROC-AUC chance baseline, parsimony at its floor (final selection and best-on-path; in-search child selection via `pareto_select` still measures from the origin, see README). This avoids inflating the rank of any one-feature root that happens to get a random accuracy bump. See issue #18 for the full rationale.
 

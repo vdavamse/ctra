@@ -7,7 +7,7 @@
     ============================================================================
 
     GOAL: Find the best combination of features for predicting clinical trial
-          success/failure, balancing accuracy, cost, and cross-phase consistency.
+          success/failure, balancing accuracy and feature-set size, per phase.
 
     INPUT                         MCTS SEARCH                        OUTPUT
     -----                         -----------                        ------
@@ -50,12 +50,12 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
 
     Example values (Phase II):
     +--------------------------------------------------+
-    | Feature Set                | Validation ROC-AUC |
+    | Feature Set                | Validation ROC-AUC  |
     |----------------------------|---------------------|
-    | {enrollment, drug_targets} |       0.58         |
-    | {+ adverse_events}         |       0.64         |  <-- +0.06
-    | {+ sponsor_success}        |       0.68         |  <-- +0.04
-    | {+ biomarker, orphan_drug} |       0.72         |  <-- +0.04
+    | {enrollment, drug_targets} |       0.58          |
+    | {+ adverse_events}         |       0.64          |  <-- +0.06
+    | {+ sponsor_success}        |       0.68          |  <-- +0.04
+    | {+ biomarker, orphan_drug} |       0.72          |  <-- +0.04
     +--------------------------------------------------+
     Each phase optimizes independently; a feature that helps Phase II
     may not help Phase I or III, and that's fine.
@@ -165,7 +165,7 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
 
 ## 4. Simulation Example (Illustrative Run)
 
-> Values adapted by hand from the original 3-objective run (the stability objective was dropped and the hypervolume recomputed against `[0.5, 0.0]`); the 2-objective configuration shown below has not been re-run.
+> Values adapted by hand from the original 3-objective run (its third objective was dropped, the Pareto front re-pruned under the remaining two objectives and the hypervolume recomputed against `[0.5, 0.0]`); the 2-objective configuration shown below has not been re-run.
 
 ```
     PROBLEM: Find synergistic feature combination
@@ -250,23 +250,18 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
                                           Synergy bonus triggered!
 
 
-    PARETO FRONT (10 non-dominated solutions)
-    ==========================================
+    PARETO FRONT (3 non-dominated solutions)
+    ========================================
 
-    +------+------------------------------------------+---------+---------+---------+
-    | Depth| Features                                 | Accurac | Parsim  | Stabilit|
-    |------|------------------------------------------|---------|---------|---------|
-    |  3   | [noise_1, feat_C, noise_3, feat_A]       |  0.591  |  0.920  |  0.939  |
-    |  3   | [noise_1, noise_3, feat_D, feat_C]       |  0.603  |  0.920  |  0.936  |
-    |  3   | [noise_1, feat_C, feat_D, feat_A]        |  0.692  |  0.920  |  0.922  |
-    |  4   | [noise_1, feat_C, feat_D, feat_A, noise] |  0.707  |  0.900  |  0.930  |
-    |  4   | [noise_1, feat_C, feat_D, feat_B, feat_A]|  0.840  |  0.900  |  0.929  |
-    |  2   | [noise_1, noise_3, feat_D]               |  0.856  |  0.860  |  0.907  |
-    |  6   | [noise_1, feat_C, feat_D, ..., feat_B]   |  0.852  |  0.860  |  0.924  |
-    |  6   | [noise_1, noise_3, feat_D, ..., feat_B]  |  0.865  |  0.860  |  0.906  |
-    +------+------------------------------------------+---------+---------+---------+
+    +------+------------------------------------------+---------+---------+
+    | Depth| Features                                 | Accurac | Parsim  |
+    |------|------------------------------------------|---------|---------|
+    |  3   | [noise_1, feat_C, feat_D, feat_A]        |  0.692  |  0.920  |
+    |  4   | [noise_1, feat_C, feat_D, feat_B, feat_A]|  0.840  |  0.900  |
+    |  6   | [noise_1, noise_3, feat_D, ..., feat_B]  |  0.865  |  0.860  |
+    +------+------------------------------------------+---------+---------+
 
-    The Pareto front spans depths 2-6, showing that MCTS explores both
+    The Pareto front spans depths 3-6, showing that MCTS explores both
     shallow (few features, high parsimony) and deep (more features,
     higher accuracy) solutions simultaneously.
 ```
@@ -362,27 +357,27 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
 
     At each internal node, compute UCB vector per child:
 
-    Child A: UCB = [mean_acc + C*explore, mean_pars + C*explore, mean_stab + C*explore]
-           = [0.65 + 0.42, 0.85 + 0.42, 0.90 + 0.42]
-           = [1.07, 1.27, 1.32]
+    Child A: UCB = [mean_acc + C*explore, mean_pars + C*explore]
+           = [0.58 + 0.42, 0.85 + 0.42]
+           = [1.00, 1.27]
 
-    Child B: UCB = [0.72 + 0.38, 0.70 + 0.38, 0.88 + 0.38]
-           = [1.10, 1.08, 1.26]
+    Child B: UCB = [0.77 + 0.38, 0.77 + 0.38]
+           = [1.15, 1.15]
 
-    Child C: UCB = [0.60 + 0.55, 0.90 + 0.55, 0.92 + 0.55]
-           = [1.15, 1.45, 1.47]
+    Child C: UCB = [0.78 + 0.55, 0.45 + 0.55]
+           = [1.33, 1.00]
                     ^
                     |
-           Unvisited nodes get UCB = [inf, inf, inf] -> always explored first
+           Unvisited nodes get UCB = [inf, inf] -> always explored first
 
     Step 1: Pareto front of UCB vectors
             A dominates none, B dominates none, C dominates none
             All three are on the front.
 
-    Step 2: Hypervolume contribution
-            HV(A) = exclusive volume A contributes = 0.15
-            HV(B) = exclusive volume B contributes = 0.08
-            HV(C) = exclusive volume C contributes = 0.22  <-- highest
+    Step 2: Hypervolume contribution (measured from the origin)
+            HV(A) = exclusive volume A contributes = 0.12
+            HV(B) = exclusive volume B contributes = 0.02
+            HV(C) = exclusive volume C contributes = 0.18  <-- highest
                                                        |
     Step 3: SELECT C (highest HV contribution)  <------+
 
