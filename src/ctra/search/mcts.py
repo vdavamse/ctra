@@ -8,7 +8,8 @@ for CTRA:
     - Pareto UCT replaces scalar UCT argmax during tree policy.
     - AB-MCTS adaptive branching controls the expansion factor per node.
     - Feature value cache (cross-branch reuse) reduces redundant LLM calls.
-    - ``_select_best()`` uses hypervolume contribution instead of scalar max.
+    - ``_select_best()`` ranks each node's *own* evaluation by Pareto front
+      then hypervolume contribution, instead of scalar max over subtree means.
 
 Architecture:
     ``MCTSSearch`` accepts a **runner** callable
@@ -111,8 +112,10 @@ class MCTSNode:
 
         Returns an array of shape ``(n_objectives,)`` where each element is
         ``total_reward[j] / visit_count``.  For an unvisited node (visit_count
-        == 0) returns zeros to avoid division-by-zero.  The mean reward is used
-        by UCB scoring and by ``_select_best`` to rank nodes.
+        == 0) returns zeros to avoid division-by-zero.  The mean reward is what
+        UCB scoring consumes during the search.  It is deliberately *not* what
+        ``_select_best`` ranks by — the final pick uses each node's own
+        evaluations (``MCTSSearch._best_own_objectives``, issue #15).
         """
         if self.visit_count == 0:
             return np.zeros_like(self.total_reward)
@@ -162,8 +165,9 @@ class MCTSNode:
                 origin ``[0, 0, ...]``. In practice, ``MCTSSearch`` uses the
                 configured ``reference_point`` from ``MCTSConfig``.
 
-        Used by ``_select_best`` to break ties among Pareto-front nodes and
-        by external callers for reporting.
+        Reporting helper for external callers.  ``_select_best`` does not use
+        it: it ranks nodes by their own evaluations, not by the subtree mean
+        this collapses (issue #15).
         """
         mean = self.mean_reward
         if reference is None:
@@ -283,8 +287,11 @@ class MCTSSearch:
                 skipped (assumed restored from checkpoint).
 
         Returns:
-            The best node found (by Pareto rank, then hypervolume
-            contribution).
+            The best node found: among the nodes that were evaluated at least
+            once, the one whose *own* best objective vector wins on Pareto rank,
+            then hypervolume contribution (``_select_best``).  Its score is
+            ``best_own_objectives(node)``; ``node.mean_reward`` is the subtree
+            mean UCB used and is generally lower.
         """
         if start_rollout == 0:
             # Fresh start: create root and evaluate it
@@ -578,11 +585,11 @@ class MCTSSearch:
         rng = np.random.default_rng(rollout)
         current = start_node
 
-        # NOTE: On the first rollout, start_node is the root which was already
-        # evaluated during search() setup.  This causes root to be evaluated
-        # twice, slightly inflating its visit_count.  This is functionally
-        # harmless — subsequent rollouts dilute the effect, and MCTS selection
-        # operates on children, not root.  See test_root_visit_count_not_inflated.
+        # NOTE: on rollout 0 ``start_node`` is the root, which ``search()`` has
+        # already evaluated.  It is not evaluated twice: ``_select`` descends to a
+        # leaf and ``search()`` moves to a freshly expanded child before calling
+        # here, so the root reaches this line only when it has no children at all.
+        # See test_root_visit_count_not_inflated.
 
         # Evaluate start node and backpropagate
         start_obj = self._call_evaluate(current, rollout=rollout)
