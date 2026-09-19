@@ -47,13 +47,13 @@ The right answer: **build both, compare empirically, commit to the winner.**
 
 The recommendation to "build both" was set aside; Pareto MCTS was built and deployed with modifications to the original design:
 
-- **Per-phase isolation:** Each clinical trial phase (I, II, III) runs a completely independent MCTS tree with its own objectives and Pareto front. The original design expected cross-phase weighted AUC as the accuracy objective; the implementation found that per-phase optimization with a per-phase validation ROC-AUC is cleaner and avoids the tuning burden of phase weights.
+- **Per-phase isolation:** Each clinical trial phase (I, II, III) runs a completely independent MCTS tree with its own objectives and Pareto front. The original design expected cross-phase weighted AUC as the accuracy objective. Per-phase isolation (each phase is an independent `Task`, matching AutoCT) makes a cross-phase weighted AUC undefined within one tree; the accuracy objective is the phase's own validation ROC-AUC.
 
-- **Two objectives, not three:** Implementation uses accuracy (validation ROC-AUC) + parsimony (feature count efficiency). The original design included calibration (ECE, expected calibration error) as a third objective, but this was never integrated — ECE optimization requires a different ground-truth labeling scheme and adds complexity without measured benefit.
+- **Two objectives, not three:** Implementation uses accuracy (validation ROC-AUC) + parsimony (feature count efficiency). The original design included calibration (ECE, expected calibration error) as a third objective. It was never implemented; `MCTSConfig.objectives` is typed `Literal["accuracy", "parsimony"]`, so no third objective can be enabled without a code change. No rationale for dropping it is recorded.
 
-- **Reference point `[0.5, 0.0]`:** Each phase's MCTS ranks hypervolume contributions against `[0.5, 0.0]` — accuracy at the ROC-AUC chance baseline, parsimony at its floor. This avoids inflating the rank of any one-feature root that happens to get a random accuracy bump. See issue #18 for the full rationale.
+- **Reference point `[0.5, 0.0]`:** Each phase's MCTS ranks hypervolume contributions against `[0.5, 0.0]` — accuracy at the ROC-AUC chance baseline, parsimony at its floor (final selection and best-on-path; in-search child selection via `pareto_select` still measures from the origin, see README). This avoids inflating the rank of any one-feature root that happens to get a random accuracy bump. See issue #18 for the full rationale.
 
-- **No multi-fidelity in search:** Multi-fidelity evaluation (25%, 50%, 75%, 100% data schedules per rollout) was not implemented in the search layer. A future revision could add it, but the cost savings are not critical at current scale.
+- **No multi-fidelity in search:** Multi-fidelity evaluation (25%, 50%, 75%, 100% data schedules per rollout) was not implemented in the search layer (only `mlops/retraining.py` has a fidelity notion); no decision on it is recorded.
 
 For full implementation details, see `src/ctra/config/settings.py` (MCTSConfig, objectives list), `src/ctra/search/objectives.py` (FeatureSet, ObjectiveResult), and `docs/mcts-implementation-infographic.md` (§ "The Two Per-Phase Objectives").
 

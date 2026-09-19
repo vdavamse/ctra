@@ -784,11 +784,11 @@ def _build_evaluator_context(self, node):
 
 ### 6.2 Pareto Multi-Objective MCTS
 
+> **Note:** This section (all of § 6.2) describes the planned design. The current implementation uses 2 objectives per phase and no multi-fidelity evaluation in the search layer. See `research/mcts-implementation-design.md` § "As Implemented" for what was actually built.
+
 Based on detailed design in `research/mcts-implementation-design.md`.
 
 #### Three Objectives (Not Five)
-
-> **Note:** This section describes the planned design. The current implementation uses 2 objectives per phase. See `research/mcts-implementation-design.md` § "As Implemented" for what was actually built.
 
 The convergence research is definitive: 5 objectives at ~140-400 evaluations is not viable (60-80% of solutions become non-dominated, making selection random). Three objectives maintain selection pressure:
 

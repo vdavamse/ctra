@@ -60,7 +60,7 @@ def _make_mock_output(roc_auc: float = 0.85) -> AgentOutput:
     )
 
 
-def _mock_settings(monkeypatch, cache_dir: Path | None = None):
+def _mock_settings(monkeypatch):
     """Mock get_settings for run_agent_as_subprocess."""
     mock_s = MagicMock()
     # Mock output_dir for agent_cache derivation
@@ -89,7 +89,7 @@ class TestSubprocessCacheHit:
         with open(cached_path, "wb") as f:
             dill.dump(expected_output, f)
 
-        _mock_settings(monkeypatch, cache_dir)
+        _mock_settings(monkeypatch)
 
         mock_subprocess_run = MagicMock()
         monkeypatch.setattr("ctra.agents.runner.subprocess.run", mock_subprocess_run)
@@ -136,7 +136,6 @@ class TestSubprocessCacheHit:
         assert result.eval_outputs["xgboost"].model_eval_result.roc_auc == 0.77
         mock_subprocess_run.assert_not_called()
 
-
     def test_cache_hit_with_different_tasks(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -151,7 +150,7 @@ class TestSubprocessCacheHit:
         with open(cached_p2, "wb") as f:
             dill.dump(output_p2, f)
 
-        _mock_settings(monkeypatch, cache_dir)
+        _mock_settings(monkeypatch)
 
         # This should NOT find a cache for phase3
         mock_subprocess_run = MagicMock()
@@ -191,7 +190,7 @@ class TestSubprocessCacheMiss:
         cache_dir = tmp_path / "agent_cache"
         cache_dir.mkdir()
 
-        _mock_settings(monkeypatch, cache_dir)
+        _mock_settings(monkeypatch)
 
         mock_subprocess_run = MagicMock()
         monkeypatch.setattr("ctra.agents.runner.subprocess.run", mock_subprocess_run)
@@ -230,7 +229,7 @@ class TestSubprocessCacheMiss:
         cache_dir = tmp_path / "agent_cache"
         cache_dir.mkdir()
 
-        _mock_settings(monkeypatch, cache_dir)
+        _mock_settings(monkeypatch)
 
         mock_subprocess_run = MagicMock()
         monkeypatch.setattr("ctra.agents.runner.subprocess.run", mock_subprocess_run)
@@ -258,7 +257,7 @@ class TestSubprocessCacheMiss:
         cache_dir = tmp_path / "agent_cache"
         cache_dir.mkdir()
 
-        _mock_settings(monkeypatch, cache_dir)
+        _mock_settings(monkeypatch)
 
         mock_subprocess_run = MagicMock()
         monkeypatch.setattr("ctra.agents.runner.subprocess.run", mock_subprocess_run)
@@ -285,7 +284,7 @@ class TestSubprocessCacheMiss:
         cache_dir = tmp_path / "agent_cache"
         cache_dir.mkdir()
 
-        _mock_settings(monkeypatch, cache_dir)
+        _mock_settings(monkeypatch)
 
         mock_subprocess_run = MagicMock()
         monkeypatch.setattr("ctra.agents.runner.subprocess.run", mock_subprocess_run)
@@ -327,7 +326,7 @@ class TestSubprocessFailure:
         cache_dir = tmp_path / "agent_cache"
         cache_dir.mkdir()
 
-        _mock_settings(monkeypatch, cache_dir)
+        _mock_settings(monkeypatch)
 
         monkeypatch.setattr(
             "ctra.agents.runner.subprocess.run",
@@ -351,7 +350,7 @@ class TestSubprocessFailure:
         cache_dir = tmp_path / "agent_cache"
         cache_dir.mkdir()
 
-        _mock_settings(monkeypatch, cache_dir)
+        _mock_settings(monkeypatch)
 
         monkeypatch.setattr(
             "ctra.agents.runner.subprocess.run",
@@ -382,7 +381,7 @@ class TestSubprocessTaskEnum:
         """Task.TRIAL_OUTCOME_PHASE_2 should produce '--task phase2' in subprocess cmd."""
         cache_dir = tmp_path / "agent_cache"
         cache_dir.mkdir()
-        _mock_settings(monkeypatch, cache_dir)
+        _mock_settings(monkeypatch)
 
         mock_subprocess_run = MagicMock()
         monkeypatch.setattr("ctra.agents.runner.subprocess.run", mock_subprocess_run)
@@ -410,7 +409,7 @@ class TestSubprocessTaskEnum:
     ) -> None:
         cache_dir = tmp_path / "agent_cache"
         cache_dir.mkdir()
-        _mock_settings(monkeypatch, cache_dir)
+        _mock_settings(monkeypatch)
 
         mock_subprocess_run = MagicMock()
         monkeypatch.setattr("ctra.agents.runner.subprocess.run", mock_subprocess_run)
@@ -435,7 +434,7 @@ class TestSubprocessTaskEnum:
     ) -> None:
         cache_dir = tmp_path / "agent_cache"
         cache_dir.mkdir()
-        _mock_settings(monkeypatch, cache_dir)
+        _mock_settings(monkeypatch)
 
         mock_subprocess_run = MagicMock()
         monkeypatch.setattr("ctra.agents.runner.subprocess.run", mock_subprocess_run)
@@ -461,7 +460,7 @@ class TestSubprocessTaskEnum:
         """Cache file should be named 'phase2--node-x.output.pkl', not the enum repr."""
         cache_dir = tmp_path / "agent_cache"
         cache_dir.mkdir()
-        _mock_settings(monkeypatch, cache_dir)
+        _mock_settings(monkeypatch)
 
         mock_subprocess_run = MagicMock()
         monkeypatch.setattr("ctra.agents.runner.subprocess.run", mock_subprocess_run)

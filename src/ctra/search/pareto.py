@@ -353,7 +353,7 @@ def pareto_select(
             default) keeps the historical behaviour and draws from numpy's
             global RNG; in practice this default is unreachable from
             ``MCTSSearch.search``, which always passes a generator seeded per
-            rollout (issue #28). Per-rollout seeding lets resumed runs replay
+            rollout (PR #28). Per-rollout seeding lets resumed runs replay
             the pre-crash selection path and find cached evaluations (issue #12).
 
     Returns:

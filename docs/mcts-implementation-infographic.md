@@ -150,7 +150,7 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
     Accuracy:       0.52       0.55       0.58       0.63       0.68
     Parsimony:      0.98       0.96       0.94       0.92       0.90
 
-    Hypervolume:    0.483      0.490      0.496      0.506      0.551
+    Hypervolume:    0.020      0.048      0.075      0.120      0.162
                                                                  ^
                                                                  |
     Best-on-path: depth 4 has highest hypervolume ───────────────┘
@@ -163,7 +163,9 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
 
 ---
 
-## 4. Simulation Example (Real Run)
+## 4. Simulation Example (Illustrative Run)
+
+> Values adapted by hand from the original 3-objective run (the stability objective was dropped and the hypervolume recomputed against `[0.5, 0.0]`); the 2-objective configuration shown below has not been re-run.
 
 ```
     PROBLEM: Find synergistic feature combination
@@ -415,7 +417,9 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
 
 ---
 
-## 8. Benefits
+## 9. Benefits
+
+> Section 8 (Multi-Fidelity Evaluation Schedule) was removed: multi-fidelity evaluation is not implemented in the search layer (only `mlops/retraining.py` has a fidelity parameter). The numbering of sections 9-12 is kept so that existing section references stay valid.
 
 ```
     +------------------------------------------------------------------+
@@ -487,6 +491,8 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
     |     For 3 objectives, we use Monte Carlo (20K samples).          |
     |     Acceptable for <50 Pareto front points, but may introduce    |
     |     variance in rankings. 2D uses exact sweep-line (no MC).      |
+    |     (Unreachable with the current two-objective config;          |
+    |     kept for the library function.)                              |
     |                                                                  |
     |  6. NO LLM-FE ALTERNATIVE YET                                    |
     |     The research proposed a head-to-head: MCTS vs LLM-FE         |
@@ -526,7 +532,7 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
                                          # its floor (issue #18)
 
     # Backpropagation rule (issue #16)
-    backprop:                "best_hv"  # Other: "scaled_hv"
+    backprop:                "mean"     # Other: "max", "max_hv" (issue #16, research/backprop-ablation.md)
 
     # UCT exploration
     exploration_constant:    1.414    # C_p in UCB1 formula
@@ -541,7 +547,7 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
     feature_store_dir:       Path("output/feature_store")
 
     # Subprocess timeout
-    subprocess_timeout:      300      # seconds per agent evaluation
+    subprocess_timeout:      3600     # seconds per agent evaluation
 ```
 
 ---
@@ -564,7 +570,7 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
 
     src/ctra/mlops/
     └── objectives.py    PredictiveAccuracy, Parsimony, MultiObjectiveEvaluator
-                         (used by training pipeline, not search layer)
+                         (used by the retraining pipeline, not the search layer)
 
     tests/test_search/
     ├── test_pareto.py                         26 tests
@@ -582,6 +588,6 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
     ├── test_mcts_integrity.py                  6 tests
     ├── test_mcts_suggestion_index.py          20 tests
     └── test_select_best.py                    34 tests
-    
+
     Total: 219 tests
 ```
