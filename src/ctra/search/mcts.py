@@ -858,6 +858,18 @@ class MCTSSearch:
            ``node.eval_output`` so future children can use it as context and
            so ``_suggestion_expand`` can read the evaluator's suggestions.
 
+           The output's own ``suggestion_index`` is written back to the node
+           **only when it advances** past the one sent (issue #14).  A skipped
+           iteration returns ``sent + 1`` and the node must take it, or the
+           next rollout replays the dead suggestion; a *successful* iteration
+           returns a hard-coded ``0`` that says nothing about which suggestion
+           this node followed, and adopting it wiped the index assigned at
+           expansion — every re-evaluation then asked the proposer for
+           suggestion 0.  The counter is therefore monotonic: what a skip
+           burned stays burned, which is the semantics
+           ``suggestions_exhausted`` — and the guard in step 2 — is defined
+           against.
+
         5. **Sync features** — If the subprocess produced different features
            than expected (the proposer may modify the set), update
            ``node.features`` to reflect reality.
@@ -899,18 +911,46 @@ class MCTSSearch:
             self._log_skip(node)
             return None
 
+        # What is sent is captured before the runner call: it is the value
+        # ``parent_output`` carries and the baseline the write-back below compares against.
+        sent = self._as_index(node.suggestion_index)
         node_id = self._make_node_id(node, rollout, parent_output)
         output = self._runner(node_id, self._task, parent_output)
 
         # Store full AgentOutput on the node
         node.eval_output = output
 
-        # Honor suggestion_index advance from orchestrator (M1 fix: Site 1 fallback).
-        # When orchestrator skips an iteration due to proposer failure, it returns
-        # an AgentOutput with suggestion_index advanced by 1. Honor that advance on
-        # the node so subsequent rollouts don't replay the same exhausted suggestion.
-        if hasattr(output, "suggestion_index"):
-            node.suggestion_index = output.suggestion_index
+        # Honour a suggestion_index *advance* from the orchestrator (issue #14).
+        # ``Agent.forward`` returns three shapes, and only the first one carries
+        # a counter the node should adopt:
+        #   - skipped iteration (proposer failure ``orchestrator.py:396-399``,
+        #     unhandled operation ``:522-525``) -> ``sent + 1``: the suggestion was
+        #     consumed and must not be replayed, so take it.
+        #   - successful iteration (``:619-633``) -> a hard-coded ``0`` that says
+        #     nothing about which suggestion this node followed.  Taking it reset
+        #     the child's expansion-assigned index and made every re-evaluation
+        #     replay suggestion 0 (issue #14).
+        #   - exhausted early-skip (``:370``) -> the input index unchanged (no
+        #     suggestion was consumed), so there is nothing to adopt.
+        # ``returned > sent`` separates them without a schema change: indices are
+        # non-negative, so a success (0) never advances and the early-skip is equal.
+        # Defensive about stand-in runners (R5: this runs outside ``search()``'s
+        # rollout try/except for the root): a Mock, a missing attribute or a bool
+        # leaves the node's int alone rather than raising or poisoning the counter.
+        # ``_as_index`` rejects anything that is not a builtin or numpy integer
+        # (``Mock``, ``Mock(spec=int)``, ``bool``, ``str``, a missing attribute).
+        returned = self._as_index(getattr(output, "suggestion_index", None))
+        if sent is not None and returned is not None and returned > sent:
+            if returned > sent + 1:
+                logger.warning(
+                    "Runner advanced suggestion_index by %d (from %d to %d) for "
+                    "node %r; Agent.forward only ever advances by one",
+                    returned - sent,
+                    sent,
+                    returned,
+                    node.operation_detail,
+                )
+            node.suggestion_index = returned
 
         # Update node features to match actual output (subprocess may
         # produce different features via the proposer). Skip if the output
@@ -941,9 +981,9 @@ class MCTSSearch:
         """Log an exhaustion skip: INFO the first time for a given node, DEBUG after.
 
         The dedupe set lives on the search object, not the node: no new
-        ``MCTSNode`` state (R8) means dill checkpoints stay round-trippable and
-        #14 keeps a clean slate for its ``skipped`` flag.  ``getattr`` with a
-        default is what lets a checkpoint pickled *before* this change resume —
+        ``MCTSNode`` state (R8) means dill checkpoints stay round-trippable
+        (issue #14 likewise added no node state).  ``getattr`` with a default
+        is what lets a checkpoint pickled *before* this change resume —
         it unpickles without ``_skip_logged``.  ``id(node)`` is stable for the
         lifetime of a process and meaningless across a resume — a pickled set
         would carry stale ids that a fresh node can collide with, silencing its
@@ -1015,6 +1055,19 @@ class MCTSSearch:
         }
         raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         return f"r{rollout}-{hashlib.sha256(raw).hexdigest()[:16]}"
+
+    @staticmethod
+    def _as_index(value: Any) -> int | None:
+        """``int`` for a builtin or numpy integer, ``None`` otherwise.
+
+        ``type`` rather than ``isinstance``: a ``Mock(spec=int)`` spoofs
+        ``__class__`` but not ``type()``, so ``int()`` can never raise here,
+        and ``bool`` is excluded because ``True == 1`` would read as an advance.
+        """
+        kind = type(value)
+        if kind is bool or not issubclass(kind, (int, np.integer)):
+            return None
+        return int(value)
 
     @staticmethod
     def _lineage(node: MCTSNode) -> list[int | str]:
