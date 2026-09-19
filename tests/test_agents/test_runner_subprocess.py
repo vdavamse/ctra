@@ -106,6 +106,37 @@ class TestSubprocessCacheHit:
         # subprocess.run should NOT have been called
         mock_subprocess_run.assert_not_called()
 
+    def test_default_cache_dir_derives_from_output_dir(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """With ``cache_dir=None`` the cache lives at ``settings.output_dir / 'agent_cache'``."""
+        output_dir = tmp_path / "out"
+        derived = output_dir / "agent_cache"
+        derived.mkdir(parents=True)
+
+        expected_output = _make_mock_output(roc_auc=0.77)
+        with open(derived / "phase2--node-7.output.pkl", "wb") as f:
+            dill.dump(expected_output, f)
+
+        mock_s = _mock_settings(monkeypatch)
+        mock_s.output_dir = output_dir
+
+        mock_subprocess_run = MagicMock()
+        monkeypatch.setattr("ctra.agents.runner.subprocess.run", mock_subprocess_run)
+
+        result = run_agent_as_subprocess(
+            node_id="node-7",
+            task="phase2",
+            previous_output=None,
+            cache_dir=None,
+        )
+
+        assert result.eval_outputs["xgboost"].model_eval_result.roc_auc == 0.77
+        mock_subprocess_run.assert_not_called()
+
+
     def test_cache_hit_with_different_tasks(
         self,
         monkeypatch: pytest.MonkeyPatch,
