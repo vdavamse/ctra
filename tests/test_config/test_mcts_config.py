@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import os
+from typing import get_args
+
 import pytest
 from pydantic import ValidationError
 
-from ctra.config.settings import MCTSConfig, Settings
+from ctra.config.settings import _OBJECTIVE_FLOORS, MCTSConfig, Settings
 
 _ENV_KEYS = (
     "CTRA_MCTS_REFERENCE_POINT",
@@ -17,9 +20,15 @@ _ENV_KEYS = (
 
 @pytest.fixture(autouse=True)
 def _isolate_mcts_env(monkeypatch):
-    """Keep the live environment (flat and nested spellings) out of these tests."""
-    for key in _ENV_KEYS:
-        monkeypatch.delenv(key, raising=False)
+    """Keep the live environment (flat and nested spellings) out of these tests.
+
+    pydantic-settings reads env keys case-insensitively, so a lowercase
+    ``ctra_mcts_reference_point`` in a developer's shell would reach
+    ``MCTSConfig()`` too; the comparison is on the upper-cased key.
+    """
+    for key in list(os.environ):
+        if key.upper() in _ENV_KEYS:
+            monkeypatch.delenv(key, raising=False)
 
 
 class TestReferencePoint:
@@ -90,3 +99,21 @@ class TestDerivedReferencePoint:
         monkeypatch.setenv("CTRA_MCTS_REFERENCE_POINT", "[0.6]")
 
         assert MCTSConfig().reference_point == [0.6]
+
+    def test_every_objective_has_a_floor(self):
+        """The objectives ``Literal`` and ``_OBJECTIVE_FLOORS`` must stay in step.
+
+        A new objective without a floor would make the derivation raise for
+        every caller that narrows ``objectives`` without a reference.
+        """
+        annotation = MCTSConfig.model_fields["objectives"].annotation
+        (literal,) = get_args(annotation)  # list[Literal[...]] -> Literal[...]
+
+        assert set(get_args(literal)) == set(_OBJECTIVE_FLOORS)
+
+    def test_objective_without_a_floor_is_a_validation_error(self, monkeypatch):
+        """A missing floor surfaces as ``ValidationError`` with field context, not ``KeyError``."""
+        monkeypatch.delitem(_OBJECTIVE_FLOORS, "parsimony")
+
+        with pytest.raises(ValidationError, match="no reference floor defined for objective"):
+            MCTSConfig()

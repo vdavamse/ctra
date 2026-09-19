@@ -65,14 +65,14 @@ def _make_mock_mcts(
     ``best_own_objectives`` has to return a real array: ``train_mcts`` writes
     it to ``results.json`` as ``best_objectives`` and prints it, so a bare
     ``MagicMock`` attribute would make the file unserialisable (issue #15).
-    ``_config.reference_point`` has to be a real list for the same reason: a
+    ``config.reference_point`` has to be a real list for the same reason: a
     resume compares it with the current settings (issue #18).
     """
     mcts = MagicMock()
     mcts.search.return_value = best_node
     mcts.all_nodes = list(all_nodes) if all_nodes is not None else [best_node]
     mcts.best_own_objectives.return_value = np.array(own_objectives)
-    mcts._config.reference_point = list(reference_point)
+    mcts.config.reference_point = list(reference_point)
     return mcts
 
 
@@ -391,7 +391,7 @@ class TestMainResume:
         assert "reference_point [0.0, 0.0]" in warnings[0]
         assert "current settings say [0.5, 0.0]" in warnings[0]
         # Neither side is rewritten: the checkpoint's geometry stays mid-run.
-        assert mock_mcts._config.reference_point == [0.0, 0.0]
+        assert mock_mcts.config.reference_point == [0.0, 0.0]
         assert mock_settings.mcts.reference_point == [0.5, 0.0]
 
     def test_resume_is_silent_when_the_reference_points_agree(

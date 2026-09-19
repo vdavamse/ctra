@@ -220,8 +220,12 @@ class MCTSSearch:
 
         Stores the runner callable, task identifier, expansion function, and
         config.  Derives ``_n_objectives`` from the config's objective list
-        and builds the ``_reference`` point array (padded/truncated to match
-        the number of objectives) used for all hypervolume calculations.
+        and builds the ``_reference`` point array used for all hypervolume
+        calculations.  The reference must carry exactly one coordinate per
+        objective; a mismatch raises ``ValueError`` rather than being padded
+        or truncated, because ``MCTSConfig`` already guarantees the lengths
+        agree and a config that reaches here with a different length has
+        bypassed that validation (``model_copy(update=...)``).
 
         No tree is created here — the root node is built lazily in
         ``search()`` when ``start_rollout == 0``.
@@ -245,12 +249,17 @@ class MCTSSearch:
 
         # Reference point for hypervolume
         ref = self._config.reference_point
-        self._reference = np.array(ref[: self._n_objectives], dtype=np.float64)
-        if len(self._reference) < self._n_objectives:
-            self._reference = np.pad(
-                self._reference,
-                (0, self._n_objectives - len(self._reference)),
+        if len(ref) != self._n_objectives:
+            raise ValueError(
+                f"reference_point {ref} has {len(ref)} coordinates for "
+                f"{self._n_objectives} objectives"
             )
+        self._reference = np.asarray(ref, dtype=np.float64)
+
+    @property
+    def config(self) -> MCTSConfig:
+        """The configuration this search was built with (read-only)."""
+        return self._config
 
     @property
     def root(self) -> MCTSNode | None:
@@ -920,7 +929,7 @@ class MCTSSearch:
             only = int(front_idx[0])
             if self._point_hypervolume(points[only]) <= _TIE_ATOL:
                 logger.warning(
-                    "The only Pareto-front candidate (%d features) does not score "
+                    "The only Pareto-front candidate (%d feature(s)) does not score "
                     "above the reference point %s: its hypervolume is 0, so it is "
                     "selected by default",
                     len(candidates[only].features),

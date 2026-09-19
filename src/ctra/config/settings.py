@@ -438,7 +438,13 @@ class MCTSConfig(BaseSettings):
         explicit mismatch is rejected.
         """
         if "reference_point" not in self.model_fields_set:
-            self.reference_point = [_OBJECTIVE_FLOORS[o] for o in self.objectives]
+            try:
+                self.reference_point = [_OBJECTIVE_FLOORS[o] for o in self.objectives]
+            except KeyError as exc:
+                raise ValueError(
+                    f"no reference floor defined for objective {exc.args[0]!r}: "
+                    "add it to _OBJECTIVE_FLOORS"
+                ) from None
             return self
         if len(self.reference_point) != len(self.objectives):
             raise ValueError(

@@ -505,7 +505,7 @@ class TestTolerances:
 class TestReferencePoint:
     """The reference point sits at the ROC-AUC chance baseline, ``[0.5, 0.0]`` (issue #18)."""
 
-    def test_chance_baseline_collapses_the_parsimony_margin(self):
+    def test_chance_baseline_collapses_the_parsimony_margin(self, caplog):
         """Issue #18's worked example: 5 features at AUC 0.70 vs 20 features at AUC 0.78.
 
         Dominance is reference-free, so both sit on the front under either
@@ -514,7 +514,8 @@ class TestReferencePoint:
         every classifier gets for free counts as accuracy and the small set's
         contribution is 4.375x the large set's; at ``[0.5, 0]`` that dead
         volume is gone and the ratio is 1.25x (point hypervolumes 1.346x ->
-        1.071x).
+        1.071x).  Both points clear the reference either way, so the healthy
+        multi-point front must not trigger the below-reference warning.
         """
         max_features = MCTSConfig().max_features
         small = [0.70, 1 - 5 / max_features]
@@ -534,7 +535,9 @@ class TestReferencePoint:
             assert search._point_hypervolume(points[0]) / search._point_hypervolume(
                 points[1]
             ) == pytest.approx(point_ratio, abs=1e-3)
-            assert search._select_best() is root, reference
+            with caplog.at_level(logging.WARNING, logger="ctra.search.mcts"):
+                assert search._select_best() is root, reference
+            assert not [r for r in caplog.records if r.levelno >= logging.WARNING], reference
 
     def test_all_below_chance_front_is_a_tie_and_warns(self, caplog):
         """Production geometry: no candidate clears the ROC-AUC chance baseline.
@@ -599,7 +602,7 @@ class TestReferencePoint:
 
         warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
         assert len(warnings) == 1, warnings
-        assert "only Pareto-front candidate (1 features)" in warnings[0]
+        assert "only Pareto-front candidate (1 feature(s))" in warnings[0]
         assert "above the reference point [0.5, 0.0]" in warnings[0]
 
     def test_a_front_point_above_chance_does_not_warn(self, caplog):
@@ -612,6 +615,21 @@ class TestReferencePoint:
             assert search._select_best() is deep
 
         assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+
+    def test_reference_mismatching_the_objectives_is_rejected(self):
+        """A reference that bypassed ``MCTSConfig``'s validator is not padded or truncated.
+
+        ``model_copy(update=...)`` skips the after-validator, so the copy
+        keeps the one-coordinate reference for two objectives; padding it
+        would silently put parsimony's floor at 0.5 and accuracy's at 0.0.
+        """
+        config = MCTSConfig(objectives=["accuracy"]).model_copy(
+            update={"objectives": ["parsimony", "accuracy"]}
+        )
+        assert config.reference_point == [0.5]
+
+        with pytest.raises(ValueError, match=r"reference_point \[0\.5\] has 1 coordinates"):
+            MCTSSearch(runner=lambda *_a: None, task="phase2", config=config)
 
     def test_below_chance_entries_of_one_node_rank_by_accuracy(self):
         """The ``(hypervolume, accuracy)`` key, live under the production reference.
