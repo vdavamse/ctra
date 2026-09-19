@@ -16,6 +16,7 @@ import pytest
 
 from ctra.agents.data_models import (
     AgentOutput,
+    CacheStats,
     EvalOutput,
     FeaturePlan,
     FeatureSource,
@@ -24,6 +25,7 @@ from ctra.agents.data_models import (
     Task,
 )
 from ctra.agents.runner import (
+    RunCacheStats,
     load_feature_plans_from_json,
     run_agent_as_subprocess,
 )
@@ -603,3 +605,178 @@ class TestLoadFeaturePlansFromJson:
 
         result = load_feature_plans_from_json(path)
         assert result["conditions"].feature_type == {"labels": FeatureType.MULTICATEGORICAL}
+
+
+# ---------------------------------------------------------------------------
+# Tests: per-run cache counters (issue #17)
+# ---------------------------------------------------------------------------
+
+
+def _output_with_stats(**counts: int) -> AgentOutput:
+    """An output whose ``cache_stats`` carry the given counts."""
+    return _make_mock_output()._replace(cache_stats=CacheStats(**counts))
+
+
+class TestRunCacheStats:
+    """``RunCacheStats`` is the runner's per-run tally of both cache layers."""
+
+    def test_zero_state_is_safe(self) -> None:
+        stats = RunCacheStats()
+        assert stats.agent_hit_rate == 0.0
+        assert stats.as_dict() == {
+            "agent_hits": 0,
+            "agent_misses": 0,
+            "agent_hit_rate": 0.0,
+            "replayed_group_builds": 0,
+            "llm_calls_made": 0,
+            "feature_store": stats.feature_store.as_dict(),
+        }
+
+    def test_hit_rate_arithmetic(self) -> None:
+        stats = RunCacheStats(agent_hits=1, agent_misses=3)
+        assert stats.agent_lookups == 4
+        assert stats.agent_hit_rate == pytest.approx(0.25)
+
+    def test_a_hit_replays_the_pickle_and_folds_nothing(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The fence: a replayed pickle's store counters belong to the run that made it."""
+        cache_dir = tmp_path / "agent_cache"
+        cache_dir.mkdir()
+        cached = _output_with_stats(
+            feature_lookups=10, feature_hits=4, groups_dispatched=5, llm_calls_made=30
+        )
+        with open(cache_dir / "phase2--node-7.output.pkl", "wb") as f:
+            dill.dump(cached, f)
+        _mock_settings(monkeypatch, cache_dir)
+        mock_run = MagicMock()
+        monkeypatch.setattr("ctra.agents.runner.subprocess.run", mock_run)
+
+        stats = RunCacheStats()
+        result = run_agent_as_subprocess("node-7", "phase2", None, cache_dir=cache_dir, stats=stats)
+
+        mock_run.assert_not_called()
+        assert result.cache_stats.groups_dispatched == 5
+        assert stats.agent_hits == 1
+        assert stats.agent_misses == 0
+        assert stats.replayed_group_builds == 5
+        assert stats.feature_store.feature_lookups == 0
+        assert stats.feature_store.feature_hits == 0
+        assert stats.llm_calls_made == 0
+
+    def test_a_miss_spawns_and_folds_the_child_counters(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        cache_dir = tmp_path / "agent_cache"
+        cache_dir.mkdir()
+        _mock_settings(monkeypatch, cache_dir)
+        mock_run = MagicMock()
+        monkeypatch.setattr("ctra.agents.runner.subprocess.run", mock_run)
+        child = _output_with_stats(
+            feature_lookups=10,
+            feature_hits=4,
+            groups_dispatched=5,
+            groups_skipped=2,
+            hits_from_planner_plans=4,
+            llm_calls_made=30,
+        )
+        monkeypatch.setattr("ctra.agents.runner.dill.load", lambda f: child)
+        monkeypatch.setattr("ctra.agents.runner.dill.dump", MagicMock())
+
+        stats = RunCacheStats()
+        run_agent_as_subprocess("node-0", "phase2", None, cache_dir=cache_dir, stats=stats)
+
+        mock_run.assert_called_once()
+        assert stats.agent_misses == 1
+        assert stats.agent_hits == 0
+        assert stats.replayed_group_builds == 0
+        assert stats.feature_store.feature_lookups == 10
+        assert stats.feature_store.feature_hits == 4
+        assert stats.feature_store.groups_skipped == 2
+        assert stats.feature_store.hits_from_planner_plans == 4
+        assert stats.llm_calls_made == 30
+
+    def test_miss_then_hit_on_the_same_node(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The miss writes the pickle the second call replays; counts add up."""
+        cache_dir = tmp_path / "agent_cache"
+        cache_dir.mkdir()
+        _mock_settings(monkeypatch, cache_dir)
+        monkeypatch.setattr("ctra.agents.runner.subprocess.run", MagicMock())
+        child = _output_with_stats(feature_lookups=3, feature_hits=1, groups_dispatched=2)
+        real_load = dill.load
+        loads: list[str] = []
+
+        def load(f):
+            loads.append(f.name)
+            # The child's (empty, mocked) output file yields the stub; the
+            # cache pickle written by the miss is read for real.
+            return child if not f.name.endswith(".output.pkl") else real_load(f)
+
+        monkeypatch.setattr("ctra.agents.runner.dill.load", load)
+
+        stats = RunCacheStats()
+        run_agent_as_subprocess("node-1", "phase2", None, cache_dir=cache_dir, stats=stats)
+        run_agent_as_subprocess("node-1", "phase2", None, cache_dir=cache_dir, stats=stats)
+
+        assert stats.agent_misses == 1
+        assert stats.agent_hits == 1
+        assert stats.agent_hit_rate == pytest.approx(0.5)
+        assert stats.replayed_group_builds == 2
+        # Folded once, on the miss.
+        assert stats.feature_store.feature_lookups == 3
+        assert stats.feature_store.groups_dispatched == 2
+
+    def test_stats_none_is_a_no_op_on_both_paths(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        cache_dir = tmp_path / "agent_cache"
+        cache_dir.mkdir()
+        with open(cache_dir / "phase2--hit.output.pkl", "wb") as f:
+            dill.dump(_output_with_stats(groups_dispatched=5), f)
+        _mock_settings(monkeypatch, cache_dir)
+        monkeypatch.setattr("ctra.agents.runner.subprocess.run", MagicMock())
+        real_load = dill.load
+        monkeypatch.setattr(
+            "ctra.agents.runner.dill.load",
+            lambda f: real_load(f) if f.name.endswith(".output.pkl") else _make_mock_output(),
+        )
+        monkeypatch.setattr("ctra.agents.runner.dill.dump", MagicMock())
+
+        hit = run_agent_as_subprocess("hit", "phase2", None, cache_dir=cache_dir)
+        miss = run_agent_as_subprocess("miss", "phase2", None, cache_dir=cache_dir)
+        assert hit.cache_stats.groups_dispatched == 5
+        assert miss.cache_stats == CacheStats()
+
+    def test_hit_on_a_pickle_without_the_field_counts_no_replay(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        cache_dir = tmp_path / "agent_cache"
+        cache_dir.mkdir()
+        old = _make_mock_output()
+        del old.__dict__["cache_stats"]
+        with open(cache_dir / "phase2--old.output.pkl", "wb") as f:
+            dill.dump(old, f)
+        _mock_settings(monkeypatch, cache_dir)
+        monkeypatch.setattr("ctra.agents.runner.subprocess.run", MagicMock())
+
+        stats = RunCacheStats()
+        run_agent_as_subprocess("old", "phase2", None, cache_dir=cache_dir, stats=stats)
+        assert stats.agent_hits == 1
+        assert stats.replayed_group_builds == 0
+
+    def test_partial_with_stats_survives_dill(self, tmp_path: Path) -> None:
+        """``train_mcts.py`` binds the stats into the runner partial that checkpoints pickle."""
+        import functools
+
+        stats = RunCacheStats(agent_hits=2, agent_misses=5)
+        stats.feature_store.feature_hits = 9
+        runner = functools.partial(
+            run_agent_as_subprocess, cache_dir=tmp_path / "agent_cache", stats=stats
+        )
+        restored = dill.loads(dill.dumps(runner))
+        assert restored.func is run_agent_as_subprocess
+        assert restored.keywords["cache_dir"] == tmp_path / "agent_cache"
+        assert restored.keywords["stats"] == stats
+        assert restored.keywords["stats"].feature_store.feature_hits == 9
