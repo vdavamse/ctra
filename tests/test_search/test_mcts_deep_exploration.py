@@ -47,7 +47,7 @@ def mock_settings(monkeypatch):
             adaptive_branching=True,
             min_branch_factor=2,
             max_branch_factor=3,  # keep branching narrow to encourage depth
-            reference_point=[0.0, 0.0],
+            reference_point=[0.5, 0.0],  # accuracy at the ROC-AUC chance baseline (#18)
         ),
     )
     monkeypatch.setattr("ctra.search.mcts.get_settings", lambda: settings)
@@ -251,9 +251,10 @@ class TestDeepExploration:
         # exclusive hypervolume contribution and the lone 1-feature root wins
         # the ranking on width alone.  The epistasis this test is about is a
         # deterministic interaction effect, so the noise only hid it.
-        # The noisy variant (sigma 0.01) selects the root under
+        # The noisy variant (sigma 0.01) selected the root under
         # ``reference_point=[0, 0]`` — root 0.01006 vs synergy set 0.00818 —
-        # and is tracked by issue #18; see
+        # and selects the synergy set at the chance baseline ``[0.5, 0]``
+        # (root 0.00006 vs 0.00818, issue #18); see
         # ``test_deep_combination_survives_accuracy_noise``.
         synergy_features = {"alpha", "beta", "gamma"}
         tiers = {3: 0.85, 2: 0.65, 1: 0.55, 0: 0.50}
@@ -289,18 +290,17 @@ class TestDeepExploration:
             f"Best own accuracy: {search.best_own_objectives(best)[0]:.3f}"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="issue #18: reference point [0,0] lets the root win under accuracy noise",
-    )
     def test_deep_combination_survives_accuracy_noise(self):
         """The synergy fixture with ``rng.normal(0, 0.01)`` accuracy jitter.
 
         Same tiers as ``test_deep_combination_discovered``; the noise spreads
-        the top tier into a dense cluster on the front, no point keeps a
-        meaningful exclusive width, and the lone 1-feature root wins on width
-        alone (measured: root 0.01006 vs synergy set 0.00818).  Expected to
-        pass once issue #18 moves the hypervolume reference point.
+        the top tier into a dense cluster on the front where no point keeps a
+        meaningful exclusive width.  Under ``reference_point=[0, 0]`` the lone
+        1-feature root won on width alone (root 0.01006 vs synergy set
+        0.00818): its width was the 0.5 of ROC-AUC every classifier gets for
+        free.  With the reference at the chance baseline ``[0.5, 0]`` that
+        width is dead volume (root 0.00006 vs 0.00818) and the 4-feature
+        synergy set is selected (issue #18).
         """
         rng = np.random.default_rng(42)
         synergy_features = {"alpha", "beta", "gamma"}
@@ -445,14 +445,16 @@ class TestFeatureRefinementChain:
             acc = 0.5 + 0.04 * min(n, 15) + rng.normal(0, 0.01)
             return np.array([np.clip(acc, 0, 1), max(0, 1 - n / 50)])
 
-        # A ten-feature pool keeps the largest set at n=11, below the point
-        # where ``np.clip`` flattens accuracy at 1.0: a plateau would put
-        # dozens of nodes on the same front coordinate and leave the ranking
-        # to parsimony alone, which the root always wins.  With a pool of 20
-        # the root is selected under ``reference_point=[0, 0]`` (root 0.01086
-        # vs 0.00189 for the best deep set); tracked by issue #18.
+        # A pool of 20 lets the sets grow to n=16, past the point where
+        # ``np.clip`` flattens accuracy at 1.0 (n >= 13): dozens of nodes
+        # share the front coordinate and the ranking there is by parsimony
+        # alone.  Under ``reference_point=[0, 0]`` the 1-feature root won on
+        # width (root 0.01086 vs 0.00189 for the best deep set) and PR #30
+        # shrank the pool to 10 to dodge it; at the chance baseline
+        # ``[0.5, 0]`` the root keeps 0.00086 and the smallest saturated set
+        # (13 features; 14-16 are dominated by it) is selected (issue #18).
         runner = _make_feature_aware_runner(
-            evaluate, ["seed_feat"], [f"feat_{i}" for i in range(10)]
+            evaluate, ["seed_feat"], [f"feat_{i}" for i in range(20)]
         )
         search = MCTSSearch(runner=runner, task="test")
         best = search.search(initial_features=["seed_feat"])
@@ -461,6 +463,26 @@ class TestFeatureRefinementChain:
         assert max(runner.sizes_seen) > 1, (
             f"the runner only ever evaluated the root's feature set: "
             f"sizes {sorted(set(runner.sizes_seen))}"
+        )
+        # The intent: the selected node is the *smallest* feature set whose
+        # own accuracy reached the ``np.clip`` plateau at 1.0 (measured at 13
+        # features with this pool and seed; 14-16 are dominated by it, and
+        # the 1-feature root at ~0.54 is far from the plateau).  The count is
+        # not pinned, so a trajectory change cannot fail the test on its own.
+        saturated = [
+            node
+            for node in search.all_nodes
+            if node.visit_count > 0 and search.best_own_objectives(node)[0] == pytest.approx(1.0)
+        ]
+        assert saturated, "no evaluated feature set reached the accuracy plateau"
+        smallest_saturated = min(len(node.features) for node in saturated)
+        assert search.best_own_objectives(best)[0] == pytest.approx(1.0), (
+            f"selected a {len(best.features)}-feature set below the plateau: "
+            f"own accuracy {search.best_own_objectives(best)[0]:.3f}"
+        )
+        assert len(best.features) == smallest_saturated, (
+            f"expected the smallest saturated set ({smallest_saturated} features), got "
+            f"{len(best.features)}: {best.features}"
         )
 
         # Trace path from best back to root

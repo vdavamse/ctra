@@ -39,6 +39,8 @@
 
 All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trade-offs.
 
+> **Note:** the current configuration runs two objectives — accuracy and parsimony (`MCTSConfig.objectives`, section 11). Cross-phase stability (objective 3) is described here as designed but is not enabled.
+
 ```
     OBJECTIVE 1: Predictive Accuracy
     ================================
@@ -172,7 +174,9 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
                                                                  ^
                                                                  |
     Best-on-path: depth 4 has highest hypervolume ───────────────┘
-    (product of objective deltas above reference [0,0,0])
+    (product of objective deltas above the reference point; this
+    3-objective illustration uses [0,0,0] — production uses [0.5, 0.0],
+    accuracy at the ROC-AUC chance baseline, see section 11)
 
     This reward vector [0.68, 0.90, 0.85] is backpropagated to root.
 ```
@@ -569,9 +573,11 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
     deep_simulation:         True     # AutoCT-style deep rollout
 
     # Multi-objective
-    objectives:              ["accuracy", "parsimony", "stability"]
+    objectives:              ["accuracy", "parsimony"]
     max_features:            50       # Parsimony denominator
-    reference_point:         [0.0, 0.0, 0.0]  # Hypervolume origin
+    reference_point:         [0.5, 0.0]  # Hypervolume reference: accuracy at the
+                                         # ROC-AUC chance baseline, parsimony at
+                                         # its floor (issue #18)
 
     # UCT exploration
     exploration_constant:    1.414    # C_p in UCB1 formula

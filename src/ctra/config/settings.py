@@ -143,7 +143,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # ---------------------------------------------------------------------------
@@ -367,6 +367,11 @@ class ModelConfig(BaseSettings):
     tabpfn_finetune: bool = False  # enable fine-tuning (requires A100/H100)
 
 
+# Worst *acceptable* value of each objective: the hypervolume reference
+# coordinate ``MCTSConfig`` derives when ``reference_point`` is not supplied.
+_OBJECTIVE_FLOORS: dict[str, float] = {"accuracy": 0.5, "parsimony": 0.0}
+
+
 class MCTSConfig(BaseSettings):
     """MCTS search configuration for feature set optimization."""
 
@@ -384,9 +389,20 @@ class MCTSConfig(BaseSettings):
     # Maximum feature count (used for parsimony normalization)
     max_features: int = 50
 
-    # Pareto hypervolume reference point (worst-case values, all objectives
-    # are "higher is better" and normalized to [0, 1])
-    reference_point: list[float] = Field(default_factory=lambda: [0.0, 0.0])
+    # Pareto hypervolume reference point: the worst *acceptable* value of
+    # each objective, one per entry of ``objectives`` and in the same order
+    # (all objectives are "higher is better" on [0, 1]).  Accuracy is a raw
+    # ROC-AUC, whose chance baseline is 0.5, so its reference is 0.5 rather
+    # than 0: the volume below chance is dead volume every node shares, and
+    # counting it lets a 1-feature root outrank a deep set that actually
+    # predicts (issue #18; research/mcts-implementation-design.md specified
+    # the chance baseline from the start).  Parsimony's floor is 0.  A node
+    # below the reference on any axis has zero hypervolume; a front made
+    # only of such nodes is a tie that ``MCTSSearch._break_ties`` resolves
+    # to the smallest feature set.  When ``objectives`` is set without a
+    # reference (``CTRA_MCTS_OBJECTIVES='["accuracy"]'``), the reference is
+    # derived from ``_OBJECTIVE_FLOORS`` instead of failing validation.
+    reference_point: list[float] = Field(default_factory=lambda: [0.5, 0.0])
 
     # AB-MCTS adaptive branching
     adaptive_branching: bool = True
@@ -411,6 +427,32 @@ class MCTSConfig(BaseSettings):
     # Global feature value store (cross-branch reuse via per-feature granularity)
     feature_store_enabled: bool = True
     feature_store_dir: Path = Path("output/feature_store")
+
+    @model_validator(mode="after")
+    def _reference_point_matches_objectives(self) -> MCTSConfig:
+        """One reference coordinate per objective, in the objectives' order.
+
+        A reference that was not supplied (neither as a keyword nor from the
+        environment) is derived from the objectives' floors, so a caller that
+        only narrows ``objectives`` still gets a valid config; only an
+        explicit mismatch is rejected.
+        """
+        if "reference_point" not in self.model_fields_set:
+            try:
+                self.reference_point = [_OBJECTIVE_FLOORS[o] for o in self.objectives]
+            except KeyError as exc:
+                raise ValueError(
+                    f"no reference floor defined for objective {exc.args[0]!r}: "
+                    "add it to _OBJECTIVE_FLOORS"
+                ) from None
+            return self
+        if len(self.reference_point) != len(self.objectives):
+            raise ValueError(
+                f"reference_point has {len(self.reference_point)} coordinates but "
+                f"objectives has {len(self.objectives)} entries ({self.objectives}): "
+                "give one reference value per objective"
+            )
+        return self
 
 
 class IngestionConfig(BaseSettings):

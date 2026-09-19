@@ -166,8 +166,11 @@ class MCTSNode:
 
         Args:
             reference: Lower-bound corner of the hypervolume rectangle. Defaults to the
-                origin ``[0, 0, ...]``. In practice, ``MCTSSearch`` uses the
-                configured ``reference_point`` from ``MCTSConfig``.
+                origin ``[0, 0, ...]``, **not** to the configured
+                ``MCTSConfig.reference_point`` (``[0.5, 0.0]``, issue #18):
+                production code never calls this method, so nothing passes the
+                search's reference in.  A caller that wants the search's
+                geometry must pass it explicitly.
 
         Reporting helper for external callers.  ``_select_best`` does not use
         it: it ranks nodes by their own evaluations, not by the subtree mean
@@ -217,8 +220,12 @@ class MCTSSearch:
 
         Stores the runner callable, task identifier, expansion function, and
         config.  Derives ``_n_objectives`` from the config's objective list
-        and builds the ``_reference`` point array (padded/truncated to match
-        the number of objectives) used for all hypervolume calculations.
+        and builds the ``_reference`` point array used for all hypervolume
+        calculations.  The reference must carry exactly one coordinate per
+        objective; a mismatch raises ``ValueError`` rather than being padded
+        or truncated, because ``MCTSConfig`` already guarantees the lengths
+        agree and a config that reaches here with a different length has
+        bypassed that validation (``model_copy(update=...)``).
 
         No tree is created here — the root node is built lazily in
         ``search()`` when ``start_rollout == 0``.
@@ -242,12 +249,17 @@ class MCTSSearch:
 
         # Reference point for hypervolume
         ref = self._config.reference_point
-        self._reference = np.array(ref[: self._n_objectives], dtype=np.float64)
-        if len(self._reference) < self._n_objectives:
-            self._reference = np.pad(
-                self._reference,
-                (0, self._n_objectives - len(self._reference)),
+        if len(ref) != self._n_objectives:
+            raise ValueError(
+                f"reference_point {ref} has {len(ref)} coordinates for "
+                f"{self._n_objectives} objectives"
             )
+        self._reference = np.asarray(ref, dtype=np.float64)
+
+    @property
+    def config(self) -> MCTSConfig:
+        """The configuration this search was built with (read-only)."""
+        return self._config
 
     @property
     def root(self) -> MCTSNode | None:
@@ -761,9 +773,11 @@ class MCTSSearch:
         parsimony (it is a function of ``len(node.features)``) and differ in
         accuracy, so "best" is decided by
         ``(self._point_hypervolume(v), v[0])`` — the file's one notion of
-        vector quality, with accuracy as the tie-break so that vectors sitting
-        entirely below the reference point (all hypervolume 0) still rank
-        against each other.
+        vector quality, with accuracy as the tie-break.  The tie-break is
+        load-bearing, not a corner case: the reference point sits at the
+        ROC-AUC chance baseline (``[0.5, 0.0]``, issue #18), so every entry
+        of a below-chance feature set has hypervolume 0 and only its
+        accuracy ranks it against the node's other entries.
 
         Returns a *copy*, so a caller cannot mutate the stored history.
 
@@ -866,7 +880,9 @@ class MCTSSearch:
            as it represents the most valuable trade-off point.
 
         Ties at either step are resolved by ``_break_ties`` (fewer features,
-        then earliest in ``_all_nodes``).  A tie is decided with
+        then earliest in ``_all_nodes``); a front whose every contribution is
+        0 — no candidate above the reference point — is logged at WARNING
+        first.  A tie is decided with
         ``np.isclose`` at an absolute tolerance of ``_TIE_ATOL`` (1e-9): two
         contributions (or accuracies) that are equal on paper can differ by a
         few ULPs in floating point, and exact equality would hand the pick to
@@ -905,13 +921,41 @@ class MCTSSearch:
             return self._break_ties(candidates, scalar_max)
 
         if len(front_idx) == 1:
-            return candidates[int(front_idx[0])]
+            # A lone front point is selected outright, but a point at or
+            # below the reference on some axis has no volume: under the
+            # production reference (accuracy at the ROC-AUC chance baseline,
+            # issue #18) that means the only non-dominated feature set does
+            # not beat chance, which the operator should know.
+            only = int(front_idx[0])
+            if self._point_hypervolume(points[only]) <= _TIE_ATOL:
+                logger.warning(
+                    "The only Pareto-front candidate (%d feature(s)) does not score "
+                    "above the reference point %s: its hypervolume is 0, so it is "
+                    "selected by default",
+                    len(candidates[only].features),
+                    self._reference.tolist(),
+                )
+            return candidates[only]
 
         # 2. Among front nodes, rank by hypervolume contribution.  All-zero
         # contributions (every point below the reference point) are a tie, so
         # the answer stays deterministic instead of falling to ``argmax``'s
-        # first index.
+        # first index.  "Zero" is judged at ``_TIE_ATOL``, the same tolerance
+        # the ranking below uses, so the warning fires exactly when the
+        # ranking degenerates into the tie-break.  Say so: under the
+        # production reference (accuracy at the ROC-AUC chance baseline,
+        # issue #18) it means no feature set scored above chance, which the
+        # operator should know.
         contributions = self._front_contributions(points[front_idx])
+        if np.all(np.isclose(contributions, 0.0, rtol=0.0, atol=_TIE_ATOL)):
+            logger.warning(
+                "No Pareto-front candidate scores above the reference point %s: "
+                "all %d hypervolume contributions are 0 (within %g), so the "
+                "smallest feature set is selected",
+                self._reference.tolist(),
+                len(front_idx),
+                _TIE_ATOL,
+            )
         winners = front_idx[
             np.isclose(contributions, contributions.max(), rtol=0.0, atol=_TIE_ATOL)
         ]
