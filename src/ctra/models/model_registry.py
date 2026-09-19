@@ -10,9 +10,9 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import pandas as pd
 
 if TYPE_CHECKING:
+    import pandas as pd
     from numpy.typing import NDArray
     from sklearn.base import BaseEstimator
 
@@ -204,8 +204,7 @@ class ModelRegistry:
         """
         if clf_name not in self._wrappers:
             raise KeyError(
-                f"No fitted wrapper for '{clf_name}'.  "
-                f"Available: {list(self._wrappers.keys())}"
+                f"No fitted wrapper for '{clf_name}'.  Available: {list(self._wrappers.keys())}"
             )
         return self._wrappers[clf_name]
 
