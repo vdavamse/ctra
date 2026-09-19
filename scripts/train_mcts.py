@@ -110,7 +110,7 @@ def main() -> None:
     args = parse_args()
 
     from ctra.agents.data_models import Task
-    from ctra.agents.runner import run_agent_as_subprocess
+    from ctra.agents.runner import RunCacheStats, run_agent_as_subprocess
     from ctra.config.settings import get_settings
     from ctra.search.mcts import MCTSSearch
 
@@ -166,7 +166,13 @@ def main() -> None:
     # reuses its run id and keeps hitting its own pre-crash entries.
     output_dir.mkdir(parents=True, exist_ok=True)
     agent_cache_dir = output_dir / "agent_cache" / run_id
-    runner = functools.partial(run_agent_as_subprocess, cache_dir=agent_cache_dir)
+    # Cache counters for *this process* (issue #17): agent-cache hits and
+    # misses at the runner, and the feature-store counters each child sends
+    # back.  Bound into the partial so the runner updates them in place; a
+    # resume starts a fresh set (its hits on the pre-crash pickles are the
+    # figure of interest), so results.json describes the process that wrote it.
+    stats = RunCacheStats()
+    runner = functools.partial(run_agent_as_subprocess, cache_dir=agent_cache_dir, stats=stats)
     logger.info("Run id %s — agent cache at %s", run_id, agent_cache_dir)
 
     if checkpoint is not None:
@@ -234,6 +240,24 @@ def main() -> None:
             total_rollouts,
             np.round(objective_vector, 4),
             elapsed,
+        )
+
+        # Running totals: ``on_rollout`` sees only the last node of a deep
+        # rollout, so the counters live at the runner boundary, not on nodes.
+        fs = stats.feature_store
+        logger.info(
+            "Rollout %d/%d cache — agent hits/misses=%d/%d, feature-store hit rate=%.1f%% "
+            "(%d/%d), groups skipped=%d, LLM calls avoided~%d, LLM calls made=%d",
+            rollout_idx + 1,
+            total_rollouts,
+            stats.agent_hits,
+            stats.agent_misses,
+            fs.hit_rate * 100,
+            fs.feature_hits,
+            fs.feature_lookups,
+            fs.groups_skipped,
+            fs.llm_calls_avoided_estimate,
+            stats.llm_calls_made,
         )
 
         if pbar is not None:
@@ -341,6 +365,8 @@ def main() -> None:
         "best_mean_objectives": best_estimate.tolist(),
         "total_nodes": len(mcts.all_nodes),
         "elapsed_seconds": round(total_elapsed, 1),
+        # Both cache layers for this process (issue #17); see RunCacheStats.
+        "cache": stats.as_dict(),
     }
     results_path = output_dir / "results.json"
     results_path.write_text(json.dumps(results, indent=2))
@@ -360,6 +386,16 @@ def main() -> None:
         backprop, "Best subtree point"
     )
     print(f"  {estimate_label + ':':<16} {np.round(best_estimate, 4)}")
+    fs = stats.feature_store
+    print(
+        f"  Agent cache: {stats.agent_hits} hits / {stats.agent_misses} misses "
+        f"({stats.agent_hit_rate:.1%}), {stats.replayed_group_builds} group builds replayed"
+    )
+    print(
+        f"  Feature store: {fs.feature_hits}/{fs.feature_lookups} hits ({fs.hit_rate:.1%}), "
+        f"{fs.groups_skipped} groups skipped, ~{fs.llm_calls_avoided_estimate} LLM calls "
+        f"avoided, {stats.llm_calls_made} made"
+    )
     print(f"  Time: {total_elapsed:.0f}s")
     print(f"  Output: {output_dir}")
     print(f"{'=' * 60}")

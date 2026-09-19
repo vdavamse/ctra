@@ -533,13 +533,15 @@ class TestOnRolloutCallback:
 
 
 def _assert_per_run_runner(runner, expected_cache_dir: Path) -> None:
-    """``runner`` is ``run_agent_as_subprocess`` bound to this run's cache dir."""
-    from ctra.agents.runner import run_agent_as_subprocess
+    """``runner`` is ``run_agent_as_subprocess`` bound to this run's cache dir and stats."""
+    from ctra.agents.runner import RunCacheStats, run_agent_as_subprocess
 
     assert isinstance(runner, functools.partial), runner
     assert runner.func is run_agent_as_subprocess
     assert runner.args == ()
-    assert runner.keywords == {"cache_dir": expected_cache_dir}
+    assert set(runner.keywords) == {"cache_dir", "stats"}
+    assert runner.keywords["cache_dir"] == expected_cache_dir
+    assert isinstance(runner.keywords["stats"], RunCacheStats)
 
 
 class TestPerRunAgentCache:
@@ -739,10 +741,12 @@ class TestPerRunAgentCache:
         """The partial is what the checkpoint pickles; dill must round-trip it intact."""
         import dill
 
-        from ctra.agents.runner import run_agent_as_subprocess
+        from ctra.agents.runner import RunCacheStats, run_agent_as_subprocess
 
         cache_dir = tmp_path / "phase2" / "agent_cache"
-        runner = functools.partial(run_agent_as_subprocess, cache_dir=cache_dir)
+        runner = functools.partial(
+            run_agent_as_subprocess, cache_dir=cache_dir, stats=RunCacheStats()
+        )
         restored = dill.loads(dill.dumps(runner))
         _assert_per_run_runner(restored, cache_dir)
 
@@ -919,3 +923,167 @@ def _import_without_tqdm(monkeypatch):
         return original_import(name, *args, **kwargs)
 
     return patched_import
+
+
+# ---------------------------------------------------------------------------
+# Tests: cache hit-rate reporting (issue #17)
+# ---------------------------------------------------------------------------
+
+
+class TestCacheReporting:
+    """Per-rollout log line, ``results.json["cache"]`` and per-run stats binding."""
+
+    @staticmethod
+    def _main_with_search(monkeypatch: pytest.MonkeyPatch, output_dir: Path, mock_search):
+        """Run a fresh ``main()`` whose mocked ``search`` is ``mock_search``; return the class mock."""
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "train_mcts.py",
+                "--task",
+                "phase2",
+                "--rollouts",
+                "2",
+                "--output-dir",
+                str(output_dir),
+            ],
+        )
+        best_node = _make_best_node()
+        best_node.eval_output = _make_mock_output()
+        mock_mcts = _make_mock_mcts(best_node)
+        mock_mcts.search.side_effect = mock_search
+        mock_mcts_cls = MagicMock(return_value=mock_mcts)
+        monkeypatch.setattr("ctra.search.mcts.MCTSSearch", mock_mcts_cls)
+        monkeypatch.setattr(
+            "ctra.config.settings.get_settings",
+            MagicMock(return_value=_make_mock_settings(num_rollouts=2)),
+        )
+        monkeypatch.setattr("ctra.agents.feature_utils.dump_as_json", MagicMock(return_value="{}"))
+        monkeypatch.setattr("dill.dump", MagicMock())
+
+        from train_mcts import main
+
+        main()
+        return mock_mcts_cls, best_node
+
+    def test_rollout_line_and_results_report_the_running_totals(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        output_dir = tmp_path / "output"
+        holder: dict = {}
+
+        def mock_search(initial_features, on_rollout=None, start_rollout=0):
+            # The runner would update the bound stats in place; do it here.
+            stats = holder["cls"].call_args.kwargs["runner"].keywords["stats"]
+            stats.agent_misses += 1
+            stats.feature_store.feature_lookups += 4
+            stats.feature_store.record_hits(1, "planner")
+            stats.feature_store.groups_skipped += 1
+            stats.feature_store.groups_dispatched += 3
+            stats.llm_calls_made += 20
+            on_rollout(0, holder["node"], np.array([0.80, 0.70]))
+            stats.agent_hits += 1
+            stats.replayed_group_builds += 3
+            on_rollout(1, holder["node"], np.array([0.82, 0.72]))
+            return holder["node"]
+
+        best_node = _make_best_node()
+        best_node.eval_output = _make_mock_output()
+        holder["node"] = best_node
+        mock_mcts = _make_mock_mcts(best_node)
+        mock_mcts.search.side_effect = mock_search
+        holder["cls"] = MagicMock(return_value=mock_mcts)
+        monkeypatch.setattr("ctra.search.mcts.MCTSSearch", holder["cls"])
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "train_mcts.py",
+                "--task",
+                "phase2",
+                "--rollouts",
+                "2",
+                "--output-dir",
+                str(output_dir),
+            ],
+        )
+        monkeypatch.setattr(
+            "ctra.config.settings.get_settings",
+            MagicMock(return_value=_make_mock_settings(num_rollouts=2)),
+        )
+        monkeypatch.setattr("ctra.agents.feature_utils.dump_as_json", MagicMock(return_value="{}"))
+        monkeypatch.setattr("dill.dump", MagicMock())
+
+        from train_mcts import main
+
+        with caplog.at_level("INFO", logger="ctra.train"):
+            main()
+
+        lines = [r.getMessage() for r in caplog.records if "cache —" in r.getMessage()]
+        assert len(lines) == 2, lines
+        assert lines[0] == (
+            "Rollout 1/2 cache — agent hits/misses=0/1, feature-store hit rate=25.0% (1/4), "
+            "groups skipped=1, LLM calls avoided~6, LLM calls made=20"
+        )
+        assert "Rollout 2/2 cache — agent hits/misses=1/1" in lines[1]
+
+        results = json.loads((output_dir / "phase2" / "results.json").read_text())
+        cache = results["cache"]
+        assert cache["agent_hits"] == 1
+        assert cache["agent_misses"] == 1
+        assert cache["agent_hit_rate"] == pytest.approx(0.5)
+        assert cache["replayed_group_builds"] == 3
+        assert cache["llm_calls_made"] == 20
+        assert cache["feature_store"] == {
+            "feature_lookups": 4,
+            "feature_hits": 1,
+            "groups_dispatched": 3,
+            "groups_skipped": 1,
+            "hits_from_initializer_plans": 0,
+            "hits_from_planner_plans": 1,
+            "store_writes": 0,
+            "hit_rate": 0.25,
+            "llm_calls_avoided_estimate": 6,
+        }
+
+    def test_results_carry_a_zero_cache_block_without_evaluations(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        output_dir = tmp_path / "output"
+        monkeypatch.setattr("dill.dump", MagicMock())
+        TestPerRunAgentCache._fresh_main(monkeypatch, output_dir)
+        results = json.loads((output_dir / "phase2" / "results.json").read_text())
+        assert results["cache"]["agent_hits"] == 0
+        assert results["cache"]["feature_store"]["hit_rate"] == 0.0
+
+    def test_each_fresh_run_binds_its_own_stats(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from ctra.agents.runner import RunCacheStats
+
+        output_dir = tmp_path / "output"
+        monkeypatch.setattr("dill.dump", MagicMock())
+        first = TestPerRunAgentCache._fresh_main(monkeypatch, output_dir)
+        second = TestPerRunAgentCache._fresh_main(monkeypatch, output_dir)
+        stats_a = first.call_args.kwargs["runner"].keywords["stats"]
+        stats_b = second.call_args.kwargs["runner"].keywords["stats"]
+        assert isinstance(stats_a, RunCacheStats)
+        assert stats_a is not stats_b
+        assert stats_a == RunCacheStats()
+
+    def test_resume_rebinds_a_fresh_stats_object(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from ctra.agents.runner import RunCacheStats
+
+        monkeypatch.setattr("dill.dump", MagicMock())
+        mock_mcts, _ = TestPerRunAgentCache._resume_main(
+            monkeypatch,
+            tmp_path,
+            cli_task="phase3",
+            ckpt_args={"task": "phase3", "output_dir": str(tmp_path / "output"), "run_id": "r"},
+        )
+        runner = mock_mcts.set_runner.call_args.args[0]
+        assert isinstance(runner.keywords["stats"], RunCacheStats)
+        assert runner.keywords["stats"] == RunCacheStats()
