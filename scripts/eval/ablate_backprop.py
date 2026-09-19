@@ -262,14 +262,14 @@ class _SelectionCounter:
         return self
 
     def __exit__(self, *exc: object) -> None:
-        mcts_mod.pareto_select = self._original  # type: ignore[assignment]
+        mcts_mod.pareto_select = self._original
 
 
 def run_one(variant: str, seed: int, cell: Cell) -> dict[str, Any]:
     """Run one search and measure it; returns a row with every ``COLUMNS`` key."""
     runner = FeatureAwareRunner(make_synergy_evaluator(seed), make_pool(seed), cell.branch)
     config = MCTSConfig(
-        backprop=variant,  # type: ignore[arg-type]
+        backprop=variant,
         num_rollouts=cell.rollouts,
         max_depth=MAX_DEPTH,
         objectives=["accuracy", "parsimony"],
