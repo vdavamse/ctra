@@ -54,6 +54,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Absolute tolerance under which two scores count as a tie in final selection
+# (issue #15): well above float noise, well below any ROC-AUC resolution.
+_TIE_ATOL = 1e-9
+
 
 # ---------------------------------------------------------------------------
 # Tree node
@@ -863,9 +867,12 @@ class MCTSSearch:
 
         Ties at either step are resolved by ``_break_ties`` (fewer features,
         then earliest in ``_all_nodes``).  A tie is decided with
-        ``np.isclose``: two contributions (or accuracies) that are equal on
-        paper can differ by a few ULPs in floating point, and exact equality
-        would hand the pick to rounding noise instead of the tie-break.  Falls
+        ``np.isclose`` at an absolute tolerance of ``_TIE_ATOL`` (1e-9): two
+        contributions (or accuracies) that are equal on paper can differ by a
+        few ULPs in floating point, and exact equality would hand the pick to
+        rounding noise instead of the tie-break.  The tolerance is far below
+        any ROC-AUC resolution (one ordered pair on a 500/500 split is 4e-6),
+        so a measurably better set is never tied away.  Falls
         back to the root when no node has been evaluated at all (edge case).
         """
         candidates: list[MCTSNode] = []
@@ -884,7 +891,7 @@ class MCTSSearch:
         # Every candidate vector is finite (``_best_own_objectives`` drops the
         # rest), so the maximum exists and the maximiser set is non-empty.
         accuracy = points[:, 0]
-        scalar_max = np.flatnonzero(np.isclose(accuracy, accuracy.max()))
+        scalar_max = np.flatnonzero(np.isclose(accuracy, accuracy.max(), rtol=0.0, atol=_TIE_ATOL))
 
         # Single-objective fast path: just pick the max
         if self._n_objectives == 1:
@@ -905,7 +912,9 @@ class MCTSSearch:
         # the answer stays deterministic instead of falling to ``argmax``'s
         # first index.
         contributions = self._front_contributions(points[front_idx])
-        winners = front_idx[np.isclose(contributions, contributions.max())]
+        winners = front_idx[
+            np.isclose(contributions, contributions.max(), rtol=0.0, atol=_TIE_ATOL)
+        ]
         return self._break_ties(candidates, winners)
 
     def _front_contributions(self, front_points: NDArray[Any]) -> NDArray[Any]:
@@ -924,21 +933,32 @@ class MCTSSearch:
         broadcast back to every front position holding that point; the nodes
         that share the winning point are then separated by ``_break_ties``.
 
-        "Distinct" is decided on the points rounded to 12 decimals, and the
-        contributions are computed on those rounded representatives too: two
+        "Distinct" is decided by tolerance, not by exact equality: two
         evaluations of one feature set can differ at 1e-13 (float noise in a
         metric), and ``np.unique`` on the raw values would keep both, each
         with a near-zero exclusive contribution — the cancellation this method
-        exists to prevent.  Computing on the raw points would reintroduce it
-        through the back door for the unique representatives, so the rounded
-        matrix is what is scored.  Twelve decimals is far below the
-        resolution of any ROC-AUC or parsimony score, so genuinely distinct
-        points rank exactly as before.
+        exists to prevent.  Rounding to a decimal grid is not enough either
+        (twins straddling a grid boundary stay distinct), so the front is
+        sorted lexicographically and consecutive rows within ``_TIE_ATOL`` of
+        each other are merged into one representative; the representatives
+        are what gets scored.  The tolerance is far below the resolution of
+        any ROC-AUC or parsimony score, so genuinely distinct points rank
+        exactly as before.
         """
-        rounded = np.round(front_points, 12)
-        unique, inverse = np.unique(rounded, axis=0, return_inverse=True)
-        contributions = hypervolume_contribution(unique, self._reference)
-        return contributions[np.asarray(inverse).ravel()]
+        order = np.lexsort(front_points.T[::-1])
+        group_of_row = np.empty(len(front_points), dtype=int)
+        representatives: list[NDArray[Any]] = []
+        for row in order:
+            point = front_points[row]
+            if representatives and np.allclose(
+                representatives[-1], point, rtol=0.0, atol=_TIE_ATOL
+            ):
+                group_of_row[row] = len(representatives) - 1
+            else:
+                representatives.append(point)
+                group_of_row[row] = len(representatives) - 1
+        contributions = hypervolume_contribution(np.array(representatives), self._reference)
+        return np.asarray(contributions[group_of_row])
 
     # ------------------------------------------------------------------
     # Evaluation helpers
