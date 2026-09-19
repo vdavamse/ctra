@@ -16,7 +16,8 @@ Usage::
     # Custom output directory
     python scripts/train_mcts.py --task phase2 --output-dir .output/phase2_v1/
 
-    # Also log the cache hit rates to MLflow (per rollout and final totals)
+    # Also log the cache hit rates to MLflow (one point per rollout, plus the
+    # run totals one step past the last rollout)
     python scripts/train_mcts.py --task phase2 --rollouts 20 --mlflow
 """
 
@@ -133,6 +134,40 @@ def _log_cache_stats(tracker: Any, stats: Any, step: int | None = None) -> None:
             step,
             exc_info=True,
         )
+
+
+def _start_tracker(config: Any, task_name: str) -> Any:
+    """Build the MLflow tracker and open its run, or return ``None``.
+
+    A missing mlflow package is a usage error and exits; any other failure
+    (an unreachable or corrupt tracking store, ``set_experiment`` /
+    ``start_run`` / ``log_params`` raising) is logged as a warning and the
+    search runs untracked -- MLflow must never abort the search.
+    """
+    try:
+        from ctra.mlops.experiment_tracker import ExperimentTracker
+
+        tracker = ExperimentTracker()
+    except ImportError as exc:
+        raise SystemExit(
+            f"--mlflow needs the mlflow package, which could not be imported ({exc}). "
+            "Install it or drop the flag."
+        ) from exc
+    except Exception:
+        logger.warning(
+            "MLflow tracker could not be constructed; the search continues without tracking",
+            exc_info=True,
+        )
+        return None
+    try:
+        tracker.start_mcts_run(config, task_name)
+    except Exception:
+        logger.warning(
+            "MLflow run could not be started; the search continues without tracking",
+            exc_info=True,
+        )
+        return None
+    return tracker
 
 
 def main() -> None:
@@ -274,19 +309,9 @@ def main() -> None:
     # off, mlflow is never imported and no tracker is constructed.  Started
     # after the checkpoint branch so the logged params are the *effective*
     # config -- on resume the checkpoint's, which the warnings above may have
-    # just said differs from the CLI settings.
-    tracker = None
-    if args.mlflow:
-        try:
-            from ctra.mlops.experiment_tracker import ExperimentTracker
-
-            tracker = ExperimentTracker()
-        except ImportError as exc:
-            raise SystemExit(
-                f"--mlflow needs the mlflow package, which could not be imported ({exc}). "
-                "Install it or drop the flag."
-            ) from exc
-        tracker.start_mcts_run(mcts.config, task.output_subdir)
+    # just said differs from the CLI settings.  A tracker that cannot start
+    # leaves ``tracker`` as ``None`` and the search runs untracked.
+    tracker = _start_tracker(mcts.config, task.output_subdir) if args.mlflow else None
 
     # ---- Define rollout callback ----
     checkpoint_every = args.checkpoint_every
@@ -449,8 +474,10 @@ def main() -> None:
         results_path.write_text(json.dumps(results, indent=2))
         logger.info("Saved results to %s", results_path)
 
+        # The run totals go one step past the last rollout index so they do
+        # not collide with the rollout-0 point (``step=None`` logs at step 0).
         if tracker is not None:
-            _log_cache_stats(tracker, stats)
+            _log_cache_stats(tracker, stats, step=total_rollouts)
         run_status = "FINISHED"
     finally:
         if tracker is not None:

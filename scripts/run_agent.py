@@ -22,11 +22,8 @@ from pathlib import Path
 from typing import Any
 
 import dill
-
-try:
-    from dspy.utils.callback import BaseCallback
-except ImportError:  # pragma: no cover - dspy is a hard dependency of the agents
-    BaseCallback = object  # type: ignore[assignment,misc]
+import dspy
+from dspy.utils.callback import BaseCallback
 
 logging.basicConfig(
     level=logging.INFO,
@@ -92,16 +89,10 @@ class LMCallCounter(BaseCallback):  # type: ignore[misc]
 def install_llm_call_counter() -> LMCallCounter | None:
     """Register an ``LMCallCounter`` on dspy's global callbacks.
 
-    Returns the counter, or ``None`` when it cannot be registered (dspy
-    missing, or dspy's settings owned by another thread), in which case the
-    calibration figure stays ``0``.  Existing callbacks are kept.
+    Returns the counter, or ``None`` when it cannot be registered (dspy's
+    settings owned by another thread), in which case the calibration figure
+    stays ``0``.  Existing callbacks are kept.
     """
-    if BaseCallback is object:
-        return None
-    try:
-        import dspy
-    except ImportError:
-        return None
     counter = LMCallCounter()
     try:
         dspy.configure(callbacks=[*dspy.settings.get("callbacks", []), counter])

@@ -1217,8 +1217,10 @@ class TestMlflowFlag:
         # The params come from the search's effective config, not the CLI settings.
         assert tracker.start_mcts_run.call_args.args[0] is mock_mcts.config
         assert tracker.start_mcts_run.call_args.args[1] == "phase2"
+        # Per-rollout points at the rollout index; the run totals one step past
+        # the last rollout so they do not collide with the rollout-0 point.
         steps = [c.kwargs.get("step") for c in tracker.log_cache_stats.call_args_list]
-        assert steps == [0, 1, None]
+        assert steps == [0, 1, 2]
         assert all(
             isinstance(c.args[0], RunCacheStats) for c in tracker.log_cache_stats.call_args_list
         )
@@ -1243,6 +1245,45 @@ class TestMlflowFlag:
         mock_mcts.search.assert_called_once()
         assert (output_dir / "phase2" / "results.json").exists()
         tracker.end_run.assert_called_once_with(status="FINISHED")
+
+    def test_a_tracker_that_cannot_start_does_not_abort_the_search(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A broken tracking store at ``start_mcts_run`` is a warning; the search runs untracked."""
+        tracker_cls = MagicMock()
+        tracker_cls.return_value.start_mcts_run.side_effect = RuntimeError("mlruns/ is corrupt")
+        output_dir = tmp_path / "output"
+        with caplog.at_level("WARNING", logger="ctra.train"):
+            _, mock_mcts = self._run(monkeypatch, output_dir, "--mlflow", tracker_cls=tracker_cls)
+
+        warnings = [
+            r for r in caplog.records if "MLflow run could not be started" in r.getMessage()
+        ]
+        assert [r.levelname for r in warnings] == ["WARNING"]
+        assert "mlruns/ is corrupt" in (warnings[0].exc_text or "")
+        # The search ran to completion and its outputs were written.
+        mock_mcts.search.assert_called_once()
+        assert (output_dir / "phase2" / "results.json").exists()
+        # With no run open, nothing else is sent to the tracker.
+        tracker = tracker_cls.return_value
+        tracker.log_cache_stats.assert_not_called()
+        tracker.end_run.assert_not_called()
+
+    def test_a_tracker_that_cannot_be_built_does_not_abort_the_search(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Only a missing mlflow package exits; any other constructor error is a warning."""
+        tracker_cls = MagicMock(side_effect=OSError("tracking store unreadable"))
+        output_dir = tmp_path / "output"
+        with caplog.at_level("WARNING", logger="ctra.train"):
+            _, mock_mcts = self._run(monkeypatch, output_dir, "--mlflow", tracker_cls=tracker_cls)
+
+        warnings = [
+            r for r in caplog.records if "MLflow tracker could not be constructed" in r.getMessage()
+        ]
+        assert [r.levelname for r in warnings] == ["WARNING"]
+        mock_mcts.search.assert_called_once()
+        assert (output_dir / "phase2" / "results.json").exists()
 
     def test_a_failing_search_ends_the_run_as_failed(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

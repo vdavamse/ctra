@@ -298,15 +298,17 @@ class EvalOutput(NamedTuple):
 # Cache instrumentation (issue #17)
 # ---------------------------------------------------------------------------
 
-#: LLM calls one dispatched trial-group build is taken to cost: a mid-range
-#: point estimate, not a bound.  One ``FeatureBuilder.forward`` attempt is
-#: k ReAct steps (``dspy.ReAct(max_iters=5)``: 1 <= k <= 5, the loop stops
-#: at ``finish``) + 1 ReAct extract call + 1 ChainOfThought Construct call
-#: = k + 2, i.e. 3-7 calls (7 when ReAct exhausts its 5 steps).  Under
+#: LLM calls one dispatched trial-group build is taken to cost: a
+#: single-attempt point estimate (k ~ 4 ReAct steps, no Refine retry), not
+#: a bound.  One ``FeatureBuilder.forward`` attempt is k ReAct steps
+#: (``dspy.ReAct(max_iters=5)``: 1 <= k <= 5, the loop stops at ``finish``)
+#: + 1 ReAct extract call + 1 ChainOfThought Construct call = k + 2, i.e.
+#: 3-7 calls (7 when ReAct exhausts its 5 steps).  Under
 #: ``ResettingRefine(N=3)`` a group can take up to 3 attempts plus 2
-#: ``OfferFeedback`` calls, so a dispatched group costs 3-23 calls.  A real
-#: run calibrates it: ``scripts/run_agent.py`` records the process-wide LLM
-#: call count in ``CacheStats.llm_calls_made``.
+#: ``OfferFeedback`` calls, so a dispatched group costs 3-23 calls;
+#: ``llm_calls_avoided_estimate`` therefore leans low when retries are
+#: common.  A real run calibrates it: ``scripts/run_agent.py`` records the
+#: process-wide LLM call count in ``CacheStats.llm_calls_made``.
 LLM_CALLS_PER_GROUP_BUILD = 6
 
 #: Where a plan sent to the feature store was minted (see ``Agent.forward``).

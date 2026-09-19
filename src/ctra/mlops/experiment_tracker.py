@@ -173,9 +173,10 @@ class ExperimentTracker:
         Rates first (``agent_cache_hit_rate``, ``feature_store_hit_rate``),
         then the headline counts (``groups_skipped``,
         ``llm_calls_avoided_estimate``, ``llm_calls_made``) and every raw
-        counter so the rates can be recomputed.  With ``step`` (the rollout
-        index) each call adds a point to the metric's history; without it the
-        values are the run's final totals.
+        counter so the rates can be recomputed.  Each call adds a point at
+        ``step`` to the metric's history; ``train_mcts.py`` uses the rollout
+        index per rollout and ``num_rollouts`` for the run totals.  Note that
+        ``step=None`` is recorded by MLflow at step 0.
 
         Args:
             stats: The ``RunCacheStats`` the runner partial accumulated.

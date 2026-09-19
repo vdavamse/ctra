@@ -43,7 +43,7 @@ LLM_CALLS_PER_GROUP_BUILD = 6
 llm_calls_avoided_estimate = groups_skipped * 6
 ```
 
-Six is a **mid-range point estimate** of what one dispatched trial-group build costs, not a bound. One `FeatureBuilder.forward` attempt is k ReAct steps (`dspy.ReAct(max_iters=5)`: 1 ≤ k ≤ 5, the loop stops at `finish`) + 1 ReAct extract call + 1 ChainOfThought Construct call = k + 2, i.e. 3–7 calls (7 when ReAct exhausts its 5 steps). Under `ResettingRefine(N=3)` a group can take up to 3 attempts plus 2 `OfferFeedback` calls (one after each attempt but the last, when the reward is below the 1.0 threshold), so a dispatched group costs 3–23 calls (`feature_builder.py`, dspy `react.py` / `refine.py`). The calibration below replaces it with the measured figure.
+Six is a **single-attempt point estimate** (k ≈ 4 ReAct steps, no Refine retry) of what one dispatched trial-group build costs, not a bound. One `FeatureBuilder.forward` attempt is k ReAct steps (`dspy.ReAct(max_iters=5)`: 1 ≤ k ≤ 5, the loop stops at `finish`) + 1 ReAct extract call + 1 ChainOfThought Construct call = k + 2, i.e. 3–7 calls (7 when ReAct exhausts its 5 steps). Under `ResettingRefine(N=3)` a group can take up to 3 attempts plus 2 `OfferFeedback` calls (one after each attempt but the last, when the reward is below the 1.0 threshold), so a dispatched group costs 3–23 calls (`feature_builder.py`, dspy `react.py` / `refine.py`); `llm_calls_avoided_estimate` therefore leans low when retries are common. The calibration below replaces it with the measured figure.
 
 Only a fully cached group avoids a build. A hit inside a group that is still dispatched avoids nothing (the builder runs for the group anyway), so per-feature hits are deliberately **not** multiplied; `features_served_from_store` is reported separately as `feature_hits`.
 
@@ -53,7 +53,7 @@ Only a fully cached group avoids a build. A hit inside a group that is still dis
 
 - **Log:** one line per rollout from `train_mcts.py`: `Rollout k/N cache — agent hits/misses=…, feature-store hit rate=…% (hits/lookups), groups skipped=…, LLM calls avoided~…, LLM calls made=…` (running totals; `on_rollout` sees only the last node of a deep rollout, so the totals live at the runner boundary).
 - **`results.json["cache"]`:** `RunCacheStats.as_dict()` for the whole run. The object is pickled in every checkpoint (it is bound into the runner partial), and a resume adopts it, so the counters continue across a crash; the evaluations the crashed process ran after its last checkpoint replay from its pickles and count as `agent_hits` on top.
-- **MLflow** (opt-in, `--mlflow`): `ExperimentTracker.log_cache_stats` logs `agent_cache_hit_rate`, `feature_store_hit_rate`, `groups_skipped`, `llm_calls_avoided_estimate`, `llm_calls_made` and every raw counter, per rollout (`step`) and as final totals.
+- **MLflow** (opt-in, `--mlflow`): `ExperimentTracker.log_cache_stats` logs `agent_cache_hit_rate`, `feature_store_hit_rate`, `groups_skipped`, `llm_calls_avoided_estimate`, `llm_calls_made` and every raw counter, once per rollout (`step` = rollout index) and once more after the search with the run totals at `step` = `num_rollouts` (one past the last rollout, so the totals do not collide with the rollout-0 point).
 - **Summary print** at the end of `train_mcts.py`.
 
 ## 4. Offline measurement (mechanism validation, synthetic plans)
@@ -105,7 +105,7 @@ and read, in order of convenience:
 
 1. the per-rollout `cache —` log lines (running totals);
 2. `.output/phase2/results.json` → `"cache"` → `feature_store.hits_from_planner_plans`, `feature_store.feature_lookups`, `feature_store.groups_skipped`, `llm_calls_made`;
-3. the MLflow run (`mlruns/`, experiment `ctra`) → metrics `feature_store_hit_rate`, `hits_from_planner_plans`, `llm_calls_avoided_estimate`, `llm_calls_made` (per rollout and final).
+3. the MLflow run (`mlruns/`, experiment `ctra`) → metrics `feature_store_hit_rate`, `hits_from_planner_plans`, `llm_calls_avoided_estimate`, `llm_calls_made` (one point per rollout, plus the run totals at `step` = `num_rollouts`).
 
 The planner-plan hit rate to report is `hits_from_planner_plans / planner_lookups`, where `planner_lookups = feature_lookups − |initializer plans| × (train + val + test trials)`: the root evaluation is the only one that sends initializer plans, and every lookup after it is a planner lookup. Run it twice against the same store to also read the cross-run figure (`hits_from_initializer_plans` in the second run).
 

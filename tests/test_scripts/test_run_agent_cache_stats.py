@@ -150,19 +150,6 @@ class TestLlmCallsMade:
         run_agent.main()
         assert output.cache_stats.llm_calls_made == 0
 
-    def test_reports_none_when_dspy_is_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import builtins
-
-        real_import = builtins.__import__
-
-        def no_dspy(name, *args, **kwargs):
-            if name == "dspy":
-                raise ImportError("no dspy")
-            return real_import(name, *args, **kwargs)
-
-        monkeypatch.setattr(builtins, "__import__", no_dspy)
-        assert run_agent.install_llm_call_counter() is None
-
     def test_an_output_without_the_field_is_left_alone(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path
     ) -> None:
