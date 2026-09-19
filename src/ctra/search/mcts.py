@@ -422,8 +422,9 @@ class MCTSSearch:
         # Return best node
         best = self._select_best()
         logger.info(
-            "MCTS complete: best node has %d features, mean_reward=%s",
+            "MCTS complete: best node has %d features, own objectives=%s (subtree mean=%s)",
             len(best.features),
+            self.best_own_objectives(best).round(4),
             best.mean_reward.round(4),
         )
         return best
@@ -724,17 +725,98 @@ class MCTSSearch:
             current.total_reward = current.total_reward + objectives
             current = current.parent
 
+    def _best_own_objectives(self, node: MCTSNode) -> NDArray[Any] | None:
+        """The best objective vector this node scored *itself*, or ``None``.
+
+        ``objective_history`` holds one entry per evaluation of *this* feature
+        set (appended in ``search()`` and ``_simulate_deep`` right after
+        ``_call_evaluate`` returns a vector).  It is empty for a node that was
+        never evaluated — one expanded but never simulated, or one whose
+        suggestion was exhausted (issue #7) — and such a node is not a
+        selectable result.
+
+        A node can hold several entries: a deep rollout may re-pick an already
+        visited child, and an unexpandable leaf can be re-evaluated in shallow
+        mode.  The entries share a parsimony (it is a function of
+        ``len(node.features)``) and differ only in accuracy, so "best" is
+        decided by ``(self._point_hypervolume(v), v[0])`` — the file's one
+        notion of vector quality, with accuracy as the tie-break so that
+        vectors sitting entirely below the reference point (all hypervolume 0)
+        still rank against each other.
+
+        Returns a *copy*, so a caller cannot mutate the stored history.
+
+        All entries are assumed to have ``n_objectives`` components — that is
+        what ``_call_evaluate`` pads/truncates to before ``_wrap_result``.
+        """
+        best: NDArray[Any] | None = None
+        best_key: tuple[float, float] | None = None
+        for result in node.objective_history:
+            values = np.asarray(result.values, dtype=float)
+            key = (self._point_hypervolume(values), float(values[0]))
+            if best_key is None or key > best_key:
+                best_key = key
+                best = values
+        return None if best is None else best.copy()
+
+    def best_own_objectives(self, node: MCTSNode) -> NDArray[Any]:
+        """The objective vector ``_select_best`` ranked ``node`` by.
+
+        This is the node's own best evaluation — the score of *its* feature
+        set — as opposed to ``node.mean_reward``, which is the average over
+        the node's whole subtree and is what UCB consumes during the search
+        (issue #15).  Callers that report "the best feature set scored X"
+        want this one; ``scripts/train_mcts.py`` writes it to
+        ``results.json["best_objectives"]`` and keeps the subtree mean beside
+        it as ``best_mean_objectives``.
+
+        Never returns ``None``: a node with no evaluation of its own (never
+        simulated, or restored from a checkpoint written before histories were
+        kept) falls back to ``node.mean_reward``, which is zeros for an
+        unvisited node.  Such a node is never returned by ``_select_best``
+        unless it is the root fallback.
+        """
+        own = self._best_own_objectives(node)
+        if own is not None:
+            return own
+        return node.mean_reward
+
+    @staticmethod
+    def _break_ties(candidates: list[MCTSNode], indices: NDArray[Any]) -> MCTSNode:
+        """Pick one node out of an equally-ranked set, deterministically.
+
+        Prefers the smaller feature set (AutoCT's parsimony bias, and the
+        tie-break that matters when every candidate sits below the reference
+        point and hypervolume contributions are all zero), then the node that
+        entered ``_all_nodes`` first — which is the shallower, earlier-created
+        one, and makes the result stable across runs.
+        """
+        winner = min(indices, key=lambda i: (len(candidates[int(i)].features), int(i)))
+        return candidates[int(winner)]
+
     def _select_best(self) -> MCTSNode:
         """After all rollouts, pick the single best node from the entire tree.
 
         This is called once at the end of ``search()`` to produce the final
-        result.  The selection strategy depends on the number of objectives:
+        result.  Nodes are ranked by their **own** evaluations
+        (``_best_own_objectives``), not by ``mean_reward``: the mean is the
+        average over a node's subtree, so expanding the best feature set and
+        evaluating mediocre children *lowers* its rank and the winning set
+        could be discarded in favour of a worse, unexpanded one (issue #15).
+        AutoCT selects on the node's own reward and so does CTRA's replica of
+        it in ``tests/test_search/test_autoct_mcts_comparison.py``.
+        ``mean_reward`` is untouched and still drives UCB during the search.
 
-        **Single-objective** (fast path): return the node with the highest
-        ``mean_reward[0]``.
+        Candidates are the nodes with at least one entry in
+        ``objective_history`` (the root included).  A node that was expanded
+        but never simulated, or whose evaluation was skipped as exhausted
+        (issue #7), has no score of its own and cannot be the answer, even
+        though backpropagation may have given it a ``visit_count``.
+
+        **Single-objective** (fast path): the highest own accuracy.
 
         **Multi-objective** (2+ objectives):
-        1. Collect ``mean_reward`` vectors for all visited nodes.
+        1. Build the matrix of per-node best own vectors.
         2. Compute the Pareto front — the set of nodes that are not
            dominated by any other node on all objectives simultaneously.
         3. Among Pareto-front nodes, rank by *hypervolume contribution*
@@ -742,36 +824,66 @@ class MCTSSearch:
            hypervolume).  Return the one with the largest contribution,
            as it represents the most valuable trade-off point.
 
-        Falls back to the root if no nodes have been visited (edge case).
+        Ties at either step are resolved by ``_break_ties`` (fewer features,
+        then earliest in ``_all_nodes``).  Falls back to the root when no node
+        has been evaluated at all (edge case).
         """
-        visited = [n for n in self._all_nodes if n.visit_count > 0]
-        if not visited:
+        candidates: list[MCTSNode] = []
+        own_points: list[NDArray[Any]] = []
+        for node in self._all_nodes:
+            own = self._best_own_objectives(node)
+            if own is not None:
+                candidates.append(node)
+                own_points.append(own)
+
+        if not candidates:
             assert self._root is not None
             return self._root
 
+        points = np.array(own_points)
+        scalar_max = np.flatnonzero(points[:, 0] == points[:, 0].max())
+
         # Single-objective fast path: just pick the max
         if self._n_objectives == 1:
-            return max(visited, key=lambda n: n.mean_reward[0])
+            return self._break_ties(candidates, scalar_max)
 
         # Multi-objective: Pareto front -> hypervolume contribution ranking
-        mean_rewards = np.array([n.mean_reward for n in visited])
-
-        # 1. Find the Pareto front
-        front_idx = pareto_front_indices(mean_rewards)
+        front_idx = pareto_front_indices(points)
 
         if len(front_idx) == 0:
             # Shouldn't happen, but fall back to scalar objective 0
-            return max(visited, key=lambda n: n.mean_reward[0])
+            return self._break_ties(candidates, scalar_max)
 
         if len(front_idx) == 1:
-            return visited[front_idx[0]]  # type: ignore[no-any-return]
+            return candidates[int(front_idx[0])]
 
-        # 2. Among front nodes, rank by hypervolume contribution
-        front_points = mean_rewards[front_idx]
-        contributions = hypervolume_contribution(front_points, self._reference)
+        # 2. Among front nodes, rank by hypervolume contribution.  All-zero
+        # contributions (every point below the reference point) are a tie, so
+        # the answer stays deterministic instead of falling to ``argmax``'s
+        # first index.
+        contributions = self._front_contributions(points[front_idx])
+        winners = front_idx[contributions == contributions.max()]
+        return self._break_ties(candidates, winners)
 
-        best_in_front = int(np.argmax(contributions))
-        return visited[front_idx[best_in_front]]  # type: ignore[no-any-return]
+    def _front_contributions(self, front_points: NDArray[Any]) -> NDArray[Any]:
+        """Hypervolume contribution of every front point, immune to duplicates.
+
+        ``hypervolume_contribution`` is leave-one-out: two points at the same
+        coordinates each cover nothing the other does not, so both score 0.
+        Ranking by *own* evaluations makes coincident points ordinary — the
+        same feature set is reached by several orderings of the same ADDs, a
+        re-picked node repeats its vector — and a feature set the search
+        rediscovered would be ranked *below* one it found once.  (This is why
+        feeding every entry of ``objective_history`` in as its own candidate
+        was rejected: near-duplicates from one node cancel each other.)
+
+        So the contribution is computed over the *distinct* points and
+        broadcast back to every front position holding that point; the nodes
+        that share the winning point are then separated by ``_break_ties``.
+        """
+        unique, inverse = np.unique(front_points, axis=0, return_inverse=True)
+        contributions = hypervolume_contribution(unique, self._reference)
+        return contributions[np.asarray(inverse).ravel()]  # type: ignore[no-any-return]
 
     # ------------------------------------------------------------------
     # Evaluation helpers

@@ -228,7 +228,14 @@ class TestMCTSFullSimulation:
         assert mean[1] > 0.0, f"Parsimony {mean[1]} should be positive"
 
     def test_best_node_is_on_pareto_front(self):
-        """The selected best node should be Pareto-optimal among all visited nodes."""
+        """The selected best node should be Pareto-optimal among the evaluated nodes.
+
+        Non-domination holds in the space ``_select_best`` ranks in: each
+        node's *own* best evaluation (issue #15).  It does **not** hold for
+        ``mean_reward`` — expanding the winner and evaluating mediocre
+        children drags its subtree mean below an unexpanded node's, which is
+        the whole reason the final ranking moved off the mean.
+        """
         evaluate = make_deterministic_evaluator(seed=42)
         expand = make_deterministic_expander(seed=42)
 
@@ -236,18 +243,19 @@ class TestMCTSFullSimulation:
         search = MCTSSearch(runner=runner, task="test", expand_fn=expand)
         best = search.search(initial_features=["feat_a", "feat_b", "feat_c"])
 
-        # Collect all visited nodes' mean rewards
-        visited = [n for n in search.all_nodes if n.visit_count > 0]
-        best_mean = best.mean_reward
+        # Candidates are the nodes that were evaluated at least once.
+        evaluated = [n for n in search.all_nodes if n.objective_history]
+        assert best in evaluated
+        best_own = search.best_own_objectives(best)
 
         # Verify no other node dominates the best node on ALL objectives
-        for node in visited:
+        for node in evaluated:
             if node is best:
                 continue
-            other_mean = node.mean_reward
+            other_own = search.best_own_objectives(node)
             # "dominates" means strictly better on all objectives
-            if all(other_mean > best_mean):
-                pytest.fail(f"Best node is dominated: best={best_mean}, dominator={other_mean}")
+            if all(other_own > best_own):
+                pytest.fail(f"Best node is dominated: best={best_own}, dominator={other_own}")
 
     def test_parent_child_links_consistent(self):
         """Every child's parent reference should point back correctly."""
