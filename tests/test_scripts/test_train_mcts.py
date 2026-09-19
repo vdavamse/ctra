@@ -57,6 +57,20 @@ def _make_best_node(features=None):
     return node
 
 
+def _make_mock_mcts(best_node, all_nodes=None, own_objectives=(0.95, 0.70)):
+    """Create a mock MCTSSearch.
+
+    ``best_own_objectives`` has to return a real array: ``train_mcts`` writes
+    it to ``results.json`` as ``best_objectives`` and prints it, so a bare
+    ``MagicMock`` attribute would make the file unserialisable (issue #15).
+    """
+    mcts = MagicMock()
+    mcts.search.return_value = best_node
+    mcts.all_nodes = list(all_nodes) if all_nodes is not None else [best_node]
+    mcts.best_own_objectives.return_value = np.array(own_objectives)
+    return mcts
+
+
 def _make_mock_output():
     """Create a mock AgentOutput with eval_outputs."""
     mock_eval = MagicMock()
@@ -187,9 +201,7 @@ class TestMainFreshStart:
         # Mock MCTSSearch — train_mcts.py now constructs it directly
         best_node = _make_best_node()
         best_node.eval_output = _make_mock_output()
-        mock_mcts = MagicMock()
-        mock_mcts.search.return_value = best_node
-        mock_mcts.all_nodes = [best_node]
+        mock_mcts = _make_mock_mcts(best_node)
 
         monkeypatch.setattr(
             "ctra.search.mcts.MCTSSearch",
@@ -253,9 +265,7 @@ class TestMainFreshStart:
 
         best_node = _make_best_node()
         best_node.eval_output = _make_mock_output()
-        mock_mcts = MagicMock()
-        mock_mcts.search.return_value = best_node
-        mock_mcts.all_nodes = [best_node]
+        mock_mcts = _make_mock_mcts(best_node)
 
         monkeypatch.setattr(
             "ctra.search.mcts.MCTSSearch",
@@ -302,9 +312,7 @@ class TestMainResume:
         # Checkpoint data
         best_node = _make_best_node()
         best_node.eval_output = _make_mock_output()
-        mock_mcts = MagicMock()
-        mock_mcts.search.return_value = best_node
-        mock_mcts.all_nodes = [best_node]
+        mock_mcts = _make_mock_mcts(best_node)
 
         checkpoint = {
             "mcts": mock_mcts,
@@ -370,9 +378,8 @@ class TestOnRolloutCallback:
                 on_rollout(2, best_node, np.array([0.85, 0.75]))  # idx 2 -> no checkpoint (3%2!=0)
             return best_node
 
-        mock_mcts = MagicMock()
+        mock_mcts = _make_mock_mcts(best_node)
         mock_mcts.search.side_effect = mock_search
-        mock_mcts.all_nodes = [best_node]
 
         monkeypatch.setattr(
             "ctra.search.mcts.MCTSSearch",
@@ -457,9 +464,7 @@ class TestPerRunAgentCache:
         )
         best_node = _make_best_node()
         best_node.eval_output = _make_mock_output()
-        mock_mcts = MagicMock()
-        mock_mcts.search.return_value = best_node
-        mock_mcts.all_nodes = [best_node]
+        mock_mcts = _make_mock_mcts(best_node)
         mock_mcts_cls = MagicMock(return_value=mock_mcts)
         monkeypatch.setattr("ctra.search.mcts.MCTSSearch", mock_mcts_cls)
         mock_settings = _make_mock_settings(num_rollouts=3)
@@ -505,9 +510,7 @@ class TestPerRunAgentCache:
         )
         best_node = _make_best_node()
         best_node.eval_output = _make_mock_output()
-        mock_mcts = MagicMock()
-        mock_mcts.search.return_value = best_node
-        mock_mcts.all_nodes = [best_node]
+        mock_mcts = _make_mock_mcts(best_node)
         checkpoint = {"mcts": mock_mcts, "rollout": 4, "args": ckpt_args}
         monkeypatch.setattr("dill.load", MagicMock(return_value=checkpoint))
 
@@ -657,9 +660,9 @@ class TestOutputFiles:
         best_node = _make_best_node(features=["drug_mechanism", "trial_size"])
         best_node.mean_reward = np.array([0.90, 0.80])
         best_node.eval_output = _make_mock_output()
-        mock_mcts = MagicMock()
-        mock_mcts.search.return_value = best_node
-        mock_mcts.all_nodes = [best_node, MagicMock()]  # 2 nodes total
+        mock_mcts = _make_mock_mcts(
+            best_node, all_nodes=[best_node, MagicMock()], own_objectives=(0.95, 0.70)
+        )  # 2 nodes total
 
         monkeypatch.setattr(
             "ctra.search.mcts.MCTSSearch",
@@ -685,6 +688,48 @@ class TestOutputFiles:
         assert results["depth"] == 5
         assert results["best_features"] == ["drug_mechanism", "trial_size"]
         assert results["total_nodes"] == 2
+
+    def test_results_json_reports_own_and_mean_objectives(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """``best_objectives`` is the best node's own score, not its subtree mean.
+
+        Before issue #15 this field held ``mean_reward`` — the average over the
+        node's whole subtree, which is a different (usually lower) number than
+        the score of the feature set in ``best_features``.  The mean is kept
+        beside it as ``best_mean_objectives``.
+        """
+        output_dir = tmp_path / "output"
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["train_mcts.py", "--task", "phase3", "--output-dir", str(output_dir)],
+        )
+
+        best_node = _make_best_node(features=["drug_mechanism", "trial_size"])
+        best_node.mean_reward = np.array([0.62, 0.88])  # diluted by the subtree
+        best_node.eval_output = _make_mock_output()
+        mock_mcts = _make_mock_mcts(best_node, own_objectives=(0.91, 0.96))
+
+        monkeypatch.setattr(
+            "ctra.search.mcts.MCTSSearch",
+            MagicMock(return_value=mock_mcts),
+        )
+        mock_settings = _make_mock_settings(num_rollouts=3, max_depth=5)
+        monkeypatch.setattr(
+            "ctra.config.settings.get_settings", MagicMock(return_value=mock_settings)
+        )
+        monkeypatch.setattr("ctra.agents.feature_utils.dump_as_json", MagicMock(return_value="{}"))
+        monkeypatch.setattr("dill.dump", MagicMock())
+
+        from train_mcts import main
+
+        main()
+
+        results = json.loads((output_dir / "phase3" / "results.json").read_text())
+        mock_mcts.best_own_objectives.assert_called_once_with(best_node)
+        assert results["best_objectives"] == [0.91, 0.96]
+        assert results["best_mean_objectives"] == [0.62, 0.88]
 
 
 # ---------------------------------------------------------------------------

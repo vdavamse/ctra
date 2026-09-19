@@ -26,7 +26,7 @@ import pytest
 
 from ctra.config.settings import MCTSConfig, Settings, get_settings
 from ctra.search.mcts import MCTSNode, MCTSSearch
-from tests.test_search.conftest import make_stub_runner
+from tests.test_search.conftest import make_stub_output, make_stub_runner
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -86,6 +86,75 @@ def _depth_distribution(all_nodes: list[MCTSNode]) -> dict[int, int]:
     return dict(sorted(dist.items()))
 
 
+class _FeatureAwareRunner:
+    """A runner that evaluates each node's **own** feature set.
+
+    ``make_stub_runner`` (conftest) rebuilds its output from
+    ``previous_output.feature_plans`` — the *parent's* plans — and never
+    applies the suggestion the child is following, so every node in the tree
+    is evaluated with the root's feature set: ``evaluate_fn`` only ever sees
+    one feature and the accuracy landscape these tests describe is never
+    reached.  That made the three tests below vacuous (issue #15, R2); fixing
+    the shared helper has a suite-wide blast radius and is tracked separately,
+    so this module carries its own runner.
+
+    This one behaves like ``Agent.forward``'s proposer: suggestion ``i`` ADDs
+    the ``i``-th feature of ``feature_pool`` that the parent does not already
+    carry.  The returned ``AgentOutput``'s plans are therefore the *evaluated*
+    node's own feature set, which ``_call_evaluate`` syncs back onto
+    ``node.features``, and its suggestions advertise what is still addable —
+    an empty list when the pool is spent, which stops expansion there.
+
+    ``seen`` records every feature set handed to ``evaluate_fn``, so a test can
+    assert the sets really grow instead of trusting the runner.
+    """
+
+    def __init__(
+        self,
+        evaluate_fn,
+        initial_features: list[str],
+        feature_pool: list[str],
+        max_suggestions: int = 3,
+    ) -> None:
+        self.evaluate_fn = evaluate_fn
+        self.initial_features = list(initial_features)
+        self.feature_pool = list(feature_pool)
+        self.max_suggestions = max_suggestions
+        self.seen: list[list[str]] = []
+
+    def __call__(self, node_id, task, previous_output):
+        if previous_output is None or not previous_output.feature_plans:
+            features = list(self.initial_features)
+        else:
+            parent = list(previous_output.feature_plans.keys())
+            available = [f for f in self.feature_pool if f not in parent]
+            index = previous_output.suggestion_index
+            features = [*parent, available[index]] if 0 <= index < len(available) else parent
+
+        self.seen.append(list(features))
+        values = np.asarray(self.evaluate_fn(features), dtype=float).ravel()
+        remaining = [f for f in self.feature_pool if f not in features][: self.max_suggestions]
+        output = make_stub_output(features, float(values[0]), [f"add {f}" for f in remaining])
+        if not remaining:
+            # ``make_stub_output`` substitutes five generic suggestions for an
+            # empty list; a proposer with nothing left to add offers none, and
+            # ``_suggestion_expand`` then stops expanding this node.
+            output.eval_outputs = {
+                name: ev._replace(suggestions=[]) for name, ev in output.eval_outputs.items()
+            }
+        return output
+
+    @property
+    def sizes_seen(self) -> list[int]:
+        """Size of every feature set that reached ``evaluate_fn``."""
+        return [len(f) for f in self.seen]
+
+
+def _make_feature_aware_runner(evaluate_fn, initial_features, feature_pool, max_suggestions=3):
+    """Build a ``_FeatureAwareRunner`` (see its docstring)."""
+    return _FeatureAwareRunner(evaluate_fn, initial_features, feature_pool, max_suggestions)
+
+
 # ---------------------------------------------------------------------------
 # Tests: Deep tree exploration
 # ---------------------------------------------------------------------------
@@ -129,30 +198,41 @@ class TestDeepExploration:
         """The best node should be a refined version of the root, not the root itself.
 
         If MCTS is working correctly, iterative feature refinement should
-        produce a node that outperforms the initial feature set.
+        produce a node that outperforms the initial feature set.  Selection
+        ranks nodes by their own evaluation (issue #15), so the sweet spot at
+        n=3 has to actually be *evaluated* at n=3 — hence the local runner.
         """
-        rng = np.random.default_rng(42)
 
-        def evaluate(features, fidelity=1.0):
+        def evaluate(features):
             n = len(features)
-            # Accuracy jumps sharply at n=3 to create a clear sweet spot
-            # that dominates root even after backpropagation averaging
-            acc = 0.9 + rng.normal(0, 0.005) if n >= 3 else 0.3 + 0.05 * n + rng.normal(0, 0.005)
-            return np.array([np.clip(acc, 0, 1), max(0, 1 - n / 50)])
+            # Accuracy jumps sharply at n=3 to create a clear sweet spot,
+            # and stays flat after it so the extra features only cost parsimony.
+            # No jitter, for the same reason as the synergy test below: the
+            # sweet spot is a deterministic step, and noise only spreads the
+            # n>=3 sets into a cluster whose exclusive widths shrink towards
+            # the root's.  (With sigma 0.005 the seeded run still passed, n=3
+            # set 0.0304 vs root 0.0070, a seeded-deterministic margin; without
+            # jitter it is 0.47 vs 0.007.)
+            acc = 0.9 if n >= 3 else 0.3 + 0.05 * n
+            return np.array([acc, max(0, 1 - n / 50)])
 
-        def expand(node, max_children=3):
-            return [
-                ([*node.features, f"f{rng.integers(200)}"], "add", "add:x")
-                for _ in range(max_children)
-            ]
-
-        runner = make_stub_runner(evaluate, expand)
-        search = MCTSSearch(runner=runner, task="test", expand_fn=expand)
+        runner = _make_feature_aware_runner(evaluate, ["f0"], [f"f{i}" for i in range(1, 13)])
+        search = MCTSSearch(runner=runner, task="test")
         best = search.search(initial_features=["f0"])
+
+        # The fixture is only meaningful if the feature sets actually grew.
+        assert max(runner.sizes_seen) >= 3, (
+            f"the runner never evaluated a 3-feature set: sizes {sorted(set(runner.sizes_seen))}"
+        )
 
         best_depth = _node_depth(best)
         assert best_depth > 0, (
             "Best node is the root — MCTS failed to find any improvement through feature refinement"
+        )
+        assert len(best.features) >= 3, f"best node is below the n=3 sweet spot: {best.features}"
+        assert search.best_own_objectives(best)[0] > 0.8, (
+            f"best node's own accuracy {search.best_own_objectives(best)[0]:.3f} "
+            f"is not from the sweet spot"
         )
 
     def test_deep_combination_discovered(self):
@@ -162,44 +242,41 @@ class TestDeepExploration:
         This simulates feature epistasis: the interaction effect is
         non-linear (synergistic).
         """
-        rng = np.random.default_rng(42)
-
-        # Synergistic feature trio: each alone scores ~0.55, but all three
+        # Synergistic feature trio: each alone scores 0.55, but all three
         # together score 0.85. The MCTS must go deep enough to discover this.
+        #
+        # The tiers are exact, with no jitter: the search evaluates dozens of
+        # feature sets in the top tier and a jitter spreads them into a dense
+        # cluster on the Pareto front, where no single point has a meaningful
+        # exclusive hypervolume contribution and the lone 1-feature root wins
+        # the ranking on width alone.  The epistasis this test is about is a
+        # deterministic interaction effect, so the noise only hid it.
+        # The noisy variant (sigma 0.01) selects the root under
+        # ``reference_point=[0, 0]`` — root 0.01006 vs synergy set 0.00818 —
+        # and is tracked by issue #18; see
+        # ``test_deep_combination_survives_accuracy_noise``.
         synergy_features = {"alpha", "beta", "gamma"}
+        tiers = {3: 0.85, 2: 0.65, 1: 0.55, 0: 0.50}
 
-        def evaluate(features, fidelity=1.0):
-            fset = set(features)
-            synergy_count = len(fset & synergy_features)
-
-            if synergy_count == 3:
-                # All three synergistic features present — high accuracy
-                acc = 0.85 + rng.normal(0, 0.01)
-            elif synergy_count == 2:
-                acc = 0.65 + rng.normal(0, 0.01)
-            elif synergy_count == 1:
-                acc = 0.55 + rng.normal(0, 0.01)
-            else:
-                acc = 0.50 + rng.normal(0, 0.01)
-
+        def evaluate(features):
+            synergy_count = len(set(features) & synergy_features)
             n = len(features)
-            return np.array([np.clip(acc, 0, 1), max(0, 1 - n / 50)])
+            return np.array([tiers[synergy_count], max(0, 1 - n / 50)])
 
-        # Expander that can add the synergy features
         feature_pool = ["alpha", "beta", "gamma", "noise1", "noise2", "noise3"]
 
-        def expand(node, max_children=3):
-            available = [f for f in feature_pool if f not in node.features]
-            candidates = []
-            for _ in range(min(max_children, len(available))):
-                feat = available[rng.integers(len(available))]
-                available = [f for f in available if f != feat]
-                candidates.append(([*node.features, feat], "add", f"add:{feat}"))
-            return candidates
-
-        runner = make_stub_runner(evaluate, expand)
-        search = MCTSSearch(runner=runner, task="test", expand_fn=expand)
+        runner = _make_feature_aware_runner(evaluate, ["noise1"], feature_pool)
+        search = MCTSSearch(runner=runner, task="test")
         best = search.search(initial_features=["noise1"])
+
+        # The fixture is only meaningful if the feature sets actually grew:
+        # a runner that re-evaluates the root's single feature can never
+        # produce a synergy count above 1.
+        synergy_counts = {len(set(f) & synergy_features) for f in runner.seen}
+        assert 3 in synergy_counts, (
+            f"the runner never evaluated all three synergy features together; "
+            f"synergy counts seen: {sorted(synergy_counts)}"
+        )
 
         best_features = set(best.features)
         synergy_found = len(best_features & synergy_features)
@@ -209,7 +286,47 @@ class TestDeepExploration:
             f"Expected MCTS to discover synergistic feature combination, "
             f"but best features {best.features} only contain "
             f"{synergy_found}/3 synergy features (alpha, beta, gamma). "
-            f"Best mean accuracy: {best.mean_reward[0]:.3f}"
+            f"Best own accuracy: {search.best_own_objectives(best)[0]:.3f}"
+        )
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="issue #18: reference point [0,0] lets the root win under accuracy noise",
+    )
+    def test_deep_combination_survives_accuracy_noise(self):
+        """The synergy fixture with ``rng.normal(0, 0.01)`` accuracy jitter.
+
+        Same tiers as ``test_deep_combination_discovered``; the noise spreads
+        the top tier into a dense cluster on the front, no point keeps a
+        meaningful exclusive width, and the lone 1-feature root wins on width
+        alone (measured: root 0.01006 vs synergy set 0.00818).  Expected to
+        pass once issue #18 moves the hypervolume reference point.
+        """
+        rng = np.random.default_rng(42)
+        synergy_features = {"alpha", "beta", "gamma"}
+        tiers = {3: 0.85, 2: 0.65, 1: 0.55, 0: 0.50}
+
+        def evaluate(features):
+            synergy_count = len(set(features) & synergy_features)
+            n = len(features)
+            acc = tiers[synergy_count] + rng.normal(0, 0.01)
+            return np.array([np.clip(acc, 0, 1), max(0, 1 - n / 50)])
+
+        feature_pool = ["alpha", "beta", "gamma", "noise1", "noise2", "noise3"]
+
+        runner = _make_feature_aware_runner(evaluate, ["noise1"], feature_pool)
+        search = MCTSSearch(runner=runner, task="test")
+        best = search.search(initial_features=["noise1"])
+
+        synergy_counts = {len(set(f) & synergy_features) for f in runner.seen}
+        assert 3 in synergy_counts, (
+            f"the runner never evaluated all three synergy features together; "
+            f"synergy counts seen: {sorted(synergy_counts)}"
+        )
+
+        assert synergy_features <= set(best.features), (
+            f"best features {best.features} do not contain all of alpha, beta, gamma; "
+            f"best own accuracy: {search.best_own_objectives(best)[0]:.3f}"
         )
 
     def test_remove_operations_prune_bad_features(self):
@@ -323,24 +440,28 @@ class TestFeatureRefinementChain:
         """Trace the path from root to best — each step should be a feature modification."""
         rng = np.random.default_rng(42)
 
-        def evaluate(features, fidelity=1.0):
+        def evaluate(features):
             n = len(features)
             acc = 0.5 + 0.04 * min(n, 15) + rng.normal(0, 0.01)
             return np.array([np.clip(acc, 0, 1), max(0, 1 - n / 50)])
 
-        def expand(node, max_children=3):
-            return [
-                (
-                    [*node.features, f"feat_{rng.integers(100)}"],
-                    "add",
-                    f"add:feat_{rng.integers(100)}",
-                )
-                for _ in range(max_children)
-            ]
-
-        runner = make_stub_runner(evaluate, expand)
-        search = MCTSSearch(runner=runner, task="test", expand_fn=expand)
+        # A ten-feature pool keeps the largest set at n=11, below the point
+        # where ``np.clip`` flattens accuracy at 1.0: a plateau would put
+        # dozens of nodes on the same front coordinate and leave the ranking
+        # to parsimony alone, which the root always wins.  With a pool of 20
+        # the root is selected under ``reference_point=[0, 0]`` (root 0.01086
+        # vs 0.00189 for the best deep set); tracked by issue #18.
+        runner = _make_feature_aware_runner(
+            evaluate, ["seed_feat"], [f"feat_{i}" for i in range(10)]
+        )
+        search = MCTSSearch(runner=runner, task="test")
         best = search.search(initial_features=["seed_feat"])
+
+        # The fixture is only meaningful if the feature sets actually grew.
+        assert max(runner.sizes_seen) > 1, (
+            f"the runner only ever evaluated the root's feature set: "
+            f"sizes {sorted(set(runner.sizes_seen))}"
+        )
 
         # Trace path from best back to root
         path = []

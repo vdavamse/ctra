@@ -282,12 +282,24 @@ def main() -> None:
     logger.info("Saved final checkpoint to %s", final_ckpt)
 
     # 4. Results summary
+    # ``best_objectives`` is the best node's *own* evaluation (issue #15): the
+    # score of ``best_features``.  Each history entry snapshots the feature
+    # set it scored and the accessor ranks only the entries matching the
+    # node's current set, so a re-evaluation that changed the plans cannot
+    # leave this field describing an earlier set than the ``eval_output``
+    # shipped in ``feature_plans.json`` (a checkpoint from before the snapshot
+    # existed is the one exception: its entries carry no set and all count).
+    # Before that fix this field held ``mean_reward``, the average over the
+    # node's subtree, which is a different (usually lower) number; it is kept
+    # alongside as ``best_mean_objectives`` for continuity with older runs.
+    best_own = mcts.best_own_objectives(best_node)
     results = {
         "task": args.task,
         "rollouts": total_rollouts,
         "depth": settings.mcts.max_depth,
         "best_features": best_node.features,
-        "best_objectives": best_node.mean_reward.tolist(),
+        "best_objectives": best_own.tolist(),
+        "best_mean_objectives": best_node.mean_reward.tolist(),
         "total_nodes": len(mcts.all_nodes),
         "elapsed_seconds": round(total_elapsed, 1),
     }
@@ -304,7 +316,8 @@ def main() -> None:
     print(f"  Best features ({len(best_node.features)}):")
     for feat in best_node.features:
         print(f"    - {feat}")
-    print(f"  Best objectives: {np.round(best_node.mean_reward, 4)}")
+    print(f"  Best objectives: {np.round(best_own, 4)}")
+    print(f"  Subtree mean:    {np.round(best_node.mean_reward, 4)}")
     print(f"  Time: {total_elapsed:.0f}s")
     print(f"  Output: {output_dir}")
     print(f"{'=' * 60}")
