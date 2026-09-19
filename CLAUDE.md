@@ -12,11 +12,10 @@ This repository is in **active implementation**. The core AutoCT pipeline is imp
 
 - `src/ctra/` — Full implementation: agents, data loaders (7 sources), RAG (LinearRAG), MCTS search (Pareto), models (XGBoost + TabPFN), API, dashboard, MLOps
 - `scripts/` — Entry points: `build_rag_index.py`, `train_mcts.py`, `run_agent.py`, `predict.py`
-- `tests/` — 633 tests covering agents, search, API, scripts, models, data, MLOps
+- `tests/` — ~1,060 tests covering agents, search, API, scripts, models, data, MLOps
 - `README.md` — Implementation plan, model comparison, and roadmap
 - `research/` — Literature reviews and research notes
 - `docs/` — Reference PDFs with corresponding `.md` summaries for each paper
-- `repositories/` — Cloned reference implementations from published papers
 
 ## Per-Phase Pipeline Isolation
 
@@ -27,7 +26,7 @@ Each clinical trial phase (I, II, III) runs a **completely isolated pipeline** �
 - **Prediction:** `python scripts/predict.py --model-dir .output/phase2/ --nctid NCT00110279`
 - **API:** POST `/api/v1/predict` with `{"trial_id": "NCT001", "phase": 2}`
 - **MCTS objectives:** 2 per phase tree — accuracy (ROC-AUC) + parsimony (feature efficiency)
-- **Feature cache:** Shared across phases at `output/feature_cache/` (feature values are trial-specific, not phase-specific)
+- **Caches:** Per-phase feature store at `output/feature_store/<phase>/` and per-phase-per-run agent cache under `.output/<phase>/agent_cache/` (see README § "Outputs and caches")
 
 ## Key Models (Implementation Priority)
 
@@ -36,7 +35,7 @@ Each clinical trial phase (I, II, III) runs a **completely isolated pipeline** �
 3. **MEXA-CTP** (validation baseline) — Lightweight pairwise cross-attention with statement-level eligibility encoding. TOP benchmark SOTA
 4. **LIFTED** (reference) — LLM-based multimodal fusion with Sparse MoE
 
-Note: Reference implementations are not included in this repo. Only `repositories/ML2ClinicalTrials/Trialbench/` (benchmark dataset) is checked in. See README.md for external repo links.
+Note: Reference implementations are not included in this repo. See README.md for external repo links.
 
 ## Input Modalities
 
