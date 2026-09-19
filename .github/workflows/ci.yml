@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -19,10 +20,12 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      # setup-uv publishes no floating major tag past v7; pin the full release SHA.
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           version: "0.11.32"
-          enable-cache: true
+          # Nothing worth caching for a lock check; avoid the empty-cache post-step failure.
+          enable-cache: false
       - name: uv lock --check
         run: uv lock --check
 
@@ -36,13 +39,14 @@ jobs:
         python-version: ["3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      # setup-uv publishes no floating major tag past v7; pin the full release SHA.
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           version: "0.11.32"
           python-version: ${{ matrix.python-version }}
           enable-cache: true
       - name: Install
-        run: uv sync --frozen --extra api --dev
+        run: uv sync --frozen --extra api # the dev dependency group is a uv default group
       - name: Run tests
         run: uv run --frozen pytest -q -p no:cacheprovider
 
@@ -52,18 +56,20 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      # setup-uv publishes no floating major tag past v7; pin the full release SHA.
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           version: "0.11.32"
           python-version: "3.10"
           enable-cache: true
       - name: Install
-        run: uv sync --frozen --extra api --dev
+        run: uv sync --frozen --extra api # the dev dependency group is a uv default group
       - name: ruff check
         run: uv run --frozen ruff check
       - name: ruff format --check
         run: uv run --frozen ruff format --check
-      # Python 3.10 only: uv.lock forks pandas-stubs on python_full_version >= 3.11,
-      # which causes 4 mypy errors (no-any-return). Never add mypy to the matrix legs.
+      # Python 3.10 only: uv.lock forks pandas-stubs (3.0.0 on python_full_version >= 3.11
+      # vs 2.3.3 below), which yields 4 mypy errors there (3 no-any-return, 1 unused-ignore).
+      # Never add mypy to the matrix legs.
       - name: mypy
         run: uv run --frozen mypy src/ctra scripts

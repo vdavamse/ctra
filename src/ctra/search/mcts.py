@@ -56,7 +56,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["MCTSNode", "MCTSSearch", "pareto_select"]
+__all__ = ["MCTSNode", "MCTSSearch"]
 
 # Absolute tolerance under which two scores count as a tie in final selection
 # (issue #15): well above float noise, well below any ROC-AUC resolution.
