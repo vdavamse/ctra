@@ -35,33 +35,30 @@
 
 ---
 
-## 2. The Three Objectives
+## 2. The Two Per-Phase Objectives
 
-All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trade-offs.
+> **Note:** The SVG file in this directory (`docs/mcts-implementation-infographic.svg`) is a stale rendering. This Markdown document is authoritative.
 
-> **Note:** the current configuration runs two objectives — accuracy and parsimony (`MCTSConfig.objectives`, section 11). Cross-phase stability (objective 3) is described here as designed but is not enabled.
+All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trade-offs. Each phase's MCTS tree optimizes independently with its own objectives.
 
 ```
     OBJECTIVE 1: Predictive Accuracy
     ================================
-    Metric:  Weighted ROC-AUC across trial phases
-    Formula: 0.2 * AUC_phase1 + 0.5 * AUC_phase2 + 0.3 * AUC_phase3
-                                  ^
-                                  |
-                          Phase II weighted highest:
-                          65-70% failure rate,
-                          most business value
+    Metric:  Validation ROC-AUC for this phase
+    Purpose: Maximize the probability that the feature set correctly ranks
+             successful vs. failed trials in the target phase
 
-    Example values:
+    Example values (Phase II):
     +--------------------------------------------------+
-    | Feature Set                | Phase I | II  | III | Weighted |
-    |----------------------------|---------|-----|-----|----------|
-    | {enrollment, drug_targets} |  0.72   | 0.58| 0.65|   0.63   |
-    | {+ adverse_events}         |  0.75   | 0.64| 0.70|   0.68   |  <-- +0.05
-    | {+ sponsor_success}        |  0.78   | 0.68| 0.72|   0.72   |  <-- +0.04
-    | {+ biomarker, orphan_drug} |  0.80   | 0.72| 0.75|   0.75   |  <-- +0.03
+    | Feature Set                | Validation ROC-AUC |
+    |----------------------------|---------------------|
+    | {enrollment, drug_targets} |       0.58         |
+    | {+ adverse_events}         |       0.64         |  <-- +0.06
+    | {+ sponsor_success}        |       0.68         |  <-- +0.04
+    | {+ biomarker, orphan_drug} |       0.72         |  <-- +0.04
     +--------------------------------------------------+
-    Diminishing returns: each new feature helps less.
+    Each phase optimizes independently; a feature that helps Phase II
+    may not help Phase I or III, and that's fine.
 
 
     OBJECTIVE 2: Parsimony (Feature Efficiency)
@@ -81,22 +78,6 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
 
     Cost impact: each feature requires ~6 LLM calls per trial
     (ReAct search + extraction). 10 features x 500 trials = 30,000 calls.
-
-
-    OBJECTIVE 3: Cross-Phase Stability
-    ===================================
-    Formula: 1 - CV(phase_aucs)    where CV = std / mean
-    Purpose: Features must work across ALL trial phases, not just one.
-
-    +------------------------------------------------------------+
-    |  Phase AUCs          | CV    | Stability | Interpretation  |
-    |----------------------|-------|-----------|-----------------|
-    | [0.80, 0.80, 0.80]  | 0.000 |   1.00    | Perfect balance |
-    | [0.90, 0.70, 0.75]  | 0.115 |   0.89    | Good            |
-    | [0.95, 0.60, 0.70]  | 0.213 |   0.79    | Uneven          |
-    | [0.95, 0.40, 0.30]  | 0.549 |   0.45    | Unstable        |
-    +------------------------------------------------------------+
-    A model great at Phase I but failing Phase III is operationally useless.
 
 
     THE PARETO TRADE-OFF
@@ -168,17 +149,16 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
     Path node:     depth 0    depth 1    depth 2    depth 3    depth 4
     Accuracy:       0.52       0.55       0.58       0.63       0.68
     Parsimony:      0.98       0.96       0.94       0.92       0.90
-    Stability:      0.95       0.93       0.91       0.88       0.85
 
     Hypervolume:    0.483      0.490      0.496      0.506      0.551
                                                                  ^
                                                                  |
     Best-on-path: depth 4 has highest hypervolume ───────────────┘
-    (product of objective deltas above the reference point; this
-    3-objective illustration uses [0,0,0] — production uses [0.5, 0.0],
-    accuracy at the ROC-AUC chance baseline, see section 11)
+    (product of objective deltas above the reference point; each
+    phase uses reference point [0.5, 0.0]: accuracy at the ROC-AUC
+    chance baseline, parsimony at its floor, see section 11)
 
-    This reward vector [0.68, 0.90, 0.85] is backpropagated to root.
+    This reward vector [0.68, 0.90] is backpropagated to root.
 ```
 
 ---
@@ -196,7 +176,7 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
       - 3 synergy features: accuracy ~0.70
       - ALL 4 together:     accuracy ~0.85  <-- target (epistasis)
 
-    Config: 10 rollouts, max_depth=7, 3 objectives, deep_simulation=True
+    Config: 10 rollouts, max_depth=7, 2 objectives, deep_simulation=True
 
 
     RESULTS
@@ -231,39 +211,39 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
 
     Objectives:  Accuracy   = 0.865  (near-maximum synergy bonus)
                  Parsimony  = 0.860  (7 features / 50 max = good)
-                 Stability  = 0.906  (consistent across phases)
 
-    Hypervolume: 0.865 * 0.860 * 0.906 = 0.674
+    Hypervolume: (0.865 - 0.5) * (0.860 - 0.0) = 0.314
+                 (above reference point [0.5, 0.0])
 
 
     BEST PATH (Root to Best Node)
     =============================
 
-    Depth 0: [noise_1]                    acc=0.82  pars=0.87  stab=0.92
+    Depth 0: [noise_1]                    acc=0.82  pars=0.87
         |
         +-- add:noise_3
         v
-    Depth 1: [noise_1, noise_3]          acc=0.85  pars=0.86  stab=0.91
+    Depth 1: [noise_1, noise_3]          acc=0.85  pars=0.86
         |
         +-- add:feat_D
         v
-    Depth 2: [noise_1, noise_3, feat_D]  acc=0.86  pars=0.86  stab=0.91
+    Depth 2: [noise_1, noise_3, feat_D]  acc=0.86  pars=0.86
         |
         +-- add:feat_C    <-- first synergy feature added
         v
-    Depth 3: [+ feat_C]                  acc=0.60  pars=0.92  stab=0.94
+    Depth 3: [+ feat_C]                  acc=0.60  pars=0.92
         |
         +-- add:feat_A    <-- second synergy feature
         v
-    Depth 4: [+ feat_A]                  acc=0.70  pars=0.90  stab=0.92
+    Depth 4: [+ feat_A]                  acc=0.70  pars=0.90
         |
         +-- add:noise_2
         v
-    Depth 5: [+ noise_2]                 acc=0.69  pars=0.88  stab=0.92
+    Depth 5: [+ noise_2]                 acc=0.69  pars=0.88
         |
         +-- add:feat_B    <-- third synergy feature! All 4 present now
         v
-    Depth 6: [+ feat_B]                  acc=0.87  pars=0.86  stab=0.91
+    Depth 6: [+ feat_B]                  acc=0.87  pars=0.86
                                           ^^^^
                                           Synergy bonus triggered!
 
@@ -303,7 +283,7 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
     | Max tree depth                    |    7     |    7     |  <-- MATCHED
     | Total evaluation calls            |   63     |   63     |  <-- MATCHED
     | Total nodes in tree               |   63     |  160     |  <-- CTRA richer
-    | Objectives                        |    1     |    3     |  <-- CTRA multi-obj
+    | Objectives                        |    1     |    2     |  <-- CTRA multi-obj (per-phase)
     | Selection strategy                | Scalar   | Pareto   |
     |                                   |   UCT    |   UCT    |
     | Best-on-path metric               | max(acc) | max(HV)  |
@@ -336,14 +316,13 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
     2. EXPAND:    AB-MCTS adaptive branching (log2(visits)+2 children)
     3. SIMULATE:  DEEP ROLLOUT (matching AutoCT) — random child selection
                   to max_depth, evaluating every node. But with:
-                  - Multi-fidelity: early rollouts at 25% data (fast/cheap)
-                  - Multi-objective: track 3 objectives per node
+                  - Multi-objective: track 2 objectives per node
                   - Best-on-path by hypervolume (not scalar max)
-    4. BACKPROP:  VECTOR reward (3 objectives) up to root
+    4. BACKPROP:  VECTOR reward (2 objectives) up to root
 
     Key: Same depth as AutoCT, but richer ranking.
          10 rollouts x ~7 evals = ~70 evaluations.
-         Three objectives: accuracy + parsimony + stability.
+         Two objectives: accuracy + parsimony (per-phase).
          Pareto front output: multiple trade-off solutions, not just one.
 
 
