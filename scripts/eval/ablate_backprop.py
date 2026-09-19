@@ -81,7 +81,7 @@ COLUMNS = (
     "best_synergy_count",
     "evals_to_first_synergy",
     "nodes",
-    "max_depth",
+    "depth_reached",
     "ucb_decided",
     "max_size_seen",
     "max_synergy_seen",
@@ -306,7 +306,7 @@ def run_one(variant: str, seed: int, cell: Cell) -> dict[str, Any]:
         "best_synergy_count": len(set(best.features) & synergy),
         "evals_to_first_synergy": float("nan") if first is None else float(first),
         "nodes": len(search.all_nodes),
-        "max_depth": max(MCTSSearch._node_depth(n) for n in search.all_nodes),
+        "depth_reached": max(MCTSSearch._node_depth(n) for n in search.all_nodes),
         "ucb_decided": counter.ucb_decided,
         "max_size_seen": max(len(f) for f in runner.seen),
         "max_synergy_seen": max(counts),
@@ -371,7 +371,7 @@ _MEAN_KEYS = (
     "best_synergy_count",
     "evals_to_first_synergy",
     "nodes",
-    "max_depth",
+    "depth_reached",
     "ucb_decided",
 )
 _IDENTITY_KEYS = ("evaluations", "best_auc", "best_depth", "best_synergy_count", "ucb_decided")
@@ -420,12 +420,12 @@ def summarise(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
 _SUMMARY_HEADER = (
     f"{'regime':10} {'variant':7} {'deep':5} {'adapt':5} {'roll':>4} {'br':>2} {'n':>3} "
     f"{'evals':>7} {'AUC':>7} {'depth':>5} {'found':>5} {'syn':>4} {'first':>6} "
-    f"{'nodes':>6} {'maxd':>4} {'UCB':>6} {'=mean':>5}"
+    f"{'nodes':>6} {'reached':>7} {'UCB':>6} {'=mean':>5}"
 )
 _ROW_HEADER = (
     f"{'regime':10} {'variant':7} {'deep':5} {'adapt':5} {'roll':>4} {'br':>2} {'seed':>4} "
     f"{'evals':>5} {'AUC':>7} {'depth':>5} {'found':>5} {'syn':>4} {'first':>6} "
-    f"{'nodes':>6} {'maxd':>4} {'UCB':>6}"
+    f"{'nodes':>6} {'reached':>7} {'UCB':>6}"
 )
 
 
@@ -443,7 +443,7 @@ def format_table(summary: Sequence[dict[str, Any]]) -> str:
             f"{_fmt(e['evaluations'], 7, 1)} {_fmt(e['best_auc'], 7, 4)} "
             f"{_fmt(e['best_depth'], 5, 2)} {_fmt(e['synergy_found'], 5, 2)} "
             f"{_fmt(e['best_synergy_count'], 4, 1)} {_fmt(e['evals_to_first_synergy'], 6, 1)} "
-            f"{_fmt(e['nodes'], 6, 1)} {_fmt(e['max_depth'], 4, 1)} "
+            f"{_fmt(e['nodes'], 6, 1)} {_fmt(e['depth_reached'], 7, 1)} "
             f"{_fmt(e['ucb_decided'], 6, 1)} {e['same_as_mean']:5d}"
             + (f"  ({e['note']})" if e["note"] else "")
         )
@@ -459,7 +459,7 @@ def format_rows(rows: Sequence[dict[str, Any]]) -> str:
             f"{r['rollouts']:4d} {r['branch']:2d} {r['seed']:4d} {r['evaluations']:5d} "
             f"{r['best_auc']:7.4f} {r['best_depth']:5d} {r['synergy_found']!s:>5} "
             f"{r['best_synergy_count']:4d} {_fmt(r['evals_to_first_synergy'], 6, 0)} "
-            f"{r['nodes']:6d} {r['max_depth']:4d} {r['ucb_decided']:6d}"
+            f"{r['nodes']:6d} {r['depth_reached']:7d} {r['ucb_decided']:6d}"
         )
     return "\n".join(lines)
 

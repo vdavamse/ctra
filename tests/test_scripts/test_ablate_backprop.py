@@ -38,7 +38,7 @@ def _row(**overrides):
         "best_synergy_count": 3,
         "evals_to_first_synergy": float("nan"),
         "nodes": 30,
-        "max_depth": 6,
+        "depth_reached": 6,
         "ucb_decided": 2,
         "max_size_seen": 6,
         "max_synergy_seen": 4,

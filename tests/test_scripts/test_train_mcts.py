@@ -74,11 +74,14 @@ def _make_mock_mcts(
     resume compares it with the current settings (issue #18), as it does
     ``config.backprop`` (issue #16) — a bare ``MagicMock`` attribute would
     never equal the settings' string and every resume would warn.
+    ``value_estimate`` mirrors the real method (it returns the node's
+    ``mean_reward``): ``train_mcts`` writes it as ``best_mean_objectives``.
     """
     mcts = MagicMock()
     mcts.search.return_value = best_node
     mcts.all_nodes = list(all_nodes) if all_nodes is not None else [best_node]
     mcts.best_own_objectives.return_value = np.array(own_objectives)
+    mcts.value_estimate.side_effect = lambda node: node.mean_reward
     mcts.config.reference_point = list(reference_point)
     mcts.config.backprop = backprop
     return mcts
@@ -796,6 +799,7 @@ class TestOutputFiles:
         assert results["depth"] == 5
         assert results["best_features"] == ["drug_mechanism", "trial_size"]
         assert results["total_nodes"] == 2
+        assert results["backprop"] == "mean"
 
     def test_results_json_reports_own_and_mean_objectives(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -836,8 +840,68 @@ class TestOutputFiles:
 
         results = json.loads((output_dir / "phase3" / "results.json").read_text())
         mock_mcts.best_own_objectives.assert_called_once_with(best_node)
+        mock_mcts.value_estimate.assert_called_once_with(best_node)
         assert results["best_objectives"] == [0.91, 0.96]
         assert results["best_mean_objectives"] == [0.62, 0.88]
+
+    @pytest.mark.parametrize(
+        ("backprop", "label"),
+        [("mean", "Subtree mean"), ("max", "Subtree max"), ("max_hv", "Best subtree point")],
+    )
+    def test_best_mean_objectives_is_the_value_estimate_under_the_run_rule(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        backprop: str,
+        label: str,
+    ) -> None:
+        """Under a non-``mean`` rule the field is not a mean (issue #16).
+
+        ``best_mean_objectives`` keeps its key for continuity but holds
+        ``value_estimate(best_node)`` — the vector UCB exploited under the
+        run's rule — and ``results.json`` records the rule as ``backprop``;
+        the printed label follows the rule.
+        """
+        output_dir = tmp_path / "output"
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["train_mcts.py", "--task", "phase3", "--output-dir", str(output_dir)],
+        )
+
+        best_node = _make_best_node(features=["drug_mechanism", "trial_size"])
+        best_node.mean_reward = np.array([0.62, 0.88])
+        best_node.eval_output = _make_mock_output()
+        mock_mcts = _make_mock_mcts(best_node, own_objectives=(0.91, 0.96), backprop=backprop)
+        # Distinct from ``mean_reward`` so the script cannot pass by reading the node.
+        mock_mcts.value_estimate.side_effect = None
+        mock_mcts.value_estimate.return_value = np.array([0.70, 0.90])
+
+        monkeypatch.setattr(
+            "ctra.search.mcts.MCTSSearch",
+            MagicMock(return_value=mock_mcts),
+        )
+        mock_settings = _make_mock_settings(num_rollouts=3, max_depth=5)
+        mock_settings.mcts.backprop = backprop
+        monkeypatch.setattr(
+            "ctra.config.settings.get_settings", MagicMock(return_value=mock_settings)
+        )
+        monkeypatch.setattr("ctra.agents.feature_utils.dump_as_json", MagicMock(return_value="{}"))
+        monkeypatch.setattr("dill.dump", MagicMock())
+
+        from train_mcts import main
+
+        main()
+
+        results = json.loads((output_dir / "phase3" / "results.json").read_text())
+        mock_mcts.value_estimate.assert_called_once_with(best_node)
+        assert results["backprop"] == backprop
+        assert results["best_objectives"] == [0.91, 0.96]
+        assert results["best_mean_objectives"] == [0.70, 0.90]
+        out = capsys.readouterr().out
+        assert f"{label}:" in out
+        assert "[0.7 0.9]" in out
 
 
 # ---------------------------------------------------------------------------

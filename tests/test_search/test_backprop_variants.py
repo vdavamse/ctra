@@ -112,10 +112,14 @@ class TestMax:
         for v in reversed(vectors):
             search._backpropagate(backward[2], v)
 
+        # Every vector went through the leaf, so all three nodes hold the
+        # elementwise maximum of the whole list, whichever way it was fed.
+        expected = np.max(np.stack(vectors), axis=0)
         for a, b in zip(forward, backward, strict=True):
-            np.testing.assert_allclose(a.mean_reward, b.mean_reward)
+            np.testing.assert_allclose(a.mean_reward, expected)
+            np.testing.assert_allclose(b.mean_reward, expected)
             np.testing.assert_allclose(a.total_reward, b.total_reward)
-            assert a.visit_count == b.visit_count
+            assert a.visit_count == b.visit_count == len(vectors)
 
     def test_is_monotone_in_every_coordinate(self):
         search = _search("max")
@@ -237,15 +241,21 @@ class TestInvariant:
         assert [n.visit_count for n in nodes] == [n.visit_count for n in ref_nodes]
 
     def test_ucb_scores_read_the_aggregate(self, mode):
-        """``ucb_scores`` is unchanged code: exploit term == aggregate."""
+        """``ucb_scores`` is unchanged code: its exploit term is the rule's aggregate.
+
+        Both terms are recomputed from the vectors fed in, not read back
+        from the node: the aggregate independently of ``_backpropagate``,
+        the bonus from the number of vectors (root and child were visited
+        once per vector).
+        """
         search = _search(mode)
-        root, child, leaf = _chain()
+        _root, child, leaf = _chain()
         for v in SEQUENCE:
             search._backpropagate(leaf, v)
 
-        explore = 1.0 * np.sqrt(np.log(root.visit_count) / child.visit_count)
+        explore = 1.0 * np.sqrt(np.log(len(SEQUENCE)) / len(SEQUENCE))
         np.testing.assert_allclose(
-            child.ucb_scores(exploration_constant=1.0), child.mean_reward + explore
+            child.ucb_scores(exploration_constant=1.0), _aggregate(mode, SEQUENCE) + explore
         )
 
 
@@ -273,10 +283,24 @@ class TestConfigGuard:
         with pytest.raises(ValueError, match="unknown backprop mode 'sum'"):
             search._backpropagate(leaf, ABOVE_A)
 
-    def test_value_estimate_names_every_rule(self):
-        doc = MCTSSearch.value_estimate.__doc__ or ""
 
-        assert "mean" in doc and "max_hv" in doc and "max" in doc
+class TestValueEstimate:
+    def test_is_the_rules_aggregate_and_the_rules_disagree(self):
+        """``value_estimate`` reports the active rule's aggregate, which differs per rule."""
+        estimates: dict[str, np.ndarray] = {}
+        for mode in ("mean", "max", "max_hv"):
+            search = _search(mode)
+            root, _child, leaf = _chain()
+            for v in SEQUENCE:
+                search._backpropagate(leaf, v)
+            np.testing.assert_allclose(search.value_estimate(root), _aggregate(mode, SEQUENCE))
+            estimates[mode] = search.value_estimate(root)
+
+        # SEQUENCE separates the three rules, so the test above could not
+        # pass with one rule standing in for another.
+        assert not np.allclose(estimates["mean"], estimates["max"])
+        assert not np.allclose(estimates["max"], estimates["max_hv"])
+        assert not np.allclose(estimates["mean"], estimates["max_hv"])
 
 
 # ---------------------------------------------------------------------------
@@ -309,11 +333,26 @@ def test_a_small_search_completes_under_every_rule(mode):
     assert search.root is not None and search.root.visit_count > 1
     own = search.best_own_objectives(best)
     assert own.shape == (2,)
-    # The invariant survives a real search under every rule.
+
+    # Every node's aggregate is recomputed from the evaluations in its
+    # subtree (each ``objective_history`` entry was backpropagated exactly
+    # once) and compared with what UCB exploited.
+    def subtree_vectors(node: MCTSNode) -> list[np.ndarray]:
+        vectors = [np.asarray(result.values) for result in node.objective_history]
+        for child in node.children:
+            vectors.extend(subtree_vectors(child))
+        return vectors
+
+    checked = 0
     for node in search.all_nodes:
-        np.testing.assert_allclose(
-            node.total_reward, node.mean_reward * max(node.visit_count, 1), atol=1e-12
-        )
+        vectors = subtree_vectors(node)
+        assert node.visit_count == len(vectors)
+        if vectors:
+            expected = _aggregate(mode, vectors)
+            np.testing.assert_allclose(node.mean_reward, expected, atol=1e-12)
+            np.testing.assert_allclose(search.value_estimate(node), expected, atol=1e-12)
+            checked += 1
+    assert checked > 1  # the root and at least one evaluated descendant
 
 
 def test_stub_runner_search_completes_under_max_hv():

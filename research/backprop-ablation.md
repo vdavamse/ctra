@@ -12,7 +12,7 @@ Backprop state reaches the search through exactly one path: `MCTSNode.ucb_scores
 
 ## 2. The three rules
 
-All three keep `visit_count` = number of evaluations through the node and store their aggregate `A` as `total_reward = A * visit_count`, so `mean_reward`, `ucb_scores` and `value()` are unchanged code and no node state was added (checkpoints round-trip; round-trip error ≤ 1e-16, nine orders below `_TIE_ATOL`).
+All three keep `visit_count` = number of evaluations through the node and store their aggregate `A` as `total_reward = A * visit_count`, so `mean_reward`, `ucb_scores` and `value()` are unchanged code and no node state was added (checkpoints round-trip). The `A * visit_count / visit_count` round-trip costs about one ulp per backpropagation, so the error grows with the visits: about visits × 1e-16, measured 8.6e-13 under `max` and 2.2e-12 under `max_hv` after 200,000 visits through one node — roughly three orders below `_TIE_ATOL` (1e-9).
 
 | Rule | `A(node)` after backpropagating vectors `v_1..v_k` through it | Properties |
 |---|---|---|
@@ -28,7 +28,7 @@ All three keep `visit_count` = number of evaluations through the node and store 
 
 **Why the issue's own wiring could not be used.** `test_autoct_mcts_comparison.py` drives CTRA through `make_stub_runner`, which rebuilds each `AgentOutput` from the *parent's* plans and never applies the suggestion the child follows. Every node in the tree is therefore evaluated on the root's 1-feature set (`sizes seen = [1]`, 63/63 evaluations) and the landscape is never reached — the comparison is vacuous on the CTRA side. The harness carries its own **feature-aware runner** (the `_FeatureAwareRunner` shape from `test_mcts_deep_exploration.py`: suggestion `i` ADDs the `i`-th not-yet-carried pool feature, and the output's plans are the evaluated node's own set), copied rather than imported so the script does not depend on the test suite. Two in-harness assertions refuse a table the fixture cannot have produced: each regime must evaluate a feature set larger than the root and a set with all four synergy features at least once (`tests/test_scripts/test_ablate_backprop.py` fences the first with a parent-plans runner).
 
-**Metrics per (cell, variant, seed):** evaluations; best own ROC-AUC (`best_own_objectives(best)[0]`); depth of the best node; whether a 4-synergy set was ever evaluated ("found") and after how many evaluations ("first", NaN when never); synergy features in the returned best set ("syn"); nodes; deepest node; and **UCB-decided selections** — `pareto_select` calls where every candidate had been visited, the only calls that read backprop state. "= mean" counts the seeds on which the variant's search ended exactly where `mean`'s did.
+**Metrics per (cell, variant, seed):** evaluations; best own ROC-AUC (`best_own_objectives(best)[0]`); depth of the best node; whether a 4-synergy set was ever evaluated ("found") and after how many evaluations ("first", NaN when never); synergy features in the returned best set ("syn"); nodes; the deepest node reached (`depth_reached`); and **UCB-decided selections** — `pareto_select` calls where every candidate had been visited, the only calls that read backprop state. "= mean" counts the seeds on which the variant's search ended exactly where `mean`'s did.
 
 **Regimes** (`--regime`): `issue` — the issue's factorial (deep × adaptive at 10 rollouts, branch 3) plus a shallow control at the deep cell's evaluation budget; `saturated` — enough revisits for UCB to decide most selections (shallow 120 rollouts at branch 2 and 3, deep 40 rollouts at branch 2); `deep-wide` — deep 40 rollouts with the production branch range (min 2, max 8), fixed and adaptive.
 
@@ -40,7 +40,7 @@ All three keep `visit_count` = number of evaluations through the node and store 
 
 ### 4.1 `issue` regime
 
-| variant | deep | adaptive | rollouts | branch | evals | AUC | depth | found | syn | first | nodes | max d | UCB | = mean |
+| variant | deep | adaptive | rollouts | branch | evals | AUC | depth | found | syn | first | nodes | depth reached | UCB | = mean |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | mean | yes | no | 10 | 3 | 63.0 | 0.8295 | 6.25 | 1.00 | 4.0 | 7.7 | 130.0 | 7.0 | 8.0 | 20 |
 | max | yes | no | 10 | 3 | 63.0 | 0.8293 | 6.25 | 1.00 | 4.0 | 7.7 | 130.0 | 7.0 | 8.0 | 18 |
@@ -62,7 +62,7 @@ At the issue's budget the variants are indistinguishable by construction: 8-16 U
 
 ### 4.2 `saturated` regime
 
-| variant | deep | adaptive | rollouts | branch | evals | AUC | depth | found | syn | first | nodes | max d | UCB | = mean |
+| variant | deep | adaptive | rollouts | branch | evals | AUC | depth | found | syn | first | nodes | depth reached | UCB | = mean |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | mean | no | no | 120 | 2 | 121.0 | 0.8392 | 5.95 | 1.00 | 4.0 | 78.5 | 127.0 | 6.0 | 486.1 | 20 |
 | max | no | no | 120 | 2 | 121.0 | 0.8400 | 6.40 | 1.00 | 4.0 | 79.3 | 133.2 | 6.7 | 493.1 | 4 |
@@ -81,7 +81,7 @@ Here the variants do diverge (0-4 of 20 seeds identical on the shallow cells, 30
 
 ### 4.3 `deep-wide` regime
 
-| variant | deep | adaptive | rollouts | branch | evals | AUC | depth | found | syn | first | nodes | max d | UCB | = mean |
+| variant | deep | adaptive | rollouts | branch | evals | AUC | depth | found | syn | first | nodes | depth reached | UCB | = mean |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | mean | yes | no | 40 | 8 | 248.0 | 0.8374 | 5.75 | 1.00 | 4.0 | 7.5 | 650.0 | 7.0 | 33.0 | 20 |
 | max | yes | no | 40 | 8 | 248.0 | 0.8367 | 5.90 | 1.00 | 4.0 | 7.5 | 650.0 | 7.0 | 33.0 | 12 |
@@ -194,12 +194,12 @@ Best own AUC per variant (`mean / max / max_hv`), then best depth, synergy featu
 | 18 | 0.8498 | 0.8498 | 0.8498 | 7/7/7 | 4/4/4 | 8/8/8 | 138/138/138 |
 | 19 | 0.8472 | 0.8472 | 0.8472 | 7/7/7 | 4/4/4 | 8/8/8 | 138/138/138 |
 
-**What `max_hv`'s losses are.** On r120/b2 seed 5 and deep-wide seeds 7 and 15 the search *did* evaluate a 4-synergy set (`found` = yes, at evaluations 87, 8 and 6) but the returned best is a 3-synergy set at depth 3 (AUC 0.686, 0.679, 0.691). That is the final pick, not the backprop rule, making the last call: `_select_best` ranks the Pareto front by hypervolume *contribution*, and a lone parsimonious 3-synergy point on a front crowded with several near-identical 4-synergy points can carry the larger exclusive contribution. `max_hv` produced trees where that happened three times in 120 searches; `mean` and `max` never did. The interaction is worth its own look (it is the issue #15 ranking, out of scope here), but for this decision it counts as a loss of the variant that caused it.
+**What the collapses are.** On four (cell, seed) pairs the search *did* evaluate a 4-synergy set (`found` = yes) but the returned best is a lone 3-synergy set at depth 3 with AUC 0.68-0.69. That is the final pick, not the backprop rule, making the last call: `_select_best` ranks the Pareto front by hypervolume *contribution*, and a parsimonious 3-synergy point on a front crowded with several near-identical 4-synergy points can carry the larger exclusive contribution. It is an artefact of the #15 ranking that can hit any rule — on `issue` deep/fixed r10/b3 seed 15 all three rules return the same node, (0.6866, 0.92) at depth 3, although 12-13 four-synergy nodes with own AUC up to 0.838 (depth 7) had been evaluated (the seed-15 row is identical for `mean`, `max` and `max_hv` in the JSON; re-running the cell and listing every evaluated node confirms it). `max_hv` additionally produced trees where it fired on three further pairs that `mean` and `max` did not: `saturated` shallow r120/b2 seed 5 (0.6860; `mean` returned 0.8390, and the best 4-synergy node `max_hv` had evaluated scored 0.8388), and `deep-wide` fixed r40/b8 seeds 7 (0.6786 vs `mean` 0.8287; best 4-synergy node evaluated 0.8424) and 15 (0.6914 vs `mean` 0.8024; best evaluated 0.8410). On those three seeds the collapse is a loss for `max_hv` and section 6 counts it as one. The ranking itself is issue #15 territory, out of scope here, and is listed under follow-ups (section 9).
 
 ## 5. Side results
 
 - **Deep beats shallow at an equal evaluation budget.** Deep, 10 rollouts, branch 3 (63 evaluations): AUC 0.8295, 4-synergy set found on 20/20 landscapes after 7.7 evaluations. Shallow, 63 rollouts, branch 3 (64 evaluations): AUC 0.6602, found on 0/20. Shallow reaches the plateau only with 120 rollouts at branch 2 (0.8392, 20/20, after 78.5 evaluations). Rollouts are not the budget to compare across modes.
-- **Adaptive branching in deep mode is fixed branching at `min_branch_factor`.** The `deep-wide` adaptive cell (branch ≤ 8) equals the `saturated` deep r40/b2 cell on every metric of every seed (60/60 rows identical): `_simulate_deep` expands a node right after its first evaluation, when `floor(log2(1)) + 2 = 2 = min_branch_factor`, so the branch factor never grows. Its "efficiency" (143 vs 248 evaluations, 167 vs 650 nodes, AUC 0.8427 vs 0.8374) is the efficiency of a narrower tree: on this landscape, where every ADD is a step toward the plateau, narrow and deep is simply better. In shallow mode the factor does move (root and revisited leaves are expanded at visit counts > 1), which is why the shallow r10 adaptive cell differs from its fixed neighbour (depth 2.90 vs 2.00).
+- **Adaptive branching never adapts: `_expand` runs only at `visit_count == 1`, in shallow and deep mode alike.** `search()` expands the selected leaf as soon as `visit_count > 0`, an expanded node has children and is never returned by `_select` as a leaf again, and `_simulate_deep` likewise expands a node right after its first evaluation. Instrumenting `MCTSSearch._expand` over every cell of this sweep (11 cells × 3 rules × 20 seeds, 40,328 expansions) found no expansion at any visit count other than 1. The AB-MCTS formula `clamp(floor(log2(visit_count)) + 2, min_branch_factor, max_branch_factor)` therefore always evaluates to `max(min_branch_factor, 2)` clamped to `max_branch_factor` — branch 2 in every cell here — so the sweep's `adaptive` axis is a branch-2 vs branch-N comparison and nothing more. That is why the `deep-wide` adaptive cell (branch ≤ 8) equals the `saturated` deep r40/b2 cell on every metric of every seed (60/60 rows identical), why its "efficiency" (143 vs 248 evaluations, 167 vs 650 nodes, AUC 0.8427 vs 0.8374) is the efficiency of a narrower tree — on this landscape, where every ADD is a step toward the plateau, narrow and deep is simply better — and why the shallow r10 adaptive cell differs from its fixed neighbour (branch 2 vs 3: depth 2.90 vs 2.00). Pre-existing on `main` and independent of the backprop rule; listed under follow-ups (section 9).
 - **The adaptive axis is inert at `min_branch_factor == max_branch_factor`.** The r120/b2 adaptive and fixed cells are identical on every seed and variant, by construction of the clamp. A factorial that flips `adaptive_branching` at branch 2 measures nothing.
 - **Where UCB decides.** UCB-decided selections per search: 7-16 (issue regime), 33 (deep-wide fixed), 135-138 (equal-evals shallow, deep r40), 308-493 (saturated shallow). Divergence between variants tracks that count (2-3 seeds differ at 8, 16-20 seeds differ at 300+).
 
@@ -245,3 +245,10 @@ VIRTUAL_ENV=~/clinical-trial-risk-assesment-venv uv run --active \
 ```
 
 660 searches, about one minute. The tables above are its printed per-cell means and per-seed rows; the paired differences were computed from the JSON's `rows` (same cell and seed, variant minus `mean`).
+
+## 9. Follow-ups
+
+Both are independent of the backprop rule and pre-existing on `main`; each is worth its own issue.
+
+- **`_select_best` returned a 0.687-AUC node while 0.83-AUC nodes had been evaluated.** Reproduce with `run_one("mean", 15, REGIMES["issue"][0])` from `scripts/eval/ablate_backprop.py` (or `--regime issue --seeds 16`, row `issue` deep/fixed r10/b3 seed 15): the returned best is the 3-synergy node at (0.6866, 0.92), depth 3, under all three rules, although 12-13 four-synergy nodes with own AUC up to 0.838 (depth 7) were evaluated. The hypervolume-*contribution* ranking of the Pareto front (issue #15) hands the lone parsimonious point the largest exclusive contribution once the plateau is crowded with near-identical points. The same pick occurs under `max_hv` on `saturated` shallow r120/b2 seed 5 and `deep-wide` fixed r40/b8 seeds 7 and 15 (section 4). A defect in the #15 ranking, not in #16.
+- **AB-MCTS adaptive branching is inert: `_expand` only ever runs at `visit_count == 1`** (section 5), so the branch factor is always `max(min_branch_factor, 2)` clamped to `max_branch_factor`, in shallow and deep mode alike. Either the formula should read a count that can grow (the parent's visits, or a re-expansion of revisited nodes), or `adaptive_branching` should be documented as a fixed narrow branch.
