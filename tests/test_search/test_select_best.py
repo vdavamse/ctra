@@ -9,12 +9,19 @@ tree by hand so the ranking rule is exercised directly, with no rollouts.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 import numpy as np
 import pytest
 
 from ctra.config.settings import MCTSConfig
 from ctra.search.mcts import MCTSNode, MCTSSearch
 from ctra.search.objectives import ObjectiveResult
+
+from .conftest import make_stub_output
+
+if TYPE_CHECKING:
+    from ctra.agents.data_models import AgentOutput
 
 
 def _search(objectives: list[str], reference: list[float]) -> MCTSSearch:
@@ -49,6 +56,19 @@ def _node(
         for v in (own or [])
     ]
     return node
+
+
+def _entry(values: list[float], features: list[str] | tuple[str, ...] | None) -> ObjectiveResult:
+    """One history entry, snapshotting ``features`` the way ``_wrap_result`` does.
+
+    ``None`` writes no snapshot at all — the shape of an entry restored from
+    a checkpoint written before the snapshot existed.
+    """
+    names = [f"obj_{i}" for i in range(len(values))]
+    details: dict[str, Any] = dict(zip(names, map(float, values), strict=True))
+    if features is not None:
+        details["features"] = list(features)
+    return ObjectiveResult(values=np.array(values), names=names, details=details)
 
 
 def _wire(search: MCTSSearch, root: MCTSNode, *rest: MCTSNode) -> None:
@@ -169,7 +189,12 @@ class TestMultipleOwnEvaluations:
         assert search._select_best() is rerun
 
     def test_entries_differing_only_in_accuracy_pick_the_higher(self):
-        """Parsimony is a function of ``len(features)``, so re-runs differ in accuracy only."""
+        """Re-runs of one set usually share a parsimony and differ in accuracy.
+
+        Parsimony is a function of ``len(features)``; a re-evaluation that
+        changed the plans is filtered out by the feature snapshot
+        (``TestFeatureSnapshot``), so what remains differs in accuracy.
+        """
         search = _search(["accuracy", "parsimony"], [0.0, 0.0])
         node = _node(["a", "b"], own=[[0.40, 0.96], [0.72, 0.96]], visit_count=2)
         _wire(search, node)
@@ -199,6 +224,135 @@ class TestMultipleOwnEvaluations:
         _wire(search, node)
 
         assert search.best_own_objectives(node) == pytest.approx(np.array([0.6]))
+
+
+class _PlanChangingRunner:
+    """Non-root call *n* returns the parent's plans plus ``x<n>``, scored ``rocs[n-1]``.
+
+    A proposer that never returns the same plan twice: a node's second
+    evaluation lands on a different feature set.  ``scores`` maps every
+    feature set the runner returned to the ROC-AUC it gave it.
+    """
+
+    def __init__(self, rocs: list[float]) -> None:
+        self._rocs = list(rocs)
+        self.calls = 0
+        self.scores: dict[tuple[str, ...], float] = {}
+
+    def __call__(self, node_id: str, task: Any, previous_output: AgentOutput | None) -> AgentOutput:
+        if previous_output is None:
+            features, roc = ["f0"], 0.50
+        else:
+            self.calls += 1
+            features = [*previous_output.feature_plans, f"x{self.calls}"]
+            roc = self._rocs[self.calls - 1]
+        self.scores[tuple(features)] = roc
+        return make_stub_output(features, roc)
+
+
+class TestFeatureSnapshot:
+    """A node re-evaluated with changed plans is ranked by the set it now holds.
+
+    ``_call_evaluate`` rewrites ``node.features`` when the runner's plans differ
+    from the parent's, so a re-picked node can carry a history entry scored
+    for a set it no longer has.  Each entry snapshots its set
+    (``details["features"]``) and ``_best_own_objectives`` skips the ones
+    that do not match ``node.features``.
+    """
+
+    def test_entry_for_a_previous_feature_set_is_ignored(self):
+        """History ``{a,b,c}: 0.91`` then ``{a,b,d}: 0.72``; the node now holds ``[a,b,d]``.
+
+        Ranked by the stale 0.91 the node wins the front outright; ranked by
+        its own 0.72 it is dominated by ``other`` (0.80 on two features).
+        """
+        search = _search(["accuracy", "parsimony"], [0.0, 0.0])
+        root = _node(["a"], own=[[0.60, 0.98]], visit_count=1)
+        rerun = _node(["a", "b", "d"], visit_count=2, parent=root)
+        rerun.objective_history = [
+            _entry([0.91, 0.94], ["a", "b", "c"]),
+            _entry([0.72, 0.94], ["a", "b", "d"]),
+        ]
+        other = _node(["a", "b"], own=[[0.80, 0.96]], visit_count=1, parent=root)
+        _wire(search, root, rerun, other)
+
+        assert search.best_own_objectives(rerun) == pytest.approx(np.array([0.72, 0.94]))
+        assert search._select_best() is other
+
+    def test_entry_without_a_snapshot_still_counts(self):
+        """A checkpoint written before the snapshot existed: its entries all count."""
+        search = _search(["accuracy", "parsimony"], [0.0, 0.0])
+        node = _node(["a", "b", "d"], visit_count=2)
+        node.objective_history = [
+            _entry([0.91, 0.94], None),
+            _entry([0.72, 0.94], ["a", "b", "d"]),
+        ]
+        _wire(search, node)
+
+        assert search.best_own_objectives(node) == pytest.approx(np.array([0.91, 0.94]))
+
+    def test_snapshot_is_compared_as_a_list_in_stored_order(self):
+        """A tuple (a JSON/dill round-trip) matches; a reordered set does not."""
+        search = _search(["accuracy", "parsimony"], [0.0, 0.0])
+        node = _node(["a", "b"], visit_count=2)
+        node.objective_history = [
+            _entry([0.95, 0.96], ["b", "a"]),
+            _entry([0.70, 0.96], ("a", "b")),
+        ]
+        _wire(search, node)
+
+        assert search.best_own_objectives(node) == pytest.approx(np.array([0.70, 0.96]))
+
+    def test_search_ranks_a_re_evaluated_node_by_its_current_set(self):
+        """Through ``search()``: the re-picked child is scored for a new set and ranked by it.
+
+        Shallow mode, ``max_depth=1``, two children of the root and no
+        expansion below them: rollouts 0 and 1 evaluate the two children
+        (0.91, 0.80); rollout 2 re-selects one of them, which cannot expand
+        and is evaluated again under a new node id — the runner hands it a
+        new plan scored 0.72 and ``_call_evaluate`` rewrites its features.
+        Ranked by the stale entry, the search would report the old score
+        beside ``best_features`` it never earned.
+        """
+        runner = _PlanChangingRunner([0.91, 0.80, 0.72])
+        config = MCTSConfig(
+            num_rollouts=3,
+            max_depth=1,
+            objectives=["accuracy", "parsimony"],
+            reference_point=[0.0, 0.0],
+            deep_simulation=False,
+            adaptive_branching=False,
+            min_branch_factor=2,
+            max_branch_factor=2,
+            max_features=20,
+        )
+
+        def expand_fn(node: MCTSNode, max_children: int = 2) -> list[tuple[list[str], str, str]]:
+            if node.parent is not None:
+                return []
+            return [(list(node.features), "add", f"s{i}") for i in range(max_children)]
+
+        search = MCTSSearch(runner=runner, task="phase2", config=config, expand_fn=expand_fn)
+        best = search.search(["f0"])
+
+        evaluated = [n for n in search.all_nodes if n.objective_history]
+        rerun = [n for n in evaluated if len(n.objective_history) == 2]
+        assert len(rerun) == 1
+        assert runner.scores[tuple(rerun[0].features)] == pytest.approx(0.72)
+
+        # Every node is ranked by the score of the set it holds now ...
+        for node in evaluated:
+            own = search.best_own_objectives(node)
+            assert own[0] == pytest.approx(runner.scores[tuple(node.features)])
+        # ... and the pick is the node whose *current* set scored highest.
+        expected = max(evaluated, key=lambda n: runner.scores[tuple(n.features)])
+        assert best is expected
+        assert search.best_own_objectives(best)[0] == pytest.approx(
+            runner.scores[tuple(best.features)]
+        )
+        # The history records both sets, and only the second is the node's.
+        snapshots = [e.details.get("features") for e in rerun[0].objective_history]
+        assert snapshots[0] != snapshots[1] and snapshots[1] == rerun[0].features
 
 
 class TestTieBreaking:
@@ -232,15 +386,53 @@ class TestTieBreaking:
         assert search._select_best() is narrow
 
     def test_all_contributions_zero_is_a_tie_not_an_argmax(self):
-        """Every point below the reference: contributions are all 0 (issue #18)."""
+        """Every point below the reference: contributions are all 0 (issue #18).
+
+        The smallest set is the *last* candidate, so ``argmax`` (front index
+        0, the root) and the tie-break disagree — the test can see which
+        one decided.
+        """
         search = _search(["accuracy", "parsimony"], [0.5, 0.5])
-        root = _node(["a"], own=[[0.10, 0.40]], visit_count=1)
-        wide = _node(["a", "b", "c"], own=[[0.40, 0.10]], visit_count=1, parent=root)
-        narrow = _node(["a", "b"], own=[[0.30, 0.20]], visit_count=1, parent=root)
+        root = _node(["a", "b", "c"], own=[[0.10, 0.40]], visit_count=1)
+        wide = _node(["a", "b", "c", "d"], own=[[0.40, 0.10]], visit_count=1, parent=root)
+        narrow = _node(["a"], own=[[0.30, 0.20]], visit_count=1, parent=root)
         _wire(search, root, wide, narrow)
 
         # All three are mutually non-dominated and all contribute zero volume.
-        assert search._select_best() is root
+        assert search._select_best() is narrow
+
+    def test_contributions_equal_on_paper_but_ulps_apart_are_a_tie(self):
+        """(0.9, 0.2) and (0.6, 0.3) each add 0.06 exclusively — a few ULPs apart in float.
+
+        Exact equality would hand the pick to rounding noise (``wide``);
+        ``np.isclose`` makes it a tie and the smaller set wins.
+        """
+        search = _search(["accuracy", "parsimony"], [0.0, 0.0])
+        root = _node(["a", "b"], own=[[0.50, 0.10]], visit_count=1)  # dominated by wide
+        wide = _node(["a", "b", "c"], own=[[0.90, 0.20]], visit_count=1, parent=root)
+        narrow = _node(["a"], own=[[0.60, 0.30]], visit_count=1, parent=root)
+        _wire(search, root, wide, narrow)
+
+        contributions = search._front_contributions(np.array([[0.90, 0.20], [0.60, 0.30]]))
+        assert contributions[0] != contributions[1]  # the ULP gap is real ...
+        assert np.isclose(contributions[0], contributions[1])  # ... and is not a ranking
+        assert search._select_best() is narrow
+
+    def test_near_coincident_front_points_are_deduped(self):
+        """Own vectors 1e-13 apart (in opposite directions, so both stay on the front) are one point.
+
+        Without the rounding in ``_front_contributions`` each twin's exclusive
+        volume is ~1e-13 and the lone root (0.02) would win.
+        """
+        search = _search(["accuracy", "parsimony"], [0.0, 0.0])
+        root = _node(["a"], own=[[0.50, 0.98]], visit_count=1)
+        twins = [
+            _node(["a", "b", "c"], own=[[0.85, 0.94 + 1e-13]], visit_count=1, parent=root),
+            _node(["a", "b", "d"], own=[[0.85 + 1e-13, 0.94]], visit_count=1, parent=root),
+        ]
+        _wire(search, root, *twins)
+
+        assert search._select_best() is twins[0]
 
 
 class TestNonFiniteScores:
@@ -262,10 +454,11 @@ class TestNonFiniteScores:
 
         assert search.best_own_objectives(node) == pytest.approx(np.array([0.9, 0.96]))
 
-    def test_all_nan_single_objective_still_returns_a_node(self):
+    def test_every_score_non_finite_falls_back_to_the_root(self):
+        """No entry survives the finiteness filter: zero candidates, so the root fallback answers."""
         search = _search(["accuracy"], [0.0])
         root = _node(["a"], own=[[float("nan")]], visit_count=1)
         child = _node(["a", "b"], own=[[float("nan")]], visit_count=1, parent=root)
         _wire(search, root, child)
 
-        assert isinstance(search._select_best(), MCTSNode)
+        assert search._select_best() is root

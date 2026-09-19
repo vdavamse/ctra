@@ -283,13 +283,15 @@ def main() -> None:
 
     # 4. Results summary
     # ``best_objectives`` is the best node's *own* evaluation (issue #15): the
-    # score of ``best_features`` for a node evaluated once or whose
-    # re-evaluations kept its feature set.  A re-evaluation that changed the
-    # plans can leave the best history entry belonging to an earlier set than
-    # the ``eval_output`` shipped in ``feature_plans.json``.  Before that fix
-    # this field held ``mean_reward``, the average over the node's subtree,
-    # which is a different (usually lower) number; it is kept alongside as
-    # ``best_mean_objectives`` for continuity with older runs.
+    # score of ``best_features``.  Each history entry snapshots the feature
+    # set it scored and the accessor ranks only the entries matching the
+    # node's current set, so a re-evaluation that changed the plans cannot
+    # leave this field describing an earlier set than the ``eval_output``
+    # shipped in ``feature_plans.json`` (a checkpoint from before the snapshot
+    # existed is the one exception: its entries carry no set and all count).
+    # Before that fix this field held ``mean_reward``, the average over the
+    # node's subtree, which is a different (usually lower) number; it is kept
+    # alongside as ``best_mean_objectives`` for continuity with older runs.
     best_own = mcts.best_own_objectives(best_node)
     results = {
         "task": args.task,

@@ -48,7 +48,7 @@ from ctra.search.pareto import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from numpy.typing import NDArray
 
@@ -308,7 +308,7 @@ class MCTSSearch:
                 raise RuntimeError("root evaluation returned no objective")
             self._root.total_reward = root_obj.copy()
             self._root.visit_count = 1
-            self._root.objective_history.append(self._wrap_result(root_obj))
+            self._root.objective_history.append(self._wrap_result(root_obj, self._root.features))
         else:
             # Resuming: root and previous nodes already restored
             assert self._root is not None, "Cannot resume: no root node. Load checkpoint first."
@@ -382,7 +382,7 @@ class MCTSSearch:
                         # record — no history entry, no backprop, no visit.
                         rollout_reward = None
                     else:
-                        node.objective_history.append(self._wrap_result(obj_vector))
+                        node.objective_history.append(self._wrap_result(obj_vector, node.features))
                         self._backpropagate(node, obj_vector)
                         rollout_reward = obj_vector
             except Exception:
@@ -602,7 +602,7 @@ class MCTSSearch:
             best_hv = -np.inf
             nodes_evaluated = 0
         else:
-            current.objective_history.append(self._wrap_result(start_obj))
+            current.objective_history.append(self._wrap_result(start_obj, current.features))
             self._backpropagate(current, start_obj)
             best_obj = start_obj
             best_hv = self._point_hypervolume(start_obj)
@@ -658,7 +658,7 @@ class MCTSSearch:
                 # masks the pre-pick filter, that filter has its own test
                 # (``test_deep_simulation_filters_exhausted_children_before_picking``).
                 break
-            child.objective_history.append(self._wrap_result(child_obj))
+            child.objective_history.append(self._wrap_result(child_obj, child.features))
             self._backpropagate(child, child_obj)
             nodes_evaluated += 1
 
@@ -745,12 +745,21 @@ class MCTSSearch:
 
         A node can hold several entries: a deep rollout may re-pick an already
         visited child, and an unexpandable leaf can be re-evaluated in shallow
-        mode.  The entries share a parsimony (it is a function of
-        ``len(node.features)``) and differ only in accuracy, so "best" is
-        decided by ``(self._point_hypervolume(v), v[0])`` — the file's one
-        notion of vector quality, with accuracy as the tie-break so that
-        vectors sitting entirely below the reference point (all hypervolume 0)
-        still rank against each other.
+        mode.  Each entry snapshots the feature set it scored
+        (``details["features"]``, written by ``_wrap_result``).  A
+        re-evaluation that changed the plans rewrites ``node.features``
+        (``_call_evaluate`` step 5), and an entry scored for an earlier set is
+        skipped here, so the node is ranked by the set it now holds — the one
+        its ``eval_output`` (and so ``feature_plans.json`` and
+        ``best_model.pkl``) describes.  An entry without a snapshot (a
+        checkpoint written before it was recorded) counts unconditionally, as
+        every entry did before.  The entries that remain usually share a
+        parsimony (it is a function of ``len(node.features)``) and differ in
+        accuracy, so "best" is decided by
+        ``(self._point_hypervolume(v), v[0])`` — the file's one notion of
+        vector quality, with accuracy as the tie-break so that vectors sitting
+        entirely below the reference point (all hypervolume 0) still rank
+        against each other.
 
         Returns a *copy*, so a caller cannot mutate the stored history.
 
@@ -765,7 +774,11 @@ class MCTSSearch:
         """
         best: NDArray[Any] | None = None
         best_key: tuple[float, float] | None = None
+        current = list(node.features)
         for result in node.objective_history:
+            snapshot = result.details.get("features")
+            if snapshot is not None and list(snapshot) != current:
+                continue
             values = np.asarray(result.values, dtype=float)
             if not np.all(np.isfinite(values)):
                 continue
@@ -785,12 +798,14 @@ class MCTSSearch:
         ``scripts/train_mcts.py`` writes it to ``results.json["best_objectives"]``
         and keeps the subtree mean beside it as ``best_mean_objectives``.
 
-        It is the score of ``node.features`` for a node evaluated once, or
-        whose re-evaluations kept its feature set.  A re-evaluation that
+        It is the score of ``node.features``: every history entry records the
+        feature set it scored, and ``_best_own_objectives`` ranks only the
+        entries matching the node's current set, so a re-evaluation that
         changed the plans (``_call_evaluate`` rewrites ``node.features`` from
-        the new ``feature_plans``) can leave the best history entry belonging
-        to an earlier feature set than the ``eval_output`` the node now
-        carries; the history does not record which set each entry scored.
+        the new ``feature_plans``) cannot leave the reported score belonging
+        to an earlier set than the ``eval_output`` the node now carries.  The
+        one exception is a checkpoint written before the snapshot existed:
+        its entries carry no set and all count.
 
         Never returns ``None``: a node with no evaluation of its own (never
         simulated, or restored from a checkpoint written before histories were
@@ -847,8 +862,11 @@ class MCTSSearch:
            as it represents the most valuable trade-off point.
 
         Ties at either step are resolved by ``_break_ties`` (fewer features,
-        then earliest in ``_all_nodes``).  Falls back to the root when no node
-        has been evaluated at all (edge case).
+        then earliest in ``_all_nodes``).  A tie is decided with
+        ``np.isclose``: two contributions (or accuracies) that are equal on
+        paper can differ by a few ULPs in floating point, and exact equality
+        would hand the pick to rounding noise instead of the tie-break.  Falls
+        back to the root when no node has been evaluated at all (edge case).
         """
         candidates: list[MCTSNode] = []
         own_points: list[NDArray[Any]] = []
@@ -863,15 +881,10 @@ class MCTSSearch:
             return self._root
 
         points = np.array(own_points)
+        # Every candidate vector is finite (``_best_own_objectives`` drops the
+        # rest), so the maximum exists and the maximiser set is non-empty.
         accuracy = points[:, 0]
-        if np.isfinite(accuracy).any():
-            scalar_max = np.flatnonzero(accuracy == np.nanmax(accuracy))
-        else:
-            # No finite accuracy at all.  ``_best_own_objectives`` already
-            # drops non-finite entries, so this is belt and braces: rather
-            # than hand ``_break_ties`` an empty index set (it would raise),
-            # tie every candidate and let the deterministic rule pick one.
-            scalar_max = np.arange(len(candidates))
+        scalar_max = np.flatnonzero(np.isclose(accuracy, accuracy.max()))
 
         # Single-objective fast path: just pick the max
         if self._n_objectives == 1:
@@ -892,7 +905,7 @@ class MCTSSearch:
         # the answer stays deterministic instead of falling to ``argmax``'s
         # first index.
         contributions = self._front_contributions(points[front_idx])
-        winners = front_idx[contributions == contributions.max()]
+        winners = front_idx[np.isclose(contributions, contributions.max())]
         return self._break_ties(candidates, winners)
 
     def _front_contributions(self, front_points: NDArray[Any]) -> NDArray[Any]:
@@ -910,10 +923,22 @@ class MCTSSearch:
         So the contribution is computed over the *distinct* points and
         broadcast back to every front position holding that point; the nodes
         that share the winning point are then separated by ``_break_ties``.
+
+        "Distinct" is decided on the points rounded to 12 decimals, and the
+        contributions are computed on those rounded representatives too: two
+        evaluations of one feature set can differ at 1e-13 (float noise in a
+        metric), and ``np.unique`` on the raw values would keep both, each
+        with a near-zero exclusive contribution — the cancellation this method
+        exists to prevent.  Computing on the raw points would reintroduce it
+        through the back door for the unique representatives, so the rounded
+        matrix is what is scored.  Twelve decimals is far below the
+        resolution of any ROC-AUC or parsimony score, so genuinely distinct
+        points rank exactly as before.
         """
-        unique, inverse = np.unique(front_points, axis=0, return_inverse=True)
+        rounded = np.round(front_points, 12)
+        unique, inverse = np.unique(rounded, axis=0, return_inverse=True)
         contributions = hypervolume_contribution(unique, self._reference)
-        return contributions[np.asarray(inverse).ravel()]  # type: ignore[no-any-return]
+        return contributions[np.asarray(inverse).ravel()]
 
     # ------------------------------------------------------------------
     # Evaluation helpers
@@ -1331,17 +1356,28 @@ class MCTSSearch:
         return candidates
 
     @staticmethod
-    def _wrap_result(obj_vector: NDArray[Any]) -> ObjectiveResult:
+    def _wrap_result(
+        obj_vector: NDArray[Any], features: Sequence[str] | None = None
+    ) -> ObjectiveResult:
         """Wrap a raw objective vector into an ``ObjectiveResult`` for the node's history.
 
         Assigns auto-generated names (``obj_0``, ``obj_1``, ...) and stores
         a copy so that mutations to the original array don't affect the
         history.  The ``objective_history`` list on each node accumulates
         these records for diagnostics, re-ranking, and checkpoint export.
+
+        ``features`` is the feature set the vector scored, snapshotted as
+        ``details["features"]`` (a list, so it survives a JSON dump) so that
+        ``_best_own_objectives`` can ignore an entry that belongs to a set
+        the node no longer holds.  Every append site in this file passes
+        ``node.features``; ``None`` writes no snapshot and the entry counts
+        unconditionally, like one restored from an older checkpoint.
+        ``mlops/experiment_tracker.py::log_rollout`` and
+        ``mlops/model_store.py`` only read the numeric entries of
+        ``details`` by name, so the list is passed through untouched.
         """
         names = [f"obj_{i}" for i in range(len(obj_vector))]
-        return ObjectiveResult(
-            values=obj_vector.copy(),
-            names=names,
-            details={n: float(v) for n, v in zip(names, obj_vector, strict=True)},
-        )
+        details: dict[str, Any] = {n: float(v) for n, v in zip(names, obj_vector, strict=True)}
+        if features is not None:
+            details["features"] = list(features)
+        return ObjectiveResult(values=obj_vector.copy(), names=names, details=details)
