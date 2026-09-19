@@ -912,22 +912,40 @@ class MCTSSearch:
             return self._break_ties(candidates, scalar_max)
 
         if len(front_idx) == 1:
-            return candidates[int(front_idx[0])]
+            # A lone front point is selected outright, but a point at or
+            # below the reference on some axis has no volume: under the
+            # production reference (accuracy at the ROC-AUC chance baseline,
+            # issue #18) that means the only non-dominated feature set does
+            # not beat chance, which the operator should know.
+            only = int(front_idx[0])
+            if self._point_hypervolume(points[only]) <= _TIE_ATOL:
+                logger.warning(
+                    "The only Pareto-front candidate (%d features) does not score "
+                    "above the reference point %s: its hypervolume is 0, so it is "
+                    "selected by default",
+                    len(candidates[only].features),
+                    self._reference.tolist(),
+                )
+            return candidates[only]
 
         # 2. Among front nodes, rank by hypervolume contribution.  All-zero
         # contributions (every point below the reference point) are a tie, so
         # the answer stays deterministic instead of falling to ``argmax``'s
-        # first index.  Say so: under the production reference (accuracy at
-        # the ROC-AUC chance baseline, issue #18) it means no feature set
-        # scored above chance, which the operator should know.
+        # first index.  "Zero" is judged at ``_TIE_ATOL``, the same tolerance
+        # the ranking below uses, so the warning fires exactly when the
+        # ranking degenerates into the tie-break.  Say so: under the
+        # production reference (accuracy at the ROC-AUC chance baseline,
+        # issue #18) it means no feature set scored above chance, which the
+        # operator should know.
         contributions = self._front_contributions(points[front_idx])
-        if not np.any(contributions > 0.0):
+        if np.all(np.isclose(contributions, 0.0, rtol=0.0, atol=_TIE_ATOL)):
             logger.warning(
                 "No Pareto-front candidate scores above the reference point %s: "
-                "all %d hypervolume contributions are 0, so the smallest feature "
-                "set is selected",
+                "all %d hypervolume contributions are 0 (within %g), so the "
+                "smallest feature set is selected",
                 self._reference.tolist(),
                 len(front_idx),
+                _TIE_ATOL,
             )
         winners = front_idx[
             np.isclose(contributions, contributions.max(), rtol=0.0, atol=_TIE_ATOL)

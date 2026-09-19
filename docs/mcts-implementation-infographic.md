@@ -39,6 +39,8 @@
 
 All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trade-offs.
 
+> **Note:** the current configuration runs two objectives — accuracy and parsimony (`MCTSConfig.objectives`, section 11). Cross-phase stability (objective 3) is described here as designed but is not enabled.
+
 ```
     OBJECTIVE 1: Predictive Accuracy
     ================================

@@ -464,10 +464,25 @@ class TestFeatureRefinementChain:
             f"the runner only ever evaluated the root's feature set: "
             f"sizes {sorted(set(runner.sizes_seen))}"
         )
-        assert len(best.features) == 13, (
-            f"expected the smallest saturated set (13 features), got "
-            f"{len(best.features)}: {best.features}; own accuracy "
-            f"{search.best_own_objectives(best)[0]:.3f}"
+        # The intent: the selected node is the *smallest* feature set whose
+        # own accuracy reached the ``np.clip`` plateau at 1.0 (measured at 13
+        # features with this pool and seed; 14-16 are dominated by it, and
+        # the 1-feature root at ~0.54 is far from the plateau).  The count is
+        # not pinned, so a trajectory change cannot fail the test on its own.
+        saturated = [
+            node
+            for node in search.all_nodes
+            if node.visit_count > 0 and search.best_own_objectives(node)[0] == pytest.approx(1.0)
+        ]
+        assert saturated, "no evaluated feature set reached the accuracy plateau"
+        smallest_saturated = min(len(node.features) for node in saturated)
+        assert search.best_own_objectives(best)[0] == pytest.approx(1.0), (
+            f"selected a {len(best.features)}-feature set below the plateau: "
+            f"own accuracy {search.best_own_objectives(best)[0]:.3f}"
+        )
+        assert len(best.features) == smallest_saturated, (
+            f"expected the smallest saturated set ({smallest_saturated} features), got "
+            f"{len(best.features)}: {best.features}"
         )
 
         # Trace path from best back to root

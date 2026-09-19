@@ -557,6 +557,51 @@ class TestReferencePoint:
         assert "above the reference point [0.5, 0.0]" in warnings[0]
         assert "all 3 hypervolume contributions are 0" in warnings[0]
 
+    def test_sub_tolerance_contributions_warn_like_exact_zeros(self, caplog, monkeypatch):
+        """The warning uses the tie tolerance, not exact zero.
+
+        Contributions of ``[5e-10, 0, 0]`` are a tie at ``_TIE_ATOL`` (1e-9)
+        and resolve to the smallest set; the warning must fire for the same
+        inputs the tie-break absorbs, or it would stay silent on a front the
+        ranking already treats as all-zero.
+        """
+        search = _search(["accuracy", "parsimony"], [0.5, 0.0])
+        root = _node(["a", "b", "c"], own=[[0.80, 0.94]], visit_count=1)
+        wide = _node(["a", "b", "c", "d"], own=[[0.90, 0.92]], visit_count=1, parent=root)
+        narrow = _node(["a"], own=[[0.70, 0.98]], visit_count=1, parent=root)
+        _wire(search, root, wide, narrow)
+        monkeypatch.setattr(
+            search, "_front_contributions", lambda front: np.array([5e-10, 0.0, 0.0])
+        )
+
+        with caplog.at_level(logging.WARNING, logger="ctra.search.mcts"):
+            assert search._select_best() is narrow
+
+        warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1, warnings
+        assert "all 3 hypervolume contributions are 0" in warnings[0]
+
+    def test_single_front_point_below_chance_is_selected_and_warns(self, caplog):
+        """A lone front point at or below the reference is returned, with the warning.
+
+        The root dominates its children, so the front is a single point and
+        the early return skips the contribution ranking; the point still has
+        no hypervolume under ``[0.5, 0.0]`` and the operator is told.
+        """
+        search = _search(["accuracy", "parsimony"], [0.5, 0.0])
+        root = _node(["a"], own=[[0.49, 0.98]], visit_count=1)
+        child = _node(["a", "b"], own=[[0.45, 0.96]], visit_count=1, parent=root)
+        other = _node(["a", "c"], own=[[0.45, 0.96]], visit_count=1, parent=root)
+        _wire(search, root, child, other)
+
+        with caplog.at_level(logging.WARNING, logger="ctra.search.mcts"):
+            assert search._select_best() is root
+
+        warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1, warnings
+        assert "only Pareto-front candidate (1 features)" in warnings[0]
+        assert "above the reference point [0.5, 0.0]" in warnings[0]
+
     def test_a_front_point_above_chance_does_not_warn(self, caplog):
         search = _search(["accuracy", "parsimony"], [0.5, 0.0])
         root = _node(["a"], own=[[0.45, 0.98]], visit_count=1)
