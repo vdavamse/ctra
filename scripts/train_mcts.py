@@ -282,12 +282,19 @@ def main() -> None:
     logger.info("Saved final checkpoint to %s", final_ckpt)
 
     # 4. Results summary
+    # ``best_objectives`` is the best node's *own* evaluation — the score of the
+    # feature set in ``best_features`` (issue #15).  Before that fix this field
+    # held ``mean_reward``, the average over the node's subtree, which is a
+    # different (usually lower) number; it is kept alongside as
+    # ``best_mean_objectives`` for continuity with older runs.
+    best_own = mcts.best_own_objectives(best_node)
     results = {
         "task": args.task,
         "rollouts": total_rollouts,
         "depth": settings.mcts.max_depth,
         "best_features": best_node.features,
-        "best_objectives": best_node.mean_reward.tolist(),
+        "best_objectives": best_own.tolist(),
+        "best_mean_objectives": best_node.mean_reward.tolist(),
         "total_nodes": len(mcts.all_nodes),
         "elapsed_seconds": round(total_elapsed, 1),
     }
@@ -304,7 +311,8 @@ def main() -> None:
     print(f"  Best features ({len(best_node.features)}):")
     for feat in best_node.features:
         print(f"    - {feat}")
-    print(f"  Best objectives: {np.round(best_node.mean_reward, 4)}")
+    print(f"  Best objectives: {np.round(best_own, 4)}")
+    print(f"  Subtree mean:    {np.round(best_node.mean_reward, 4)}")
     print(f"  Time: {total_elapsed:.0f}s")
     print(f"  Output: {output_dir}")
     print(f"{'=' * 60}")
