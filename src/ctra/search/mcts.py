@@ -291,7 +291,7 @@ class MCTSSearch:
             once, the one whose *own* best objective vector wins on Pareto rank,
             then hypervolume contribution (``_select_best``).  Its score is
             ``best_own_objectives(node)``; ``node.mean_reward`` is the subtree
-            mean UCB used and is generally lower.
+            mean that UCB used during the search and is generally lower.
         """
         if start_rollout == 0:
             # Fresh start: create root and evaluate it
@@ -586,10 +586,11 @@ class MCTSSearch:
         current = start_node
 
         # NOTE: on rollout 0 ``start_node`` is the root, which ``search()`` has
-        # already evaluated.  It is not evaluated twice: ``_select`` descends to a
-        # leaf and ``search()`` moves to a freshly expanded child before calling
-        # here, so the root reaches this line only when it has no children at all.
-        # See test_root_visit_count_not_inflated.
+        # already evaluated.  In the normal path it is not evaluated twice:
+        # ``_select`` descends to a leaf and ``search()`` moves to a freshly
+        # expanded child before calling here.  When expansion yields no children
+        # (or ``features`` is empty) the root does reach this line and is
+        # evaluated a second time.  See test_root_visit_count_not_inflated.
 
         # Evaluate start node and backpropagate
         start_obj = self._call_evaluate(current, rollout=rollout)
@@ -753,6 +754,12 @@ class MCTSSearch:
 
         Returns a *copy*, so a caller cannot mutate the stored history.
 
+        Entries with a non-finite component (a NaN or infinite score) are
+        skipped: NaN compares false against everything, so such an entry
+        would otherwise stick as the "best" one and poison the ranking.  A
+        node whose every entry is non-finite has no usable score and is
+        treated like one with no history.
+
         All entries are assumed to have ``n_objectives`` components — that is
         what ``_call_evaluate`` pads/truncates to before ``_wrap_result``.
         """
@@ -760,6 +767,8 @@ class MCTSSearch:
         best_key: tuple[float, float] | None = None
         for result in node.objective_history:
             values = np.asarray(result.values, dtype=float)
+            if not np.all(np.isfinite(values)):
+                continue
             key = (self._point_hypervolume(values), float(values[0]))
             if best_key is None or key > best_key:
                 best_key = key
@@ -769,13 +778,19 @@ class MCTSSearch:
     def best_own_objectives(self, node: MCTSNode) -> NDArray[Any]:
         """The objective vector ``_select_best`` ranked ``node`` by.
 
-        This is the node's own best evaluation — the score of *its* feature
-        set — as opposed to ``node.mean_reward``, which is the average over
-        the node's whole subtree and is what UCB consumes during the search
-        (issue #15).  Callers that report "the best feature set scored X"
-        want this one; ``scripts/train_mcts.py`` writes it to
-        ``results.json["best_objectives"]`` and keeps the subtree mean beside
-        it as ``best_mean_objectives``.
+        This is the node's own best evaluation, as opposed to
+        ``node.mean_reward``, which is the average over the node's whole
+        subtree and is what UCB consumes during the search (issue #15).
+        Callers that report "the best feature set scored X" want this one;
+        ``scripts/train_mcts.py`` writes it to ``results.json["best_objectives"]``
+        and keeps the subtree mean beside it as ``best_mean_objectives``.
+
+        It is the score of ``node.features`` for a node evaluated once, or
+        whose re-evaluations kept its feature set.  A re-evaluation that
+        changed the plans (``_call_evaluate`` rewrites ``node.features`` from
+        the new ``feature_plans``) can leave the best history entry belonging
+        to an earlier feature set than the ``eval_output`` the node now
+        carries; the history does not record which set each entry scored.
 
         Never returns ``None``: a node with no evaluation of its own (never
         simulated, or restored from a checkpoint written before histories were
@@ -848,7 +863,15 @@ class MCTSSearch:
             return self._root
 
         points = np.array(own_points)
-        scalar_max = np.flatnonzero(points[:, 0] == points[:, 0].max())
+        accuracy = points[:, 0]
+        if np.isfinite(accuracy).any():
+            scalar_max = np.flatnonzero(accuracy == np.nanmax(accuracy))
+        else:
+            # No finite accuracy at all.  ``_best_own_objectives`` already
+            # drops non-finite entries, so this is belt and braces: rather
+            # than hand ``_break_ties`` an empty index set (it would raise),
+            # tie every candidate and let the deterministic rule pick one.
+            scalar_max = np.arange(len(candidates))
 
         # Single-objective fast path: just pick the max
         if self._n_objectives == 1:

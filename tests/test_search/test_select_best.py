@@ -241,3 +241,31 @@ class TestTieBreaking:
 
         # All three are mutually non-dominated and all contribute zero volume.
         assert search._select_best() is root
+
+
+class TestNonFiniteScores:
+    """A NaN evaluation must neither win nor crash the final ranking."""
+
+    def test_nan_child_does_not_crash_single_objective_selection(self):
+        """Root 0.70 plus a NaN child: the root is selected, nothing raises."""
+        search = _search(["accuracy"], [0.0])
+        root = _node(["a"], own=[[0.70]], visit_count=1)
+        child = _node(["a", "b"], own=[[float("nan")]], visit_count=1, parent=root)
+        _wire(search, root, child)
+
+        assert search._select_best() is root
+
+    def test_accessor_skips_entries_with_a_nan_component(self):
+        search = _search(["accuracy", "parsimony"], [0.0, 0.0])
+        node = _node(["a", "b"], own=[[float("nan"), 0.96], [0.9, 0.96]], visit_count=2)
+        _wire(search, node)
+
+        assert search.best_own_objectives(node) == pytest.approx(np.array([0.9, 0.96]))
+
+    def test_all_nan_single_objective_still_returns_a_node(self):
+        search = _search(["accuracy"], [0.0])
+        root = _node(["a"], own=[[float("nan")]], visit_count=1)
+        child = _node(["a", "b"], own=[[float("nan")]], visit_count=1, parent=root)
+        _wire(search, root, child)
+
+        assert isinstance(search._select_best(), MCTSNode)

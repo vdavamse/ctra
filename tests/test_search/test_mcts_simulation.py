@@ -245,7 +245,9 @@ class TestMCTSFullSimulation:
 
         # Candidates are the nodes that were evaluated at least once.
         evaluated = [n for n in search.all_nodes if n.objective_history]
-        assert best in evaluated
+        # Identity, not ``in``: the dataclass ``__eq__`` compares ndarray
+        # fields and can raise on a multi-element array.
+        assert any(n is best for n in evaluated)
         best_own = search.best_own_objectives(best)
 
         # Verify no other node dominates the best node on ALL objectives

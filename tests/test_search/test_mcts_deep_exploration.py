@@ -202,14 +202,19 @@ class TestDeepExploration:
         ranks nodes by their own evaluation (issue #15), so the sweet spot at
         n=3 has to actually be *evaluated* at n=3 — hence the local runner.
         """
-        rng = np.random.default_rng(42)
 
         def evaluate(features):
             n = len(features)
             # Accuracy jumps sharply at n=3 to create a clear sweet spot,
             # and stays flat after it so the extra features only cost parsimony.
-            acc = 0.9 + rng.normal(0, 0.005) if n >= 3 else 0.3 + 0.05 * n + rng.normal(0, 0.005)
-            return np.array([np.clip(acc, 0, 1), max(0, 1 - n / 50)])
+            # No jitter, for the same reason as the synergy test below: the
+            # sweet spot is a deterministic step, and noise only spreads the
+            # n>=3 sets into a cluster whose exclusive widths shrink towards
+            # the root's.  (With sigma 0.005 the seeded run still passed, n=3
+            # set 0.0304 vs root 0.0070, a seeded-deterministic margin; without
+            # jitter it is 0.47 vs 0.007.)
+            acc = 0.9 if n >= 3 else 0.3 + 0.05 * n
+            return np.array([acc, max(0, 1 - n / 50)])
 
         runner = _make_feature_aware_runner(evaluate, ["f0"], [f"f{i}" for i in range(1, 13)])
         search = MCTSSearch(runner=runner, task="test")
@@ -246,6 +251,10 @@ class TestDeepExploration:
         # exclusive hypervolume contribution and the lone 1-feature root wins
         # the ranking on width alone.  The epistasis this test is about is a
         # deterministic interaction effect, so the noise only hid it.
+        # The noisy variant (sigma 0.01) selects the root under
+        # ``reference_point=[0, 0]`` — root 0.01006 vs synergy set 0.00818 —
+        # and is tracked by issue #18; see
+        # ``test_deep_combination_survives_accuracy_noise``.
         synergy_features = {"alpha", "beta", "gamma"}
         tiers = {3: 0.85, 2: 0.65, 1: 0.55, 0: 0.50}
 
@@ -278,6 +287,46 @@ class TestDeepExploration:
             f"but best features {best.features} only contain "
             f"{synergy_found}/3 synergy features (alpha, beta, gamma). "
             f"Best own accuracy: {search.best_own_objectives(best)[0]:.3f}"
+        )
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="issue #18: reference point [0,0] lets the root win under accuracy noise",
+    )
+    def test_deep_combination_survives_accuracy_noise(self):
+        """The synergy fixture with ``rng.normal(0, 0.01)`` accuracy jitter.
+
+        Same tiers as ``test_deep_combination_discovered``; the noise spreads
+        the top tier into a dense cluster on the front, no point keeps a
+        meaningful exclusive width, and the lone 1-feature root wins on width
+        alone (measured: root 0.01006 vs synergy set 0.00818).  Expected to
+        pass once issue #18 moves the hypervolume reference point.
+        """
+        rng = np.random.default_rng(42)
+        synergy_features = {"alpha", "beta", "gamma"}
+        tiers = {3: 0.85, 2: 0.65, 1: 0.55, 0: 0.50}
+
+        def evaluate(features):
+            synergy_count = len(set(features) & synergy_features)
+            n = len(features)
+            acc = tiers[synergy_count] + rng.normal(0, 0.01)
+            return np.array([np.clip(acc, 0, 1), max(0, 1 - n / 50)])
+
+        feature_pool = ["alpha", "beta", "gamma", "noise1", "noise2", "noise3"]
+
+        runner = _make_feature_aware_runner(evaluate, ["noise1"], feature_pool)
+        search = MCTSSearch(runner=runner, task="test")
+        best = search.search(initial_features=["noise1"])
+
+        synergy_counts = {len(set(f) & synergy_features) for f in runner.seen}
+        assert 3 in synergy_counts, (
+            f"the runner never evaluated all three synergy features together; "
+            f"synergy counts seen: {sorted(synergy_counts)}"
+        )
+
+        assert synergy_features <= set(best.features), (
+            f"best features {best.features} do not contain all of alpha, beta, gamma; "
+            f"best own accuracy: {search.best_own_objectives(best)[0]:.3f}"
         )
 
     def test_remove_operations_prune_bad_features(self):
@@ -399,7 +448,9 @@ class TestFeatureRefinementChain:
         # A ten-feature pool keeps the largest set at n=11, below the point
         # where ``np.clip`` flattens accuracy at 1.0: a plateau would put
         # dozens of nodes on the same front coordinate and leave the ranking
-        # to parsimony alone, which the root always wins.
+        # to parsimony alone, which the root always wins.  With a pool of 20
+        # the root is selected under ``reference_point=[0, 0]`` (root 0.01086
+        # vs 0.00189 for the best deep set); tracked by issue #18.
         runner = _make_feature_aware_runner(
             evaluate, ["seed_feat"], [f"feat_{i}" for i in range(10)]
         )

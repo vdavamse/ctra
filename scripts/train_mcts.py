@@ -282,10 +282,13 @@ def main() -> None:
     logger.info("Saved final checkpoint to %s", final_ckpt)
 
     # 4. Results summary
-    # ``best_objectives`` is the best node's *own* evaluation — the score of the
-    # feature set in ``best_features`` (issue #15).  Before that fix this field
-    # held ``mean_reward``, the average over the node's subtree, which is a
-    # different (usually lower) number; it is kept alongside as
+    # ``best_objectives`` is the best node's *own* evaluation (issue #15): the
+    # score of ``best_features`` for a node evaluated once or whose
+    # re-evaluations kept its feature set.  A re-evaluation that changed the
+    # plans can leave the best history entry belonging to an earlier set than
+    # the ``eval_output`` shipped in ``feature_plans.json``.  Before that fix
+    # this field held ``mean_reward``, the average over the node's subtree,
+    # which is a different (usually lower) number; it is kept alongside as
     # ``best_mean_objectives`` for continuity with older runs.
     best_own = mcts.best_own_objectives(best_node)
     results = {
