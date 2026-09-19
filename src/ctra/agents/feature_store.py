@@ -57,7 +57,7 @@ def _sort_nested(d: dict[str, list[str]] | None) -> dict[str, list[str]]:
     return {k: sorted(v) for k, v in sorted(d.items())}
 
 
-def _plan_content_hash(plan: FeaturePlan) -> str:
+def plan_content_hash(plan: FeaturePlan) -> str:
     """Canonical 16-char SHA-256 hex digest of a FeaturePlan's identity.
 
     Included fields (definitional):
@@ -93,6 +93,12 @@ def _plan_content_hash(plan: FeaturePlan) -> str:
     return hashlib.sha256(raw).hexdigest()[:16]
 
 
+# Backwards-compatible alias: ``plan_content_hash`` is the public name (the
+# canonical FeaturePlan digest, reusable outside this module); the underscored
+# name is kept for existing importers and tests.
+_plan_content_hash = plan_content_hash
+
+
 def _store_path(
     store_dir: Path,
     task_namespace: str,
@@ -116,7 +122,7 @@ def get_cached_feature(
     Returns None on miss or on schema-version mismatch. A malformed JSON
     entry is logged at WARNING and treated as a miss (does not crash).
     """
-    plan_hash = _plan_content_hash(plan)
+    plan_hash = plan_content_hash(plan)
     path = _store_path(store_dir, task_namespace, feature_name, plan_hash, nctid)
     if not path.exists():
         return None
@@ -150,7 +156,7 @@ def put_cached_feature(
     Safe under concurrent writers because the safety invariant guarantees
     identical content for the same key.
     """
-    plan_hash = _plan_content_hash(plan)
+    plan_hash = plan_content_hash(plan)
     path = _store_path(store_dir, task_namespace, feature_name, plan_hash, nctid)
     path.parent.mkdir(parents=True, exist_ok=True)
     # Only the dill-hex copy is read back (see get_cached_feature). A raw
@@ -186,7 +192,7 @@ def get_cached_features_batch(
     plan: FeaturePlan,
 ) -> dict[str, dict[str, Any]]:
     """Bulk probe: returns {nctid: feature_values} for all nctids that hit."""
-    plan_hash = _plan_content_hash(plan)
+    plan_hash = plan_content_hash(plan)
     results: dict[str, dict[str, Any]] = {}
     for nctid in nctids:
         path = _store_path(store_dir, task_namespace, feature_name, plan_hash, nctid)
