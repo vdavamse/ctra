@@ -319,9 +319,7 @@ def main() -> None:
     # checkpoint's on a resume), so the step bookkeeping below must follow it,
     # not the CLI/settings value.
     ckpt_rollouts = getattr(mcts.config, "num_rollouts", None)
-    total_rollouts = (
-        ckpt_rollouts if isinstance(ckpt_rollouts, int) else settings.mcts.num_rollouts
-    )
+    total_rollouts = ckpt_rollouts if isinstance(ckpt_rollouts, int) else settings.mcts.num_rollouts
     if checkpoint is not None and total_rollouts != settings.mcts.num_rollouts:
         logger.warning(
             "Checkpoint num_rollouts=%d differs from settings num_rollouts=%d; "
