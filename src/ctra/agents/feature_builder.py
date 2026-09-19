@@ -44,6 +44,7 @@ from ctra.agents.data_models import (
     BUILDER_EXCEPTION_RESEARCH_SENTINEL,
     BUILDER_OMITTED_PREFIX,
     FeaturePlan,
+    FeatureStoreCounters,
     FeatureType,
 )
 from ctra.agents.feature_store import (
@@ -361,6 +362,15 @@ class WrappedFeatureBuilder:
     the store writes, so an omission is never negatively cached and is retried
     on the next run, and **outside** the reward boundary, so Refine still sees
     (and retries) the partial result.
+
+    Counting (issue #17): ``counters`` receives one ``feature_lookups`` per
+    probed plan, one ``feature_hits`` per hit (attributed to ``plan_origin``),
+    one ``groups_skipped`` per fully cached call and one ``groups_dispatched``
+    per call that reaches the builder -- **unless** ``batch_probed`` is set,
+    in which case ``compute_features``'s upfront batch probe already counted
+    every one of those events for this group and the wrapper counts only its
+    own ``store_writes``.  Without that switch a partially cached group would
+    be counted twice: once by the batch and again by the re-probe here.
     """
 
     def __init__(
@@ -369,11 +379,17 @@ class WrappedFeatureBuilder:
         feature_store_dir: Path | None = None,
         task_namespace: str = "default",
         feature_store_enabled: bool = True,
+        counters: FeatureStoreCounters | None = None,
+        batch_probed: bool = False,
+        plan_origin: str = "planner",
     ) -> None:
         self.task_description = task_description
         self._feature_store_dir = feature_store_dir
         self._task_namespace = task_namespace
         self._feature_store_enabled = feature_store_enabled and feature_store_dir is not None
+        self._counters = counters if counters is not None else FeatureStoreCounters()
+        self._batch_probed = batch_probed
+        self._plan_origin = plan_origin
         # Entered around the ResettingRefine call in __call__. refine.py:108-109
         # deepcopies the module and pins ``dspy.settings.lm`` onto every named
         # predictor via ``mod.set_lm()``, which OVERRIDES FeatureBuilder.forward's
@@ -400,6 +416,9 @@ class WrappedFeatureBuilder:
         # Partition into cached / uncached via the feature store
         cached_values: dict[str, dict[str, Any]] = {}
         uncached_plans: dict[str, FeaturePlan] = {}
+        # Single-owner counting: the batch probe in compute_features owns
+        # these events when it ran (see the class docstring).
+        count_here = not self._batch_probed
         if self._feature_store_enabled:
             assert self._feature_store_dir is not None
             for feature_name, plan in plans.items():
@@ -410,7 +429,11 @@ class WrappedFeatureBuilder:
                     feature_name,
                     plan,
                 )
+                if count_here:
+                    self._counters.feature_lookups += 1
                 if hit is not None:
+                    if count_here:
+                        self._counters.record_hits(1, self._plan_origin)
                     # Canonical stored shape is {feature_name: sub_dict} (see
                     # put_cached_feature call sites below). Use explicit access
                     # so a shape drift bug fails loudly instead of silently
@@ -423,7 +446,12 @@ class WrappedFeatureBuilder:
 
         # All features cached -> short-circuit, zero LLM calls
         if not uncached_plans:
+            if count_here:
+                self._counters.groups_skipped += 1
             return (nctid, dict(cached_values), {})
+
+        if count_here:
+            self._counters.groups_dispatched += 1
 
         # Build only the uncached subset
         try:
@@ -473,6 +501,7 @@ class WrappedFeatureBuilder:
                             "builder_reasoning": meta.get("builder_reasoning", ""),
                         },
                     )
+                    self._counters.store_writes += 1
 
             # Fill omissions -- AFTER the writes (no negative caching), BEFORE the
             # merge (the column must exist downstream: features_to_df names
@@ -546,6 +575,8 @@ def compute_features(
     feature_store_dir: Path | None = None,
     task_namespace: str = "default",
     feature_store_enabled: bool = True,
+    counters: FeatureStoreCounters | None = None,
+    plan_origin: str = "planner",
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, str]], dict[str, dict[str, Any]]]:
     """Compute features for all trials using grouped parallel execution.
 
@@ -558,6 +589,12 @@ def compute_features(
         feature_store_dir: Feature store root directory.
         task_namespace: Namespace within store (e.g., "phase2").
         feature_store_enabled: Enable the global feature value store.
+        counters: Feature-store counters to accumulate into (issue #17); a
+            throwaway set is used when omitted.  Lookups, hits and trial-group
+            decisions are counted here by the batch probe when the store is
+            enabled, otherwise by the wrapper -- never by both.
+        plan_origin: Who minted ``plans`` (``"initializer"`` or ``"planner"``);
+            attributes each hit in ``counters``.
 
     Returns:
         Tuple of ``(raw_features, none_explanations, builder_metadata)`` where:
@@ -613,18 +650,27 @@ def compute_features(
     agged: dict[str, dict[str, Any]] = defaultdict(dict)
     none_feature_reasons: dict[str, dict[str, str]] = defaultdict(dict)
     builder_meta: dict[str, dict[str, Any]] = defaultdict(dict)
+    if counters is None:
+        counters = FeatureStoreCounters()
 
     # --- NEW: upfront batch short-circuit ---
     product: list[tuple[str, dict[str, FeaturePlan]]] = []
-    fully_cached_count = 0
-    if feature_store_enabled and feature_store_dir is not None:
+    batch_probed = feature_store_enabled and feature_store_dir is not None
+    if batch_probed:
+        assert feature_store_dir is not None
+        skipped_before = counters.groups_skipped
         for group in grouped_feature_plans:
-            # Per-feature batch probe across all nctids
+            # Per-feature batch probe across all nctids. This probe owns the
+            # lookup/hit/group counts for the group; the wrapper below is
+            # told so (``batch_probed``) and does not count its re-probe of
+            # a partially cached (nctid, group) pair.
             per_feature_hits: dict[str, dict[str, dict[str, Any]]] = {}
             for feature_name, plan in group.items():
                 per_feature_hits[feature_name] = get_cached_features_batch(
                     feature_store_dir, task_namespace, nctids, feature_name, plan
                 )
+                counters.feature_lookups += len(nctids)
+                counters.record_hits(len(per_feature_hits[feature_name]), plan_origin)
             for nctid in nctids:
                 hit_names = {fn for fn, hits in per_feature_hits.items() if nctid in hits}
                 if hit_names == set(group.keys()):
@@ -643,12 +689,13 @@ def compute_features(
                             "research_results": "[cached]",
                             "builder_reasoning": "[cached]",
                         }
-                    fully_cached_count += 1
+                    counters.groups_skipped += 1
                 else:
                     product.append((nctid, group))
+                    counters.groups_dispatched += 1
         logger.info(
             "Feature store: %d of %d trial-group pairs served from store",
-            fully_cached_count,
+            counters.groups_skipped - skipped_before,
             len(nctids) * len(grouped_feature_plans),
         )
     else:
@@ -661,6 +708,9 @@ def compute_features(
         feature_store_dir=feature_store_dir,
         task_namespace=task_namespace,
         feature_store_enabled=feature_store_enabled,
+        counters=counters,
+        batch_probed=batch_probed,
+        plan_origin=plan_origin,
     )
 
     for arg in product:

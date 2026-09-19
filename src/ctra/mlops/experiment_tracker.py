@@ -23,6 +23,7 @@ import pandas as pd
 from ctra.config.settings import MCTSConfig, get_settings
 
 if TYPE_CHECKING:
+    from ctra.agents.runner import RunCacheStats
     from ctra.models.tabpfn_classifier import PredictionResult
     from ctra.search.objectives import ObjectiveResult
 
@@ -104,11 +105,17 @@ class ExperimentTracker:
         logger.info("Started MLflow run %s for task %s", run_id, task_name)
         return run_id  # type: ignore[no-any-return]
 
-    def end_run(self) -> None:
-        """End the current MLflow run."""
+    def end_run(self, status: str = "FINISHED") -> None:
+        """End the current MLflow run.
+
+        Args:
+            status: The terminal run status recorded in MLflow --
+                ``"FINISHED"`` (default) or ``"FAILED"`` when the caller is
+                unwinding from an exception.
+        """
         if self._active_run is not None:
-            self._mlflow.end_run()
-            logger.info("Ended MLflow run %s", self._active_run.info.run_id)
+            self._mlflow.end_run(status=status)
+            logger.info("Ended MLflow run %s (%s)", self._active_run.info.run_id, status)
             self._active_run = None
 
     # ------------------------------------------------------------------
@@ -155,6 +162,45 @@ class ExperimentTracker:
             node_id,
             dict(zip(objective_result.names, objective_result.values, strict=True)),
         )
+
+    # ------------------------------------------------------------------
+    # Cache instrumentation (issue #17)
+    # ------------------------------------------------------------------
+
+    def log_cache_stats(self, stats: RunCacheStats, step: int | None = None) -> None:
+        """Log both cache layers' counters from a training run.
+
+        Rates first (``agent_cache_hit_rate``, ``feature_store_hit_rate``),
+        then the headline counts (``groups_skipped``,
+        ``llm_calls_avoided_estimate``, ``llm_calls_made``) and every raw
+        counter so the rates can be recomputed.  Each call adds a point at
+        ``step`` to the metric's history; ``train_mcts.py`` uses the rollout
+        index per rollout and ``num_rollouts`` for the run totals.  Note that
+        ``step=None`` is recorded by MLflow at step 0.
+
+        Args:
+            stats: The ``RunCacheStats`` the runner partial accumulated.
+            step: Optional rollout index for per-rollout history.
+        """
+        fs = stats.feature_store
+        metrics: dict[str, float] = {
+            "agent_cache_hit_rate": float(stats.agent_hit_rate),
+            "feature_store_hit_rate": float(fs.hit_rate),
+            "groups_skipped": float(fs.groups_skipped),
+            "llm_calls_avoided_estimate": float(fs.llm_calls_avoided_estimate),
+            "llm_calls_made": float(stats.llm_calls_made),
+            "agent_hits": float(stats.agent_hits),
+            "agent_misses": float(stats.agent_misses),
+            "replayed_group_builds": float(stats.replayed_group_builds),
+            "feature_lookups": float(fs.feature_lookups),
+            "feature_hits": float(fs.feature_hits),
+            "groups_dispatched": float(fs.groups_dispatched),
+            "hits_from_initializer_plans": float(fs.hits_from_initializer_plans),
+            "hits_from_planner_plans": float(fs.hits_from_planner_plans),
+            "store_writes": float(fs.store_writes),
+        }
+        self._mlflow.log_metrics(metrics, step=step)
+        logger.debug("Logged cache stats (step=%s): %s", step, metrics)
 
     # ------------------------------------------------------------------
     # Model result logging

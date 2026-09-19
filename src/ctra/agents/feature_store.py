@@ -43,7 +43,7 @@ from typing import Any
 
 import dill
 
-from ctra.agents.data_models import FeaturePlan  # noqa: TC001
+from ctra.agents.data_models import FeaturePlan, FeatureStoreCounters  # noqa: TC001
 
 logger = logging.getLogger(__name__)
 
@@ -203,12 +203,27 @@ def get_cached_features_batch(
     return results
 
 
-def get_store_stats(store_dir: Path, task_namespace: str | None = None) -> dict[str, int]:
+def get_store_stats(
+    store_dir: Path,
+    task_namespace: str | None = None,
+    counters: FeatureStoreCounters | None = None,
+) -> dict[str, int | float]:
     """Return counts of features, trials, and total entries for monitoring.
 
     If `task_namespace` is None, aggregates across all namespaces under
-    `store_dir`.
+    `store_dir`.  The three disk-inventory keys (``features``, ``trials``,
+    ``total_entries``) are always present; when ``counters`` is given, its
+    runtime counters (``FeatureStoreCounters.as_dict``) are merged in after
+    them.  This walks the store directory, so call it once per run, not per
+    rollout.
     """
+    stats = _disk_inventory(store_dir, task_namespace)
+    if counters is not None:
+        stats.update(counters.as_dict())
+    return stats
+
+
+def _disk_inventory(store_dir: Path, task_namespace: str | None) -> dict[str, int | float]:
     root = Path(store_dir) / task_namespace if task_namespace else Path(store_dir)
     if not root.exists():
         return {"features": 0, "trials": 0, "total_entries": 0}

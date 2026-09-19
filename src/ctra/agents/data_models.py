@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import MISSING, dataclass, field, fields, replace
 
 if sys.version_info >= (3, 11):
     from enum import StrEnum
@@ -294,6 +294,118 @@ class EvalOutput(NamedTuple):
     suggestions: list[str]
 
 
+# ---------------------------------------------------------------------------
+# Cache instrumentation (issue #17)
+# ---------------------------------------------------------------------------
+
+#: LLM calls one dispatched trial-group build is taken to cost: a
+#: single-attempt point estimate (k ~ 4 ReAct steps, no Refine retry), not
+#: a bound.  One ``FeatureBuilder.forward`` attempt is k ReAct steps
+#: (``dspy.ReAct(max_iters=5)``: 1 <= k <= 5, the loop stops at ``finish``)
+#: + 1 ReAct extract call + 1 ChainOfThought Construct call = k + 2, i.e.
+#: 3-7 calls (7 when ReAct exhausts its 5 steps).  Under
+#: ``ResettingRefine(N=3)`` a group can take up to 3 attempts plus 2
+#: ``OfferFeedback`` calls, so a dispatched group costs 3-23 calls;
+#: ``llm_calls_avoided_estimate`` therefore leans low when retries are
+#: common.  A real run calibrates it: ``scripts/run_agent.py`` records the
+#: process-wide LLM call count in ``CacheStats.llm_calls_made``.
+LLM_CALLS_PER_GROUP_BUILD = 6
+
+#: Where a plan sent to the feature store was minted (see ``Agent.forward``).
+PLAN_ORIGINS = ("initializer", "planner")
+
+
+@dataclass
+class FeatureStoreCounters:
+    """Runtime feature-store counters for one process (issue #17).
+
+    Plain ints only: the object is JSON-friendly and crosses the
+    ``scripts/run_agent.py`` subprocess boundary inside ``AgentOutput`` without
+    a new dill site.  Single-owner rule: every (trial, feature) lookup and
+    every trial-group decision is counted exactly once -- by the upfront batch
+    probe in ``compute_features`` when it ran, otherwise by
+    ``WrappedFeatureBuilder`` -- so the wrapper's re-probe of a partially
+    cached group is never counted twice.
+
+    ``feature_hits`` is split by the origin of the plan that hit:
+    ``hits_from_planner_plans`` are hits on plans minted fresh by the planner
+    on an iteration-N path, which is exactly what cross-branch reuse looks
+    like (two independently generated plan texts collided in the store);
+    ``hits_from_initializer_plans`` are hits on iteration-0 plans, which a
+    store persisted across runs serves.
+    """
+
+    feature_lookups: int = 0
+    feature_hits: int = 0
+    groups_dispatched: int = 0
+    groups_skipped: int = 0
+    hits_from_initializer_plans: int = 0
+    hits_from_planner_plans: int = 0
+    store_writes: int = 0
+
+    @property
+    def hit_rate(self) -> float:
+        """``feature_hits / feature_lookups``; ``0.0`` before any lookup."""
+        if self.feature_lookups <= 0:
+            return 0.0
+        return self.feature_hits / self.feature_lookups
+
+    @property
+    def llm_calls_avoided_estimate(self) -> int:
+        """``groups_skipped * LLM_CALLS_PER_GROUP_BUILD``.
+
+        Only a fully cached trial-group avoids a build; a hit inside a group
+        that is still dispatched avoids nothing (the builder runs anyway), so
+        per-feature hits are deliberately not multiplied.
+        """
+        return self.groups_skipped * LLM_CALLS_PER_GROUP_BUILD
+
+    def record_hits(self, n: int, plan_origin: str) -> None:
+        """Add ``n`` hits and attribute them to ``plan_origin``."""
+        if plan_origin not in PLAN_ORIGINS:
+            raise ValueError(f"unknown plan_origin {plan_origin!r}; expected one of {PLAN_ORIGINS}")
+        self.feature_hits += n
+        if plan_origin == "initializer":
+            self.hits_from_initializer_plans += n
+        else:
+            self.hits_from_planner_plans += n
+
+    def merge(self, other: FeatureStoreCounters) -> None:
+        """Fold another counter set into this one (in place).
+
+        Only the ``FeatureStoreCounters`` fields are summed, so a
+        ``CacheStats`` can be folded into a plain counter set; a non-int value
+        (a test stand-in) is skipped rather than raising.
+        """
+        for f in fields(FeatureStoreCounters):
+            value = getattr(other, f.name, 0)
+            if isinstance(value, int) and not isinstance(value, bool):
+                setattr(self, f.name, getattr(self, f.name) + value)
+
+    def as_dict(self) -> dict[str, int | float]:
+        """Counters plus the derived ``hit_rate`` and ``llm_calls_avoided_estimate``."""
+        out: dict[str, int | float] = {f.name: getattr(self, f.name) for f in fields(self)}
+        out["hit_rate"] = self.hit_rate
+        out["llm_calls_avoided_estimate"] = self.llm_calls_avoided_estimate
+        return out
+
+
+@dataclass
+class CacheStats(FeatureStoreCounters):
+    """One agent iteration's cache counters, carried in ``AgentOutput.cache_stats``.
+
+    ``llm_calls_made`` is the calibration field: ``scripts/run_agent.py`` sets
+    it to the number of LLM calls the whole iteration made (every agent, not
+    only the builder), counted at the source by a ``dspy`` callback on every
+    ``LM.__call__`` -- unbounded, unlike the 10,000-entry global history --
+    so a real run can check ``LLM_CALLS_PER_GROUP_BUILD`` against
+    ``groups_dispatched``.  Calls served by dspy's own response cache are
+    included.  It stays ``0`` when the iteration ran in-process.
+    """
+
+    llm_calls_made: int = 0
+
+
 @dataclass(eq=False)
 class AgentOutput:
     """Full iteration state container (adapted from AutoCT line 266).
@@ -327,18 +439,40 @@ class AgentOutput:
     none_explanations: dict[str, dict[str, str]]
     builder_meta: dict[str, dict[str, Any]] = field(default_factory=dict)
     builder_diagnostics: BuilderDiagnostics = field(default_factory=BuilderDiagnostics)
+    # Counters for the compute_features calls *this* iteration made (issue
+    # #17).  Zeroed on every skipped iteration, so an output copied from its
+    # parent never replays the parent's counts; read with ``getattr`` by
+    # consumers that may see an output pickled before the field existed.
+    cache_stats: CacheStats = field(default_factory=CacheStats)
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Backfill ``default_factory`` fields missing from an older pickle.
+
+        Pickles and deepcopies restore instances through this hook.  An
+        ``AgentOutput`` dumped before ``cache_stats`` (or any later
+        defaulted field) existed would otherwise come back without the
+        attribute and break ``_replace`` -- ``dataclasses.replace`` reads
+        every field -- on the resume and skip paths.
+        """
+        self.__dict__.update(state)
+        for f in fields(self):
+            if f.name not in self.__dict__ and f.default_factory is not MISSING:
+                self.__dict__[f.name] = f.default_factory()
 
     def _replace(self, **kwargs: Any) -> AgentOutput:
         """Return a copy with specified fields replaced (NamedTuple compat).
 
         NOTE: like ``dataclasses.replace``, non-overridden mutable fields are
         **aliased** — the returned instance shares references to
-        ``builder_meta``, ``none_explanations``, ``raw_features``,
-        ``raw_val_features``, ``raw_test_features``, and ``feature_plans``
-        with ``self``. In-place mutation (``|=``, ``.pop``, ``.update``,
+        ``builder_meta``, ``builder_diagnostics``, ``cache_stats``,
+        ``none_explanations``, ``raw_features``, ``raw_val_features``,
+        ``raw_test_features``, and ``feature_plans`` with ``self``. In-place
+        mutation (``|=``, ``.pop``, ``.update``, ``+=`` on a counter,
         assignment into nested dicts) on any of those fields will silently
         propagate across sibling copies — e.g. across sibling MCTS nodes
-        created by ``parent_output._replace(suggestion_index=...)``.
+        created by ``parent_output._replace(suggestion_index=...)``, or from
+        the probe/child copies ``mcts.py`` makes of a parent's output into
+        the parent's own ``cache_stats``.
 
         Callers must ``deepcopy`` before mutating. ``forward()`` already
         does this at the top of the iter-N branch

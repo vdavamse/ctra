@@ -8,6 +8,7 @@ via dill serialization.
 Also provides:
 - ``extract_objectives`` — extracts [accuracy, parsimony] from ``AgentOutput``
 - ``load_feature_plans_from_json`` — reconstructs ``FeaturePlan`` from JSON
+- ``RunCacheStats`` — per-run cache counters the runner accumulates (issue #17)
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -28,6 +30,7 @@ from ctra.agents.data_models import (
     AgentOutput,
     FeaturePlan,
     FeatureSource,
+    FeatureStoreCounters,
     FeatureType,
     Task,
 )
@@ -70,6 +73,79 @@ def extract_objectives(
 
 
 # ---------------------------------------------------------------------------
+# Per-run cache counters (issue #17)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class RunCacheStats:
+    """Cache counters for one training run, accumulated by the runner.
+
+    Two layers, one object.  The **agent cache** (this module's pickle per
+    ``node_id``) is counted here: ``agent_hits`` when a pickle was replayed
+    without spawning, ``agent_misses`` when the agent ran.  The **feature
+    store** runs inside the child, so its counters arrive in the child's
+    ``AgentOutput.cache_stats`` and are folded into ``feature_store`` only on
+    a miss -- a replayed pickle carries the counters of the run that produced
+    it, and folding those in would count that run's store traffic again.
+    What a replay *would* have rebuilt is kept apart as
+    ``replayed_group_builds`` (the pickle's ``groups_dispatched``).
+
+    ``llm_calls_made`` sums the children's calibration figures.  Plain ints
+    throughout: ``as_dict`` is what ``results.json`` and MLflow receive.
+    Bound into the runner partial by ``scripts/train_mcts.py``, so it is
+    pickled with every checkpoint; a resumed process adopts the checkpointed
+    object and its counters continue from the pre-crash values.
+    """
+
+    agent_hits: int = 0
+    agent_misses: int = 0
+    replayed_group_builds: int = 0
+    llm_calls_made: int = 0
+    feature_store: FeatureStoreCounters = field(default_factory=FeatureStoreCounters)
+
+    @property
+    def agent_lookups(self) -> int:
+        return self.agent_hits + self.agent_misses
+
+    @property
+    def agent_hit_rate(self) -> float:
+        """``agent_hits / (hits + misses)``; ``0.0`` before the first lookup."""
+        if self.agent_lookups <= 0:
+            return 0.0
+        return self.agent_hits / self.agent_lookups
+
+    def record_hit(self, output: Any) -> None:
+        """Count a replayed pickle; note what it would have rebuilt, fold nothing."""
+        self.agent_hits += 1
+        replayed = getattr(getattr(output, "cache_stats", None), "groups_dispatched", 0)
+        if isinstance(replayed, int) and not isinstance(replayed, bool):
+            self.replayed_group_builds += replayed
+
+    def record_miss(self, output: Any) -> None:
+        """Count a spawned child and fold its ``cache_stats`` in."""
+        self.agent_misses += 1
+        child = getattr(output, "cache_stats", None)
+        if child is None:
+            return
+        self.feature_store.merge(child)
+        made = getattr(child, "llm_calls_made", 0)
+        if isinstance(made, int) and not isinstance(made, bool):
+            self.llm_calls_made += made
+
+    def as_dict(self) -> dict[str, Any]:
+        """JSON-friendly view: the agent-cache counters plus ``feature_store``."""
+        return {
+            "agent_hits": self.agent_hits,
+            "agent_misses": self.agent_misses,
+            "agent_hit_rate": self.agent_hit_rate,
+            "replayed_group_builds": self.replayed_group_builds,
+            "llm_calls_made": self.llm_calls_made,
+            "feature_store": self.feature_store.as_dict(),
+        }
+
+
+# ---------------------------------------------------------------------------
 # Subprocess execution
 # ---------------------------------------------------------------------------
 
@@ -79,6 +155,7 @@ def run_agent_as_subprocess(
     task: Task | str,
     previous_output: AgentOutput | None,
     cache_dir: Path | None = None,
+    stats: RunCacheStats | None = None,
 ) -> AgentOutput:
     """Run a single Agent iteration as a subprocess.
 
@@ -92,6 +169,9 @@ def run_agent_as_subprocess(
         previous_output: ``None`` for iteration 0, or previous ``AgentOutput``.
         cache_dir: Directory for caching results.  Defaults to
             ``settings.output_dir / "agent_cache"``.
+        stats: Per-run counters to update (issue #17): a hit on the pickle
+            cache or a miss that spawned the child, whose ``cache_stats`` are
+            folded in only on the miss.  ``None`` counts nothing.
 
     Returns:
         The ``AgentOutput`` from the subprocess.
@@ -115,7 +195,10 @@ def run_agent_as_subprocess(
     if cached_path.exists():
         logger.info("Node %s: loading from cache %s", node_id, cached_path)
         with open(cached_path, "rb") as f:
-            return dill.load(f)  # type: ignore[no-any-return]
+            cached: AgentOutput = dill.load(f)
+        if stats is not None:
+            stats.record_hit(cached)
+        return cached
 
     # Serialize input
     with (
@@ -154,6 +237,8 @@ def run_agent_as_subprocess(
     # Deserialize output
     with open(output_path, "rb") as f:
         output: AgentOutput = dill.load(f)
+    if stats is not None:
+        stats.record_miss(output)
 
     # Cache for crash recovery
     with open(cached_path, "wb") as f:

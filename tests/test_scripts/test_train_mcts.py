@@ -533,13 +533,15 @@ class TestOnRolloutCallback:
 
 
 def _assert_per_run_runner(runner, expected_cache_dir: Path) -> None:
-    """``runner`` is ``run_agent_as_subprocess`` bound to this run's cache dir."""
-    from ctra.agents.runner import run_agent_as_subprocess
+    """``runner`` is ``run_agent_as_subprocess`` bound to this run's cache dir and stats."""
+    from ctra.agents.runner import RunCacheStats, run_agent_as_subprocess
 
     assert isinstance(runner, functools.partial), runner
     assert runner.func is run_agent_as_subprocess
     assert runner.args == ()
-    assert runner.keywords == {"cache_dir": expected_cache_dir}
+    assert set(runner.keywords) == {"cache_dir", "stats"}
+    assert runner.keywords["cache_dir"] == expected_cache_dir
+    assert isinstance(runner.keywords["stats"], RunCacheStats)
 
 
 class TestPerRunAgentCache:
@@ -597,11 +599,16 @@ class TestPerRunAgentCache:
         *,
         cli_task: str,
         ckpt_args: dict,
+        checkpoint_runner=None,
+        extra_argv: tuple[str, ...] = (),
     ) -> tuple[MagicMock, Path]:
         """Run ``main()`` in resume mode against a mocked checkpoint.
 
         Returns the restored ``mcts`` mock and the checkpoint path.  The
-        checkpoint's ``args`` are what a previous run's ``vars(args)`` dumped.
+        checkpoint's ``args`` are what a previous run's ``vars(args)`` dumped;
+        ``checkpoint_runner`` is the runner the pickled search carries (a
+        ``functools.partial`` with ``stats`` in a checkpoint written after
+        issue #17).
         """
         output_dir = tmp_path / "output"
         ckpt_path = tmp_path / "checkpoint.pkl"
@@ -617,11 +624,14 @@ class TestPerRunAgentCache:
                 str(ckpt_path),
                 "--output-dir",
                 str(output_dir),
+                *extra_argv,
             ],
         )
         best_node = _make_best_node()
         best_node.eval_output = _make_mock_output()
         mock_mcts = _make_mock_mcts(best_node)
+        if checkpoint_runner is not None:
+            mock_mcts._runner = checkpoint_runner
         checkpoint = {"mcts": mock_mcts, "rollout": 4, "args": ckpt_args}
         monkeypatch.setattr("dill.load", MagicMock(return_value=checkpoint))
 
@@ -739,10 +749,12 @@ class TestPerRunAgentCache:
         """The partial is what the checkpoint pickles; dill must round-trip it intact."""
         import dill
 
-        from ctra.agents.runner import run_agent_as_subprocess
+        from ctra.agents.runner import RunCacheStats, run_agent_as_subprocess
 
         cache_dir = tmp_path / "phase2" / "agent_cache"
-        runner = functools.partial(run_agent_as_subprocess, cache_dir=cache_dir)
+        runner = functools.partial(
+            run_agent_as_subprocess, cache_dir=cache_dir, stats=RunCacheStats()
+        )
         restored = dill.loads(dill.dumps(runner))
         _assert_per_run_runner(restored, cache_dir)
 
@@ -919,3 +931,397 @@ def _import_without_tqdm(monkeypatch):
         return original_import(name, *args, **kwargs)
 
     return patched_import
+
+
+# ---------------------------------------------------------------------------
+# Tests: cache hit-rate reporting (issue #17)
+# ---------------------------------------------------------------------------
+
+
+class TestCacheReporting:
+    """Per-rollout log line, ``results.json["cache"]`` and per-run stats binding."""
+
+    @staticmethod
+    def _main_with_search(monkeypatch: pytest.MonkeyPatch, output_dir: Path, mock_search):
+        """Run a fresh ``main()`` whose mocked ``search`` is ``mock_search``; return the class mock."""
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "train_mcts.py",
+                "--task",
+                "phase2",
+                "--rollouts",
+                "2",
+                "--output-dir",
+                str(output_dir),
+            ],
+        )
+        best_node = _make_best_node()
+        best_node.eval_output = _make_mock_output()
+        mock_mcts = _make_mock_mcts(best_node)
+        mock_mcts.search.side_effect = mock_search
+        mock_mcts_cls = MagicMock(return_value=mock_mcts)
+        monkeypatch.setattr("ctra.search.mcts.MCTSSearch", mock_mcts_cls)
+        monkeypatch.setattr(
+            "ctra.config.settings.get_settings",
+            MagicMock(return_value=_make_mock_settings(num_rollouts=2)),
+        )
+        monkeypatch.setattr("ctra.agents.feature_utils.dump_as_json", MagicMock(return_value="{}"))
+        monkeypatch.setattr("dill.dump", MagicMock())
+
+        from train_mcts import main
+
+        main()
+        return mock_mcts_cls, best_node
+
+    def test_rollout_line_and_results_report_the_running_totals(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        output_dir = tmp_path / "output"
+        holder: dict = {}
+
+        def mock_search(initial_features, on_rollout=None, start_rollout=0):
+            # The runner would update the bound stats in place; do it here.
+            stats = holder["cls"].call_args.kwargs["runner"].keywords["stats"]
+            stats.agent_misses += 1
+            stats.feature_store.feature_lookups += 4
+            stats.feature_store.record_hits(1, "planner")
+            stats.feature_store.groups_skipped += 1
+            stats.feature_store.groups_dispatched += 3
+            stats.llm_calls_made += 20
+            on_rollout(0, holder["node"], np.array([0.80, 0.70]))
+            stats.agent_hits += 1
+            stats.replayed_group_builds += 3
+            on_rollout(1, holder["node"], np.array([0.82, 0.72]))
+            return holder["node"]
+
+        best_node = _make_best_node()
+        best_node.eval_output = _make_mock_output()
+        holder["node"] = best_node
+        mock_mcts = _make_mock_mcts(best_node)
+        mock_mcts.search.side_effect = mock_search
+        holder["cls"] = MagicMock(return_value=mock_mcts)
+        monkeypatch.setattr("ctra.search.mcts.MCTSSearch", holder["cls"])
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "train_mcts.py",
+                "--task",
+                "phase2",
+                "--rollouts",
+                "2",
+                "--output-dir",
+                str(output_dir),
+            ],
+        )
+        monkeypatch.setattr(
+            "ctra.config.settings.get_settings",
+            MagicMock(return_value=_make_mock_settings(num_rollouts=2)),
+        )
+        monkeypatch.setattr("ctra.agents.feature_utils.dump_as_json", MagicMock(return_value="{}"))
+        monkeypatch.setattr("dill.dump", MagicMock())
+
+        from train_mcts import main
+
+        with caplog.at_level("INFO", logger="ctra.train"):
+            main()
+
+        lines = [r.getMessage() for r in caplog.records if "cache —" in r.getMessage()]
+        assert len(lines) == 2, lines
+        assert lines[0] == (
+            "Rollout 1/2 cache — agent hits/misses=0/1, feature-store hit rate=25.0% (1/4), "
+            "groups skipped=1, LLM calls avoided~6, LLM calls made=20"
+        )
+        assert "Rollout 2/2 cache — agent hits/misses=1/1" in lines[1]
+
+        results = json.loads((output_dir / "phase2" / "results.json").read_text())
+        cache = results["cache"]
+        assert cache["agent_hits"] == 1
+        assert cache["agent_misses"] == 1
+        assert cache["agent_hit_rate"] == pytest.approx(0.5)
+        assert cache["replayed_group_builds"] == 3
+        assert cache["llm_calls_made"] == 20
+        assert cache["feature_store"] == {
+            "feature_lookups": 4,
+            "feature_hits": 1,
+            "groups_dispatched": 3,
+            "groups_skipped": 1,
+            "hits_from_initializer_plans": 0,
+            "hits_from_planner_plans": 1,
+            "store_writes": 0,
+            "hit_rate": 0.25,
+            "llm_calls_avoided_estimate": 6,
+        }
+
+    def test_results_carry_a_zero_cache_block_without_evaluations(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        output_dir = tmp_path / "output"
+        monkeypatch.setattr("dill.dump", MagicMock())
+        TestPerRunAgentCache._fresh_main(monkeypatch, output_dir)
+        results = json.loads((output_dir / "phase2" / "results.json").read_text())
+        assert results["cache"]["agent_hits"] == 0
+        assert results["cache"]["feature_store"]["hit_rate"] == 0.0
+
+    def test_each_fresh_run_binds_its_own_stats(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from ctra.agents.runner import RunCacheStats
+
+        output_dir = tmp_path / "output"
+        monkeypatch.setattr("dill.dump", MagicMock())
+        first = TestPerRunAgentCache._fresh_main(monkeypatch, output_dir)
+        second = TestPerRunAgentCache._fresh_main(monkeypatch, output_dir)
+        stats_a = first.call_args.kwargs["runner"].keywords["stats"]
+        stats_b = second.call_args.kwargs["runner"].keywords["stats"]
+        assert isinstance(stats_a, RunCacheStats)
+        assert stats_a is not stats_b
+        assert stats_a == RunCacheStats()
+
+    def test_resume_without_checkpointed_stats_binds_a_fresh_object(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A checkpoint whose runner carries no ``RunCacheStats`` starts from zero."""
+        from ctra.agents.runner import RunCacheStats
+
+        monkeypatch.setattr("dill.dump", MagicMock())
+        mock_mcts, _ = TestPerRunAgentCache._resume_main(
+            monkeypatch,
+            tmp_path,
+            cli_task="phase3",
+            ckpt_args={"task": "phase3", "output_dir": str(tmp_path / "output"), "run_id": "r"},
+        )
+        runner = mock_mcts.set_runner.call_args.args[0]
+        assert isinstance(runner.keywords["stats"], RunCacheStats)
+        assert runner.keywords["stats"] == RunCacheStats()
+
+    def test_resume_adopts_the_checkpointed_stats(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The counters continue from the values pickled in the checkpoint's runner."""
+        from ctra.agents.data_models import FeatureStoreCounters
+        from ctra.agents.runner import RunCacheStats, run_agent_as_subprocess
+
+        ckpt_stats = RunCacheStats(
+            agent_hits=1,
+            agent_misses=4,
+            replayed_group_builds=2,
+            llm_calls_made=80,
+            feature_store=FeatureStoreCounters(
+                feature_lookups=40,
+                feature_hits=10,
+                groups_dispatched=3,
+                groups_skipped=1,
+                hits_from_planner_plans=10,
+                store_writes=9,
+            ),
+        )
+        ckpt_runner = functools.partial(
+            run_agent_as_subprocess, cache_dir=tmp_path / "old_cache", stats=ckpt_stats
+        )
+        monkeypatch.setattr("dill.dump", MagicMock())
+        mock_mcts, _ = TestPerRunAgentCache._resume_main(
+            monkeypatch,
+            tmp_path,
+            cli_task="phase3",
+            ckpt_args={"task": "phase3", "output_dir": str(tmp_path / "output"), "run_id": "r"},
+            checkpoint_runner=ckpt_runner,
+        )
+        runner = mock_mcts.set_runner.call_args.args[0]
+        assert runner.keywords["stats"] is ckpt_stats
+        # The mocked search adds nothing, so results.json starts where the
+        # checkpoint left off.
+        results = json.loads((tmp_path / "output" / "phase3" / "results.json").read_text())
+        cache = results["cache"]
+        assert cache["agent_hits"] == 1
+        assert cache["agent_misses"] == 4
+        assert cache["llm_calls_made"] == 80
+        assert cache["feature_store"]["feature_lookups"] == 40
+        assert cache["feature_store"]["feature_hits"] == 10
+        assert cache["feature_store"]["hits_from_planner_plans"] == 10
+
+
+# ---------------------------------------------------------------------------
+# Tests: --mlflow (issue #17)
+# ---------------------------------------------------------------------------
+
+
+class TestMlflowFlag:
+    """The tracker is built and fed only when ``--mlflow`` is given."""
+
+    @staticmethod
+    def _run(
+        monkeypatch: pytest.MonkeyPatch,
+        output_dir: Path,
+        *extra: str,
+        tracker_cls: MagicMock | None = None,
+        search_raises: Exception | None = None,
+    ) -> tuple[MagicMock, MagicMock]:
+        """Run a two-rollout ``main()``; return the tracker class mock and the search mock."""
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["train_mcts.py", "--task", "phase2", "--output-dir", str(output_dir), *extra],
+        )
+        best_node = _make_best_node()
+        best_node.eval_output = _make_mock_output()
+        mock_mcts = _make_mock_mcts(best_node)
+
+        def mock_search(initial_features, on_rollout=None, start_rollout=0):
+            on_rollout(0, best_node, np.array([0.80, 0.70]))
+            if search_raises is not None:
+                raise search_raises
+            on_rollout(1, best_node, np.array([0.82, 0.72]))
+            return best_node
+
+        mock_mcts.search.side_effect = mock_search
+        monkeypatch.setattr("ctra.search.mcts.MCTSSearch", MagicMock(return_value=mock_mcts))
+        monkeypatch.setattr(
+            "ctra.config.settings.get_settings",
+            MagicMock(return_value=_make_mock_settings(num_rollouts=2)),
+        )
+        monkeypatch.setattr("ctra.agents.feature_utils.dump_as_json", MagicMock(return_value="{}"))
+        monkeypatch.setattr("dill.dump", MagicMock())
+        if tracker_cls is None:
+            tracker_cls = MagicMock()
+        monkeypatch.setattr("ctra.mlops.experiment_tracker.ExperimentTracker", tracker_cls)
+
+        from train_mcts import main
+
+        main()
+        return tracker_cls, mock_mcts
+
+    def test_default_is_off(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "argv", ["train_mcts.py", "--task", "phase2"])
+        from train_mcts import parse_args
+
+        assert parse_args().mlflow is False
+
+    def test_flag_off_constructs_no_tracker(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        tracker_cls, _ = self._run(monkeypatch, tmp_path / "output")
+        tracker_cls.assert_not_called()
+
+    def test_flag_on_logs_per_rollout_and_final_totals(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from ctra.agents.runner import RunCacheStats
+
+        tracker_cls, mock_mcts = self._run(monkeypatch, tmp_path / "output", "--mlflow")
+        tracker_cls.assert_called_once_with()
+        tracker = tracker_cls.return_value
+        tracker.start_mcts_run.assert_called_once()
+        # The params come from the search's effective config, not the CLI settings.
+        assert tracker.start_mcts_run.call_args.args[0] is mock_mcts.config
+        assert tracker.start_mcts_run.call_args.args[1] == "phase2"
+        # Per-rollout points at the rollout index; the run totals one step past
+        # the last rollout so they do not collide with the rollout-0 point.
+        steps = [c.kwargs.get("step") for c in tracker.log_cache_stats.call_args_list]
+        assert steps == [0, 1, 2]
+        assert all(
+            isinstance(c.args[0], RunCacheStats) for c in tracker.log_cache_stats.call_args_list
+        )
+        tracker.end_run.assert_called_once_with(status="FINISHED")
+
+    def test_a_failing_tracker_does_not_abort_the_search(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An MLflow error inside the rollout callback is a warning, not the end of the run."""
+        tracker_cls = MagicMock()
+        tracker_cls.return_value.log_cache_stats.side_effect = RuntimeError("tracking server gone")
+        output_dir = tmp_path / "output"
+        with caplog.at_level("WARNING", logger="ctra.train"):
+            _, mock_mcts = self._run(monkeypatch, output_dir, "--mlflow", tracker_cls=tracker_cls)
+
+        tracker = tracker_cls.return_value
+        assert tracker.log_cache_stats.call_count == 3  # two rollouts + final, all attempted
+        warnings = [r for r in caplog.records if "cache-stats logging failed" in r.getMessage()]
+        assert [r.levelname for r in warnings] == ["WARNING"] * 3
+        assert all("tracking server gone" in (r.exc_text or "") for r in warnings)
+        # The search ran to completion and its outputs were written.
+        mock_mcts.search.assert_called_once()
+        assert (output_dir / "phase2" / "results.json").exists()
+        tracker.end_run.assert_called_once_with(status="FINISHED")
+
+    def test_a_tracker_that_cannot_start_does_not_abort_the_search(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A broken tracking store at ``start_mcts_run`` is a warning; the search runs untracked."""
+        tracker_cls = MagicMock()
+        tracker_cls.return_value.start_mcts_run.side_effect = RuntimeError("mlruns/ is corrupt")
+        output_dir = tmp_path / "output"
+        with caplog.at_level("WARNING", logger="ctra.train"):
+            _, mock_mcts = self._run(monkeypatch, output_dir, "--mlflow", tracker_cls=tracker_cls)
+
+        warnings = [
+            r for r in caplog.records if "MLflow run could not be started" in r.getMessage()
+        ]
+        assert [r.levelname for r in warnings] == ["WARNING"]
+        assert "mlruns/ is corrupt" in (warnings[0].exc_text or "")
+        # The search ran to completion and its outputs were written.
+        mock_mcts.search.assert_called_once()
+        assert (output_dir / "phase2" / "results.json").exists()
+        # With no run open, nothing else is sent to the tracker.
+        tracker = tracker_cls.return_value
+        tracker.log_cache_stats.assert_not_called()
+        tracker.end_run.assert_not_called()
+
+    def test_a_tracker_that_cannot_be_built_does_not_abort_the_search(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Only a missing mlflow package exits; any other constructor error is a warning."""
+        tracker_cls = MagicMock(side_effect=OSError("tracking store unreadable"))
+        output_dir = tmp_path / "output"
+        with caplog.at_level("WARNING", logger="ctra.train"):
+            _, mock_mcts = self._run(monkeypatch, output_dir, "--mlflow", tracker_cls=tracker_cls)
+
+        warnings = [
+            r for r in caplog.records if "MLflow tracker could not be constructed" in r.getMessage()
+        ]
+        assert [r.levelname for r in warnings] == ["WARNING"]
+        mock_mcts.search.assert_called_once()
+        assert (output_dir / "phase2" / "results.json").exists()
+
+    def test_a_failing_search_ends_the_run_as_failed(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        tracker_cls = MagicMock()
+        with pytest.raises(RuntimeError, match="agent died"):
+            self._run(
+                monkeypatch,
+                tmp_path / "output",
+                "--mlflow",
+                tracker_cls=tracker_cls,
+                search_raises=RuntimeError("agent died"),
+            )
+        tracker_cls.return_value.end_run.assert_called_once_with(status="FAILED")
+
+    def test_missing_mlflow_is_a_clear_exit(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        tracker_cls = MagicMock(side_effect=ImportError("No module named 'mlflow'"))
+        with pytest.raises(SystemExit, match="--mlflow needs the mlflow package"):
+            self._run(monkeypatch, tmp_path / "output", "--mlflow", tracker_cls=tracker_cls)
+
+    def test_resume_logs_the_checkpoint_config(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """On resume the MLflow params describe the checkpoint's config, not the CLI's."""
+        tracker_cls = MagicMock()
+        monkeypatch.setattr("ctra.mlops.experiment_tracker.ExperimentTracker", tracker_cls)
+        monkeypatch.setattr("dill.dump", MagicMock())
+        mock_mcts, _ = TestPerRunAgentCache._resume_main(
+            monkeypatch,
+            tmp_path,
+            cli_task="phase2",
+            ckpt_args={"task": "phase2", "output_dir": str(tmp_path / "output"), "run_id": "r"},
+            extra_argv=("--mlflow",),
+        )
+        tracker = tracker_cls.return_value
+        assert tracker.start_mcts_run.call_args.args[0] is mock_mcts.config
+        # Started after the checkpoint was restored, not before.
+        assert mock_mcts.set_runner.called
+        tracker.end_run.assert_called_once_with(status="FINISHED")
