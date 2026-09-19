@@ -334,8 +334,9 @@ class MCTSSearch:
             The best node found: among the nodes that were evaluated at least
             once, the one whose *own* best objective vector wins on Pareto rank,
             then hypervolume contribution (``_select_best``).  Its score is
-            ``best_own_objectives(node)``; ``node.mean_reward`` is the subtree
-            mean that UCB used during the search and is generally lower.
+            ``best_own_objectives(node)``; ``node.mean_reward`` is the backprop
+            rule's aggregate (``value_estimate``) that UCB used during the search;
+            under ``mean`` it is the subtree mean and generally lower.
         """
         if start_rollout == 0:
             # Fresh start: create root and evaluate it
@@ -473,7 +474,7 @@ class MCTSSearch:
         # Return best node
         best = self._select_best()
         logger.info(
-            "MCTS complete: best node has %d features, own objectives=%s (subtree mean=%s)",
+            "MCTS complete: best node has %d features, own objectives=%s (value estimate=%s)",
             len(best.features),
             self.best_own_objectives(best).round(4),
             best.mean_reward.round(4),
