@@ -4,6 +4,8 @@ Provides ``make_stub_runner`` to wrap simple ``(features -> objectives)``
 functions into the runner protocol expected by ``MCTSSearch``, and
 ``make_orchestrator_like_runner`` for tests that need the runner to honour
 ``suggestion_index`` the way ``Agent.forward`` does (issue #7).
+``make_refining_agent`` / ``make_caching_runner`` serve tests that need a
+name-preserving REFINE and the runner's disk-cache semantics (issue #12).
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
+import dill
 import numpy as np
 import pandas as pd
 
@@ -26,6 +29,7 @@ from ctra.search.objectives import ObjectiveResult
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
 
 def _make_plan(name: str) -> FeaturePlan:
@@ -212,3 +216,146 @@ def make_orchestrator_like_runner(
         roc_auc=roc_auc,
         initial_features=initial_features or ["base"],
     )
+
+
+# ---------------------------------------------------------------------------
+# Issue #12: name-preserving REFINE + the runner's cache semantics
+# ---------------------------------------------------------------------------
+
+
+class RefiningAgent:
+    """Fake orchestrator whose REFINE keeps the feature *names* (issue #12).
+
+    Applies the suggestion at ``previous_output.suggestion_index`` the way
+    ``Agent.forward`` does:
+
+    - ``previous_output is None`` -> root output with a single feature ``f0``.
+    - suggestion 0 -> ADD: a new feature ``f{n}`` (the feature-name set changes).
+    - suggestion 1, 2 -> REFINE: same feature names, only ``feature_idea`` grows
+      by ``"\n---\nrefined"`` (the orchestrator's real REFINE path concatenates
+      the idea and keeps ``feature_name``).
+
+    Every output carries the same three suggestions, so a deep rollout can
+    keep descending.  Counters: ``invocations`` (real agent calls, i.e. the
+    work a cache hit saves), ``seen_suggestion_indices`` (the index of every
+    non-root input, in call order).
+
+    Usable directly as a runner (``__call__`` ignores ``node_id`` and ``task``)
+    or as the ``inner`` of a ``CachingRunner``.
+    """
+
+    SUGGESTIONS = (
+        "ADD a new feature",
+        "REFINE existing feature (name unchanged)",
+        "REFINE existing feature again (name unchanged)",
+    )
+
+    def __init__(self) -> None:
+        self.invocations = 0
+        self.seen_suggestion_indices: list[int] = []
+
+    def run(self, previous_output: AgentOutput | None) -> AgentOutput:
+        self.invocations += 1
+        if previous_output is None:
+            return make_stub_output(["f0"], 0.60, list(self.SUGGESTIONS))
+        self.seen_suggestion_indices.append(previous_output.suggestion_index)
+        plans = dict(previous_output.feature_plans)
+        if previous_output.suggestion_index == 0:  # ADD
+            name = f"f{len(plans)}"
+            plans[name] = _make_plan(name)
+            roc_auc = min(0.60 + 0.02 * len(plans), 0.95)
+        else:  # REFINE: same names, refined idea
+            name = sorted(plans)[0]
+            old = plans[name]
+            plans[name] = old._replace(feature_idea=old.feature_idea + "\n---\nrefined")
+            roc_auc = 0.60 + 0.001 * self.invocations
+        output = make_stub_output(list(plans), roc_auc, list(self.SUGGESTIONS))
+        return output._replace(feature_plans=plans)
+
+    def __call__(self, node_id: str, task: Any, previous_output: AgentOutput | None) -> AgentOutput:
+        return self.run(previous_output)
+
+
+def make_refining_agent() -> RefiningAgent:
+    """Build a ``RefiningAgent`` (see its docstring)."""
+    return RefiningAgent()
+
+
+class CachingRunner:
+    """Reproduces ``run_agent_as_subprocess``'s cache semantics (``runner.py``).
+
+    Cache key ``f"{task}--{node_id}"``; write-through; a repeated key returns
+    the stored output *without* calling ``inner`` — for an in-memory hit the
+    very same object, which is what lets a test detect two tree nodes sharing
+    one ``AgentOutput``.  With ``cache_dir`` the outputs are also persisted as
+    ``{key}.output.pkl`` (dill) and a fresh process over the same directory
+    hits them, which is the crash-recovery scenario ``node_id`` exists for.
+
+    Counters: ``invocations``, ``hits`` / ``misses`` (keys, in call order),
+    ``keys`` (every key seen, in call order), ``events`` (``(key, "HIT"|"MISS")``),
+    ``cache`` (the in-memory store).
+    """
+
+    def __init__(
+        self,
+        inner: Callable[[str, Any, AgentOutput | None], AgentOutput],
+        *,
+        cache_dir: Path | None = None,
+    ) -> None:
+        self.inner = inner
+        self.cache_dir = cache_dir
+        self.cache: dict[str, AgentOutput] = {}
+        self.invocations = 0
+        self.hits: list[str] = []
+        self.misses: list[str] = []
+        self.keys: list[str] = []
+        self.events: list[tuple[str, str]] = []
+
+    def __call__(self, node_id: str, task: Any, previous_output: AgentOutput | None) -> AgentOutput:
+        key = f"{task}--{node_id}"
+        self.invocations += 1
+        self.keys.append(key)
+        cached = self._load(key)
+        if cached is not None:
+            self.hits.append(key)
+            self.events.append((key, "HIT"))
+            return cached
+        self.misses.append(key)
+        self.events.append((key, "MISS"))
+        output = self.inner(node_id, task, previous_output)
+        self._store(key, output)
+        return output
+
+    def _load(self, key: str) -> AgentOutput | None:
+        if key in self.cache:
+            return self.cache[key]
+        if self.cache_dir is not None:
+            path = self.cache_dir / f"{key}.output.pkl"
+            if path.exists():
+                with path.open("rb") as fh:
+                    loaded: AgentOutput = dill.load(fh)
+                self.cache[key] = loaded
+                return loaded
+        return None
+
+    def _store(self, key: str, output: AgentOutput) -> None:
+        self.cache[key] = output
+        if self.cache_dir is not None:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+            with (self.cache_dir / f"{key}.output.pkl").open("wb") as fh:
+                dill.dump(output, fh)
+
+
+def make_caching_runner(
+    inner: Callable[[str, Any, AgentOutput | None], AgentOutput] | None = None,
+    *,
+    cache_dir: Path | None = None,
+) -> CachingRunner:
+    """Build a ``CachingRunner`` (see its docstring).
+
+    Parameters:
+        inner: The runner whose outputs are cached.  Defaults to a fresh
+            ``RefiningAgent`` (reachable afterwards as ``runner.inner``).
+        cache_dir: Persist outputs here as well, so another process can hit them.
+    """
+    return CachingRunner(inner if inner is not None else make_refining_agent(), cache_dir=cache_dir)

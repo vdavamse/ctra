@@ -26,6 +26,8 @@ The MCTS loop:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import math
 from dataclasses import dataclass, field
@@ -33,6 +35,8 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
+from ctra.agents.data_models import FeaturePlan
+from ctra.agents.feature_store import plan_content_hash
 from ctra.agents.runner import extract_objectives
 from ctra.config.settings import MCTSConfig, get_settings
 from ctra.search.objectives import ObjectiveResult
@@ -249,6 +253,15 @@ class MCTSSearch:
     # Public API
     # ------------------------------------------------------------------
 
+    def set_runner(self, runner: Callable[..., Any]) -> None:
+        """Replace the evaluation runner, e.g. after loading a checkpoint.
+
+        A checkpoint pickles the runner the search was built with; a resumed
+        process re-binds it here so evaluations hit *this* run's agent cache
+        (``scripts/train_mcts.py``).  The tree is untouched.
+        """
+        self._runner = runner
+
     def search(
         self,
         initial_features: list[str],
@@ -312,8 +325,14 @@ class MCTSSearch:
                 self._config.num_rollouts,
             )
 
-            # 1. SELECT — Pareto UCT traversal to a leaf
-            node = self._select(self._root)
+            # 1. SELECT — Pareto UCT traversal to a leaf.  Seeded per rollout
+            # (like ``_simulate_deep``) so a resumed run replays the pre-crash
+            # path and finds its cached evaluations (issue #12); an unseeded
+            # pick of an unvisited child would hit only by chance.
+            # SELECT gets its own stream: ``_simulate_deep`` seeds
+            # ``default_rng(rollout)``, and sharing that state would rank-link
+            # the two picks made in the same rollout.
+            node = self._select(self._root, rng=np.random.default_rng([rollout, 1]))
 
             # 2. EXPAND — generate children from feature operations
             all_children_exhausted = False
@@ -413,7 +432,7 @@ class MCTSSearch:
     # MCTS phases
     # ------------------------------------------------------------------
 
-    def _select(self, node: MCTSNode) -> MCTSNode:
+    def _select(self, node: MCTSNode, rng: np.random.Generator | None = None) -> MCTSNode:
         """Phase 1 — SELECTION: walk down the tree from root to a leaf node.
 
         Starting at ``node`` (usually the root), repeatedly pick the best
@@ -424,7 +443,10 @@ class MCTSSearch:
         The returned leaf is the node where the next expansion + simulation
         will happen.  Because UCB scores give ``inf`` to unvisited children,
         any child that has never been evaluated will be selected before
-        revisiting an already-explored child.
+        revisiting an already-explored child.  ``rng`` drives the random
+        picks among unvisited children (and the zero-contribution fallback);
+        ``search()`` seeds it with the rollout index so the traversal is
+        reproducible across a resume.  ``None`` uses numpy's global RNG.
         """
         current = node
         depth = 0
@@ -433,6 +455,7 @@ class MCTSSearch:
             current = pareto_select(
                 current.children,
                 exploration_constant=self._config.exploration_constant,
+                rng=rng,
             )
             depth += 1
 
@@ -876,7 +899,7 @@ class MCTSSearch:
             self._log_skip(node)
             return None
 
-        node_id = self._make_node_id(node, rollout)
+        node_id = self._make_node_id(node, rollout, parent_output)
         output = self._runner(node_id, self._task, parent_output)
 
         # Store full AgentOutput on the node
@@ -941,17 +964,117 @@ class MCTSSearch:
             logged.add(id(node))
             logger.info(msg, detail, node.suggestion_index)
 
-    def _make_node_id(self, node: MCTSNode, rollout: int) -> str:
-        """Generate a deterministic, unique string identifier for a node evaluation.
+    def _make_node_id(self, node: MCTSNode, rollout: int, parent_output: Any) -> str:
+        """Name this evaluation for the runner's cache, e.g. ``"r3-9f2c...e1"``.
 
-        The ID combines the rollout index with a hash of the sorted feature
-        names, e.g. ``"r3-a1b2c3d4"``.  This is passed to the runner so that
-        subprocess outputs can be cached and correlated back to tree nodes.
-        Sorting features before hashing ensures that two nodes with the same
-        feature set (regardless of insertion order) produce the same hash.
+        ``run_agent_as_subprocess`` stores each output under
+        ``{task}--{node_id}.output.pkl`` and returns the pickle on a repeated
+        id without running the agent.  That cache is **crash recovery**, not
+        memoisation: a resumed run re-executes the rollouts after its last
+        checkpoint and must find their pre-crash outputs, while anything that
+        is not literally the same evaluation must miss.  The id is therefore
+        a digest of what defines the evaluation (issue #12):
+
+        - ``rollout``: re-evaluating a node in a later rollout is intentional
+          exploration of a stochastic pipeline (deep-mode revisits), never a
+          replay.
+        - ``lineage``: the child-position path from the root (``_lineage``).
+          Its length is the depth, which separates a child from a parent
+          whose plans it repeats verbatim (the orchestrator's proposer-failure
+          skip and the exhausted early-skip both return the input plans);
+          its last element is the sibling index *assigned at expansion*, so
+          it is immune to the ``suggestion_index`` write-back at the call
+          site (issue #14) and to numpy integer indices; and cousins whose
+          parents both returned content-identical plans differ structurally
+          (``[0, 0]`` vs ``[1, 0]``) instead of colliding on
+          ``(depth, index)``.
+        - parent plan digest: the plan *content* the child is built from.  A
+          REFINE keeps the feature name and changes only ``feature_idea``, so
+          the feature-name set alone cannot tell a refined child from its
+          parent.
+        - ``features``: sorted, so insertion order is irrelevant.
+
+        SHA-256 over the canonical JSON keeps the id byte-identical across
+        processes (issue #13: builtin ``hash()`` is salted per process, and its
+        negative values formatted to ``r3--...`` filenames).  Because the key is
+        stable across *runs* as well, the cache directory must be per run (as
+        ``scripts/train_mcts.py`` does with ``<output_dir>/agent_cache``): a
+        shared directory would replay results across unrelated runs, starting
+        with the root evaluation at rollout 0.  Runner stand-ins
+        (``Mock``, plain objects, outputs without plans, detached nodes)
+        never raise: in later rollouts a raise here would land in
+        ``search()``'s rollout ``try``/``except`` and skip the rollout
+        silently (R9); the rollout-0 root evaluation sits outside that
+        ``try`` and would abort the search.
         """
-        features_hash = hash(tuple(sorted(node.features)))
-        return f"r{rollout}-{features_hash:x}"
+        payload = {
+            "rollout": int(rollout),
+            "lineage": self._lineage(node),
+            "parent": self._parent_plan_digest(parent_output),
+            "features": sorted(node.features),
+        }
+        raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        return f"r{rollout}-{hashlib.sha256(raw).hexdigest()[:16]}"
+
+    @staticmethod
+    def _lineage(node: MCTSNode) -> list[int | str]:
+        """Child-position path from the root to ``node`` (see ``_make_node_id``).
+
+        ``[]`` for the root, ``[1, 0]`` for the first child of the root's
+        second child.  Each entry is the node's position in
+        ``node.parent.children`` — fixed by ``_expand`` when the child is
+        created and preserved by dill across a checkpoint — found by
+        identity, because the dataclass ``__eq__`` compares fields (numpy
+        arrays included) and ``list.index`` would misfire on it.  O(depth).
+        A node whose parent does not list it among its children (a detached
+        test stand-in) contributes the ``"opaque-position"`` sentinel for
+        that level rather than raising.
+        """
+        path: list[int | str] = []
+        current = node
+        while current.parent is not None:
+            siblings = getattr(current.parent, "children", None) or []
+            position: int | str = "opaque-position"
+            for index, sibling in enumerate(siblings):
+                if sibling is current:
+                    position = index
+                    break
+            path.append(position)
+            current = current.parent
+        path.reverse()
+        return path
+
+    @staticmethod
+    def _parent_plan_digest(parent_output: Any) -> str | list[str]:
+        """Digest of the parent plans this evaluation is built from (see ``_make_node_id``).
+
+        ``"no-parent"`` for the root, ``"opaque-parent"`` for an output whose
+        ``feature_plans`` are missing, empty or not hashable (test stand-ins);
+        the two are distinct so a root and an opaque-parent child never share
+        an id.  Otherwise one ``plan_content_hash`` per plan, in name order.
+        A hashing failure on real ``FeaturePlan`` values is logged at WARNING
+        with the traceback (it silently weakens the key); a stand-in that is
+        not a plan mapping only at DEBUG.
+        Only the plans are hashed: the rest of an ``AgentOutput`` (DataFrames,
+        fitted pipelines) has no stable representation.
+        """
+        if parent_output is None:
+            return "no-parent"
+        plans = getattr(parent_output, "feature_plans", None)
+        if not plans:
+            return "opaque-parent"
+        try:
+            return [plan_content_hash(plans[name]) for name in sorted(plans)]
+        except Exception:
+            values = list(plans.values()) if isinstance(plans, dict) else []
+            if values and all(isinstance(plan, FeaturePlan) for plan in values):
+                logger.warning(
+                    "Parent output FeaturePlans failed to hash; using the opaque sentinel",
+                    exc_info=True,
+                )
+            else:
+                logger.debug("Parent output plans are not hashable; using the opaque sentinel")
+            return "opaque-parent"
 
     # ------------------------------------------------------------------
     # Default expansion

@@ -317,6 +317,7 @@ def _hypervolume_mc(
 def pareto_select(
     nodes: Sequence[MCTSNode],
     exploration_constant: float = 1.414,
+    rng: np.random.Generator | None = None,
 ) -> MCTSNode:
     """Select the best child node during MCTS tree traversal using Pareto-UCB.
 
@@ -348,6 +349,11 @@ def pareto_select(
         nodes: Sibling child nodes to choose from.
         exploration_constant: The C parameter in the UCB1 formula, controlling
             the exploration-vs-exploitation balance (default √2 ≈ 1.414).
+        rng: Generator for the random picks in steps 1 and 5.  ``None`` (the
+            default) keeps the historical behaviour and draws from numpy's
+            global RNG.  ``MCTSSearch.search`` passes a generator seeded per
+            rollout so that a resumed run replays the pre-crash selection
+            path and finds its cached evaluations (issue #12).
 
     Returns:
         The single selected child node to descend into.
@@ -355,11 +361,13 @@ def pareto_select(
     if len(nodes) == 1:
         return nodes[0]
 
+    def _randint(n: int) -> int:
+        return int(np.random.randint(n)) if rng is None else int(rng.integers(n))
+
     # Prioritize unvisited nodes
     unvisited = [n for n in nodes if n.visit_count == 0]
     if unvisited:
-        idx = np.random.randint(len(unvisited))
-        return unvisited[idx]
+        return unvisited[_randint(len(unvisited))]
 
     # Compute UCB vectors for every child
     ucb_vectors = np.array([n.ucb_scores(exploration_constant) for n in nodes])
@@ -377,7 +385,7 @@ def pareto_select(
 
     # If all contributions are zero (e.g., identical points), pick randomly
     if np.all(contributions == 0):
-        idx = np.random.randint(len(front_indices))
+        idx = _randint(len(front_indices))
         return nodes[front_indices[idx]]  # type: ignore[no-any-return]
 
     best_front_idx = int(np.argmax(contributions))

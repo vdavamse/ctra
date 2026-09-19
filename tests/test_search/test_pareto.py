@@ -8,11 +8,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from ctra.search.mcts import MCTSNode
 from ctra.search.pareto import (
     _compute_2d_hypervolume,
     hypervolume_contribution,
     pareto_front,
     pareto_front_indices,
+    pareto_select,
 )
 
 # ======================================================================
@@ -224,3 +226,37 @@ class TestHypervolumeContribution:
         hvc = hypervolume_contribution(pts, ref)
         total = _compute_2d_hypervolume(pts, ref)
         assert np.sum(hvc) <= total + 1e-6
+
+
+# ======================================================================
+# pareto_select: the optional generator
+# ======================================================================
+
+
+class TestParetoSelectRng:
+    """``rng`` makes the unvisited pick reproducible; ``None`` keeps the global RNG."""
+
+    @staticmethod
+    def _unvisited(n: int = 8) -> list[MCTSNode]:
+        return [MCTSNode(features=[f"f{i}"]) for i in range(n)]
+
+    def test_same_seed_same_pick(self) -> None:
+        nodes = self._unvisited()
+        picks = {id(pareto_select(nodes, rng=np.random.default_rng(3))) for _ in range(5)}
+        assert len(picks) == 1
+
+    def test_seeds_can_differ(self) -> None:
+        nodes = self._unvisited()
+        picks = {id(pareto_select(nodes, rng=np.random.default_rng(seed))) for seed in range(8)}
+        assert len(picks) > 1
+
+    def test_default_uses_global_rng(self) -> None:
+        nodes = self._unvisited()
+        np.random.seed(0)
+        first = pareto_select(nodes)
+        np.random.seed(0)
+        assert pareto_select(nodes) is first
+
+    def test_single_node_needs_no_rng(self) -> None:
+        node = MCTSNode(features=["f0"])
+        assert pareto_select([node], rng=np.random.default_rng(0)) is node
