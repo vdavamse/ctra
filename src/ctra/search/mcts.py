@@ -23,6 +23,8 @@ The MCTS loop:
     2. **Expand** -- generate child nodes from evaluator suggestions
     3. **Simulate** -- call runner to evaluate the feature set in subprocess
     4. **Backpropagate** -- update ancestor nodes with objective vectors
+       (``MCTSConfig.backprop`` picks the rule: subtree mean, elementwise
+       max, or best realised vector by hypervolume; issue #16)
 """
 
 from __future__ import annotations
@@ -58,6 +60,9 @@ logger = logging.getLogger(__name__)
 # (issue #15): well above float noise, well below any ROC-AUC resolution.
 _TIE_ATOL = 1e-9
 
+# The backpropagation rules ``MCTSConfig.backprop`` may name (issue #16).
+_BACKPROP_MODES = ("mean", "max", "max_hv")
+
 
 # ---------------------------------------------------------------------------
 # Tree node
@@ -82,9 +87,13 @@ class MCTSNode:
 
     # Statistics ----------------------------------------------------------
     visit_count: int = 0
-    total_reward: NDArray[Any] = field(
-        default_factory=lambda: np.zeros(2)
-    )  # shape: (n_objectives,)
+    # Shape ``(n_objectives,)``.  Invariant, whatever ``MCTSConfig.backprop``
+    # says: ``total_reward == A(node) * visit_count`` where ``A`` is the
+    # rule's aggregate over the vectors backpropagated through this node
+    # (their sum / visits under ``mean``, their elementwise max under
+    # ``max``, the best realised one under ``max_hv``).  ``mean_reward``
+    # divides by ``visit_count`` and so reads ``A`` under every rule.
+    total_reward: NDArray[Any] = field(default_factory=lambda: np.zeros(2))
 
     # History of all evaluations at this node (for diagnostics / re-ranking)
     objective_history: list[ObjectiveResult] = field(default_factory=list)
@@ -120,6 +129,13 @@ class MCTSNode:
         UCB scoring consumes during the search.  It is deliberately *not* what
         ``_select_best`` ranks by — the final pick uses each node's own
         evaluations (``MCTSSearch._best_own_objectives``, issue #15).
+
+        The name is the default rule's.  ``MCTSSearch._backpropagate`` keeps
+        ``total_reward == A(node) * visit_count`` for every
+        ``MCTSConfig.backprop`` rule, so under ``max`` this is the elementwise
+        running maximum and under ``max_hv`` the best realised vector, with no
+        change here or in ``ucb_scores``; ``MCTSSearch.value_estimate`` is the
+        rule-neutral name for callers (issue #16).
         """
         if self.visit_count == 0:
             return np.zeros_like(self.total_reward)
@@ -730,24 +746,81 @@ class MCTSSearch:
             current = current.parent
         return d
 
+    @property
+    def _backprop_mode(self) -> str:
+        """The backpropagation rule in force (``MCTSConfig.backprop``).
+
+        Read with ``getattr`` because a checkpoint pickled before the field
+        existed carries a config without it; such a search ran under the
+        original rule, so it resumes under ``mean``.
+        """
+        mode: str = getattr(self._config, "backprop", "mean")
+        return mode
+
     def _backpropagate(self, node: MCTSNode, objectives: NDArray[Any]) -> None:
         """Phase 4 — BACKPROPAGATION: propagate a simulation result up to the root.
 
         Starting at the just-evaluated ``node``, walk the ``parent`` chain
-        all the way to the root, and at every ancestor:
+        all the way to the root, and at every ancestor increment
+        ``visit_count`` by 1 and fold ``objectives`` into ``total_reward``
+        under the rule ``_backprop_mode`` names (issue #16):
 
-        1. Increment ``visit_count`` by 1.
-        2. Add the objective vector element-wise to ``total_reward``.
+        - ``mean`` — add the vector element-wise, so ``mean_reward`` is the
+          average over every evaluation in the subtree (PMMG-style).
+        - ``max`` — elementwise running maximum over those vectors: the
+          vectorised reading of AutoCT's max-reward backpropagation.  It is
+          order-independent and monotone, and it may combine coordinates
+          that no single evaluation scored (with ADD-only children the
+          parsimony coordinate pins to the ancestor's own value).
+        - ``max_hv`` — keep the one realised vector with the largest
+          ``(self._point_hypervolume(v), v[0])`` key, the key
+          ``_best_own_objectives`` ranks by, so accuracy breaks ties among
+          vectors below the reference point and a higher-accuracy vector with
+          zero hypervolume never displaces one above the reference.
 
-        This ensures that ``mean_reward`` (total_reward / visit_count)
-        reflects the average performance of *all* descendants, which is what
-        the UCB formula relies on during future selection phases.
+        Every rule stores its aggregate ``A`` as ``total_reward = A *
+        visit_count``, so ``mean_reward`` (``total_reward / visit_count``),
+        ``ucb_scores`` and ``value`` read ``A`` unchanged and no node state is
+        added (checkpoints stay round-trippable).  ``visit_count`` counts
+        evaluations under every rule, and the final pick (``_select_best``,
+        issue #15) reads ``objective_history`` rather than this state, so the
+        rule changes only which nodes UCB steers the search to evaluate.
         """
+        mode = self._backprop_mode
+        if mode not in _BACKPROP_MODES:
+            raise ValueError(f"unknown backprop mode {mode!r}; expected one of {_BACKPROP_MODES}")
+        vector = np.asarray(objectives, dtype=float)
         current: MCTSNode | None = node
         while current is not None:
-            current.visit_count += 1
-            current.total_reward = current.total_reward + objectives
+            if mode == "mean":
+                current.visit_count += 1
+                current.total_reward = current.total_reward + vector
+            else:
+                previous = current.mean_reward if current.visit_count > 0 else None
+                if previous is None:
+                    aggregate = vector.copy()
+                elif mode == "max":
+                    aggregate = np.maximum(previous, vector)
+                else:  # max_hv
+                    key_previous = (self._point_hypervolume(previous), float(previous[0]))
+                    key_new = (self._point_hypervolume(vector), float(vector[0]))
+                    aggregate = vector.copy() if key_new > key_previous else previous
+                current.visit_count += 1
+                current.total_reward = aggregate * current.visit_count
             current = current.parent
+
+    def value_estimate(self, node: MCTSNode) -> NDArray[Any]:
+        """The vector UCB exploits for ``node`` under the active backprop rule.
+
+        This is ``node.mean_reward`` — a genuine subtree mean under
+        ``self._backprop_mode == "mean"``, the elementwise running maximum
+        under ``"max"``, and the best realised vector under ``"max_hv"``
+        (``_backpropagate`` keeps ``total_reward == A * visit_count`` so the
+        property reads the aggregate ``A`` under every rule).  Use this name
+        when reporting search state; ``best_own_objectives`` is still the
+        score the final pick ranked ``node`` by (issue #15).
+        """
+        return node.mean_reward
 
     def _best_own_objectives(self, node: MCTSNode) -> NDArray[Any] | None:
         """The best objective vector this node scored *itself*, or ``None``.

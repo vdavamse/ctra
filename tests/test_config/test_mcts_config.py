@@ -1,4 +1,4 @@
-"""Tests for ``MCTSConfig`` (``ctra.config.settings``): the hypervolume reference point."""
+"""Tests for ``MCTSConfig`` (``ctra.config.settings``): the reference point and backprop rule."""
 
 from __future__ import annotations
 
@@ -13,8 +13,10 @@ from ctra.config.settings import _OBJECTIVE_FLOORS, MCTSConfig, Settings
 _ENV_KEYS = (
     "CTRA_MCTS_REFERENCE_POINT",
     "CTRA_MCTS_OBJECTIVES",
+    "CTRA_MCTS_BACKPROP",
     "CTRA_MCTS__REFERENCE_POINT",
     "CTRA_MCTS__OBJECTIVES",
+    "CTRA_MCTS__BACKPROP",
 )
 
 
@@ -117,3 +119,32 @@ class TestDerivedReferencePoint:
 
         with pytest.raises(ValidationError, match="no reference floor defined for objective"):
             MCTSConfig()
+
+
+class TestBackprop:
+    """The backpropagation rule (issue #16) defaults to the subtree mean.
+
+    research/backprop-ablation.md records why the default stays ``mean``;
+    a change there must change this expectation with its numbers.
+    """
+
+    def test_default_is_the_subtree_mean(self):
+        assert MCTSConfig().backprop == "mean"
+
+    @pytest.mark.parametrize("rule", ["mean", "max", "max_hv"])
+    def test_each_rule_is_accepted(self, rule):
+        assert MCTSConfig(backprop=rule).backprop == rule
+
+    def test_an_unknown_rule_is_rejected(self):
+        with pytest.raises(ValidationError, match="backprop"):
+            MCTSConfig(backprop="sum")
+
+    def test_env_override_reaches_the_field(self, monkeypatch):
+        monkeypatch.setenv("CTRA_MCTS_BACKPROP", "max_hv")
+
+        assert MCTSConfig().backprop == "max_hv"
+
+    def test_nested_env_override_reaches_the_field_through_settings(self, monkeypatch):
+        monkeypatch.setenv("CTRA_MCTS__BACKPROP", "max")
+
+        assert Settings().mcts.backprop == "max"

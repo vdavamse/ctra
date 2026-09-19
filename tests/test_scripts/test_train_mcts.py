@@ -46,6 +46,7 @@ def _make_mock_settings(num_rollouts=3, max_depth=2):
     settings.mcts.max_depth = max_depth
     settings.mcts.objectives = ["accuracy", "parsimony"]
     settings.mcts.reference_point = [0.5, 0.0]
+    settings.mcts.backprop = "mean"
     return settings
 
 
@@ -58,7 +59,11 @@ def _make_best_node(features=None):
 
 
 def _make_mock_mcts(
-    best_node, all_nodes=None, own_objectives=(0.95, 0.70), reference_point=(0.5, 0.0)
+    best_node,
+    all_nodes=None,
+    own_objectives=(0.95, 0.70),
+    reference_point=(0.5, 0.0),
+    backprop="mean",
 ):
     """Create a mock MCTSSearch.
 
@@ -66,13 +71,16 @@ def _make_mock_mcts(
     it to ``results.json`` as ``best_objectives`` and prints it, so a bare
     ``MagicMock`` attribute would make the file unserialisable (issue #15).
     ``config.reference_point`` has to be a real list for the same reason: a
-    resume compares it with the current settings (issue #18).
+    resume compares it with the current settings (issue #18), as it does
+    ``config.backprop`` (issue #16) — a bare ``MagicMock`` attribute would
+    never equal the settings' string and every resume would warn.
     """
     mcts = MagicMock()
     mcts.search.return_value = best_node
     mcts.all_nodes = list(all_nodes) if all_nodes is not None else [best_node]
     mcts.best_own_objectives.return_value = np.array(own_objectives)
     mcts.config.reference_point = list(reference_point)
+    mcts.config.backprop = backprop
     return mcts
 
 
@@ -400,6 +408,38 @@ class TestMainResume:
         best_node = _make_best_node()
         best_node.eval_output = _make_mock_output()
         mock_mcts = _make_mock_mcts(best_node, reference_point=(0.5, 0.0))
+
+        with caplog.at_level("WARNING", logger="ctra.train"):
+            self._resume(monkeypatch, tmp_path, mock_mcts)
+
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
+    def test_resume_warns_when_the_checkpoint_keeps_another_backprop_rule(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A checkpoint started under ``max`` keeps it and says so (issue #16)."""
+        best_node = _make_best_node()
+        best_node.eval_output = _make_mock_output()
+        mock_mcts = _make_mock_mcts(best_node, backprop="max")
+
+        with caplog.at_level("WARNING", logger="ctra.train"):
+            mock_settings = self._resume(monkeypatch, tmp_path, mock_mcts)
+
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1, warnings
+        assert "backprop 'max'" in warnings[0]
+        assert "current settings say 'mean'" in warnings[0]
+        assert mock_mcts.config.backprop == "max"
+        assert mock_settings.mcts.backprop == "mean"
+
+    def test_resume_reads_a_checkpoint_without_the_backprop_field_as_mean(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A checkpoint pickled before the field existed ran under ``mean``: no warning."""
+        best_node = _make_best_node()
+        best_node.eval_output = _make_mock_output()
+        mock_mcts = _make_mock_mcts(best_node)
+        del mock_mcts.config.backprop  # MagicMock: attribute access now raises AttributeError
 
         with caplog.at_level("WARNING", logger="ctra.train"):
             self._resume(monkeypatch, tmp_path, mock_mcts)

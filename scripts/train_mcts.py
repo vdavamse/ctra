@@ -189,6 +189,20 @@ def main() -> None:
                 ckpt_reference,
                 current_reference,
             )
+        # Same for the backpropagation rule (issue #16): the tree's UCB state
+        # was folded under the checkpoint's rule, and switching rules mid-run
+        # would mix aggregates.  A checkpoint pickled before the field existed
+        # ran under ``mean``.
+        ckpt_backprop = getattr(mcts.config, "backprop", "mean")
+        current_backprop = settings.mcts.backprop
+        if ckpt_backprop != current_backprop:
+            logger.warning(
+                "Checkpoint %s was started with backprop %r; the current settings "
+                "say %r. The resumed search keeps the checkpoint's rule.",
+                args.resume,
+                ckpt_backprop,
+                current_backprop,
+            )
         start_rollout = checkpoint["rollout"] + 1
         logger.info("Resumed at rollout %d", start_rollout)
     else:
