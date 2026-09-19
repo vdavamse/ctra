@@ -173,6 +173,23 @@ def main() -> None:
         mcts = checkpoint["mcts"]
         # Re-point the pickled runner at this run's cache directory.
         mcts.set_runner(runner)
+        # The pickled search keeps the reference point it was started under
+        # (``MCTSSearch`` exposes no accessor for its config, hence the
+        # private read).  That geometry is deliberately kept — the
+        # hypervolume ranking in ``_select_best`` must not change mid-run —
+        # but a checkpoint from before issue #18 moved the default to
+        # [0.5, 0.0] ranks by the origin, and the operator should know.
+        ckpt_reference = list(mcts._config.reference_point)
+        current_reference = list(settings.mcts.reference_point)
+        if ckpt_reference != current_reference:
+            logger.warning(
+                "Checkpoint %s was started with reference_point %s; the current "
+                "settings say %s. The resumed search keeps the checkpoint's "
+                "reference point.",
+                args.resume,
+                ckpt_reference,
+                current_reference,
+            )
         start_rollout = checkpoint["rollout"] + 1
         logger.info("Resumed at rollout %d", start_rollout)
     else:

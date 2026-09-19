@@ -45,7 +45,7 @@ def _make_mock_settings(num_rollouts=3, max_depth=2):
     settings.mcts.num_rollouts = num_rollouts
     settings.mcts.max_depth = max_depth
     settings.mcts.objectives = ["accuracy", "parsimony"]
-    settings.mcts.reference_point = [0.0, 0.0]
+    settings.mcts.reference_point = [0.5, 0.0]
     return settings
 
 
@@ -57,17 +57,22 @@ def _make_best_node(features=None):
     return node
 
 
-def _make_mock_mcts(best_node, all_nodes=None, own_objectives=(0.95, 0.70)):
+def _make_mock_mcts(
+    best_node, all_nodes=None, own_objectives=(0.95, 0.70), reference_point=(0.5, 0.0)
+):
     """Create a mock MCTSSearch.
 
     ``best_own_objectives`` has to return a real array: ``train_mcts`` writes
     it to ``results.json`` as ``best_objectives`` and prints it, so a bare
     ``MagicMock`` attribute would make the file unserialisable (issue #15).
+    ``_config.reference_point`` has to be a real list for the same reason: a
+    resume compares it with the current settings (issue #18).
     """
     mcts = MagicMock()
     mcts.search.return_value = best_node
     mcts.all_nodes = list(all_nodes) if all_nodes is not None else [best_node]
     mcts.best_own_objectives.return_value = np.array(own_objectives)
+    mcts._config.reference_point = list(reference_point)
     return mcts
 
 
@@ -337,6 +342,69 @@ class TestMainResume:
         # Search should be called with start_rollout=6 (checkpoint rollout 5 + 1)
         search_call = mock_mcts.search.call_args
         assert search_call.kwargs.get("start_rollout", search_call[1].get("start_rollout")) == 6
+
+    @staticmethod
+    def _resume(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mock_mcts) -> MagicMock:
+        """Run ``main`` in resume mode with ``mock_mcts`` in the checkpoint; return the settings."""
+        output_dir = tmp_path / "output"
+        ckpt_path = tmp_path / "checkpoint.pkl"
+        ckpt_path.touch()
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                *("train_mcts.py", "--task", "phase2"),
+                *("--resume", str(ckpt_path), "--output-dir", str(output_dir)),
+            ],
+        )
+        checkpoint = {
+            "mcts": mock_mcts,
+            "rollout": 5,
+            "args": {"task": "phase2", "output_dir": str(output_dir)},
+        }
+        monkeypatch.setattr("dill.load", MagicMock(return_value=checkpoint))
+        monkeypatch.setattr("dill.dump", MagicMock())
+        mock_settings = _make_mock_settings(num_rollouts=10)
+        monkeypatch.setattr(
+            "ctra.config.settings.get_settings", MagicMock(return_value=mock_settings)
+        )
+        monkeypatch.setattr("ctra.agents.feature_utils.dump_as_json", MagicMock(return_value="{}"))
+
+        from train_mcts import main
+
+        main()
+        return mock_settings
+
+    def test_resume_warns_when_the_checkpoint_keeps_an_older_reference_point(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A checkpoint from before issue #18 carries [0.0, 0.0]; it is kept and named."""
+        best_node = _make_best_node()
+        best_node.eval_output = _make_mock_output()
+        mock_mcts = _make_mock_mcts(best_node, reference_point=(0.0, 0.0))
+
+        with caplog.at_level("WARNING", logger="ctra.train"):
+            mock_settings = self._resume(monkeypatch, tmp_path, mock_mcts)
+
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1, warnings
+        assert "reference_point [0.0, 0.0]" in warnings[0]
+        assert "current settings say [0.5, 0.0]" in warnings[0]
+        # Neither side is rewritten: the checkpoint's geometry stays mid-run.
+        assert mock_mcts._config.reference_point == [0.0, 0.0]
+        assert mock_settings.mcts.reference_point == [0.5, 0.0]
+
+    def test_resume_is_silent_when_the_reference_points_agree(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        best_node = _make_best_node()
+        best_node.eval_output = _make_mock_output()
+        mock_mcts = _make_mock_mcts(best_node, reference_point=(0.5, 0.0))
+
+        with caplog.at_level("WARNING", logger="ctra.train"):
+            self._resume(monkeypatch, tmp_path, mock_mcts)
+
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]
 
 
 # ---------------------------------------------------------------------------
