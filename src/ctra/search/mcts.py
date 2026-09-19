@@ -26,6 +26,8 @@ The MCTS loop:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import math
 from dataclasses import dataclass, field
@@ -33,6 +35,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
+from ctra.agents.feature_store import plan_content_hash
 from ctra.agents.runner import extract_objectives
 from ctra.config.settings import MCTSConfig, get_settings
 from ctra.search.objectives import ObjectiveResult
@@ -876,7 +879,7 @@ class MCTSSearch:
             self._log_skip(node)
             return None
 
-        node_id = self._make_node_id(node, rollout)
+        node_id = self._make_node_id(node, rollout, parent_output)
         output = self._runner(node_id, self._task, parent_output)
 
         # Store full AgentOutput on the node
@@ -941,17 +944,72 @@ class MCTSSearch:
             logged.add(id(node))
             logger.info(msg, detail, node.suggestion_index)
 
-    def _make_node_id(self, node: MCTSNode, rollout: int) -> str:
-        """Generate a deterministic, unique string identifier for a node evaluation.
+    def _make_node_id(self, node: MCTSNode, rollout: int, parent_output: Any) -> str:
+        """Name this evaluation for the runner's cache, e.g. ``"r3-9f2c...e1"``.
 
-        The ID combines the rollout index with a hash of the sorted feature
-        names, e.g. ``"r3-a1b2c3d4"``.  This is passed to the runner so that
-        subprocess outputs can be cached and correlated back to tree nodes.
-        Sorting features before hashing ensures that two nodes with the same
-        feature set (regardless of insertion order) produce the same hash.
+        ``run_agent_as_subprocess`` stores each output under
+        ``{task}--{node_id}.output.pkl`` and returns the pickle on a repeated
+        id without running the agent.  That cache is **crash recovery**, not
+        memoisation: a resumed run re-executes the rollouts after its last
+        checkpoint and must find their pre-crash outputs, while anything that
+        is not literally the same evaluation must miss.  The id is therefore
+        a digest of what defines the evaluation (issue #12):
+
+        - ``rollout``: re-evaluating a node in a later rollout is intentional
+          exploration of a stochastic pipeline (deep-mode revisits), never a
+          replay.
+        - ``depth``: the orchestrator's proposer-failure skip returns the
+          parent's plans unchanged, so a child can otherwise agree with its
+          parent on every field below.
+        - ``suggestion_index``: the sibling discriminator.  Read here, *before*
+          the write-back at the call site overwrites it with the output's
+          index (issue #14); a non-``int`` stand-in left by that write-back is
+          folded to a sentinel rather than raised on.
+        - parent plan digest: the plan *content* the child is built from.  A
+          REFINE keeps the feature name and changes only ``feature_idea``, so
+          the feature-name set alone cannot tell a refined child from its
+          parent.
+        - ``features``: sorted, so insertion order is irrelevant.
+
+        SHA-256 over the canonical JSON keeps the id byte-identical across
+        processes (issue #13: builtin ``hash()`` is salted per process, and its
+        negative values formatted to ``r3--...`` filenames).  Runner stand-ins
+        (``Mock``, plain objects, outputs without plans) never raise: a raise
+        here would land in ``search()``'s rollout ``try``/``except`` and skip
+        the rollout silently (R9).
         """
-        features_hash = hash(tuple(sorted(node.features)))
-        return f"r{rollout}-{features_hash:x}"
+        index = getattr(node, "suggestion_index", 0)
+        payload = {
+            "rollout": int(rollout),
+            "depth": self._node_depth(node),
+            "suggestion_index": index if isinstance(index, int) else "opaque-index",
+            "parent": self._parent_plan_digest(parent_output),
+            "features": sorted(node.features),
+        }
+        raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        return f"r{rollout}-{hashlib.sha256(raw).hexdigest()[:16]}"
+
+    @staticmethod
+    def _parent_plan_digest(parent_output: Any) -> str | list[str]:
+        """Digest of the parent plans this evaluation is built from (see ``_make_node_id``).
+
+        ``"no-parent"`` for the root, ``"opaque-parent"`` for an output whose
+        ``feature_plans`` are missing, empty or not hashable (test stand-ins);
+        the two are distinct so a root and an opaque-parent child never share
+        an id.  Otherwise one ``plan_content_hash`` per plan, in name order.
+        Only the plans are hashed: the rest of an ``AgentOutput`` (DataFrames,
+        fitted pipelines) has no stable representation.
+        """
+        if parent_output is None:
+            return "no-parent"
+        plans = getattr(parent_output, "feature_plans", None)
+        if not plans:
+            return "opaque-parent"
+        try:
+            return [plan_content_hash(plans[name]) for name in sorted(plans)]
+        except Exception:
+            logger.debug("Parent output plans are not hashable; using the opaque sentinel")
+            return "opaque-parent"
 
     # ------------------------------------------------------------------
     # Default expansion
