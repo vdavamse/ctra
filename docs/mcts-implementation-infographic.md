@@ -288,8 +288,7 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
     |                                   |   UCT    |   UCT    |
     | Best-on-path metric               | max(acc) | max(HV)  |
     | Adaptive branching                |   No     |   Yes    |
-    | Multi-fidelity                    |   No     |   Yes    |
-    | Deep simulation                   |   Yes    |   Yes    |  <-- NOW MATCHED
+    | Deep simulation                   |   Yes    |   Yes    |  <-- MATCHED
     +-----------------------------------+----------+----------+
 
 
@@ -416,33 +415,7 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
 
 ---
 
-## 8. Multi-Fidelity Evaluation Schedule
-
-```
-    ROLLOUT INDEX ──> FIDELITY (% of training data used)
-    ====================================================
-
-    Schedule: [0.25, 0.5, 0.75, 1.0]    (4 brackets)
-
-    With 20 rollouts:
-    +--------------------------------------------------+
-    | Rollouts 1-5:   25% data  |  Fast, noisy          |
-    | Rollouts 6-10:  50% data  |  Medium fidelity      |
-    | Rollouts 11-15: 75% data  |  Good fidelity        |
-    | Rollouts 16-20: 100% data |  Full accuracy        |
-    +--------------------------------------------------+
-
-    Cost savings: Early exploration costs 75% less per evaluation.
-    With Opus 4.6 at ~$2/eval:
-
-    Without multi-fidelity: 20 rollouts x 7 evals x $2 = $280
-    With multi-fidelity:    5x$0.50 + 5x$1.00 + 5x$1.50 + 5x$2.00 = $175
-                            Savings: ~38%
-```
-
----
-
-## 9. Benefits
+## 8. Benefits
 
 ```
     +------------------------------------------------------------------+
@@ -455,7 +428,7 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
     |     - Every intermediate node evaluated and available for reuse   |
     |                                                                  |
     |  2. MULTI-OBJECTIVE OPTIMIZATION                                 |
-    |     - Accuracy + Parsimony + Stability simultaneously            |
+    |     - Accuracy + Parsimony balanced per phase                    |
     |     - Pareto front output: multiple trade-off solutions           |
     |     - No single-metric bias (AutoCT only optimizes ROC-AUC)      |
     |                                                                  |
@@ -468,12 +441,7 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
     |     - Promising nodes get more children (wider exploration)       |
     |     - New nodes get fewer children (conservative budget use)      |
     |                                                                  |
-    |  5. MULTI-FIDELITY COST REDUCTION                                |
-    |     - Early rollouts use 25% data (fast screening)               |
-    |     - Late rollouts use 100% data (accurate final eval)          |
-    |     - ~38% LLM cost savings over uniform full evaluation         |
-    |                                                                  |
-    |  6. BACKWARD COMPATIBLE                                          |
+    |  5. BACKWARD COMPATIBLE                                          |
     |     - deep_simulation=False: reverts to shallow (1 eval/rollout) |
     |     - objectives=["accuracy"]: degenerates to scalar MCTS        |
     |     - Single-objective mode matches standard MCTS exactly         |
@@ -494,7 +462,6 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
     |     Each rollout evaluates ~max_depth nodes, not just 1.         |
     |     10 rollouts = ~70 evals = ~$140 with Opus 4.6.               |
     |     AutoCT has the same cost — this is inherent to deep search.  |
-    |     Mitigation: multi-fidelity reduces early eval cost by 75%.   |
     |                                                                  |
     |  2. RANDOM SIMULATION POLICY                                     |
     |     Deep rollout picks random children (AutoCT does the same).   |
@@ -558,6 +525,9 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
                                          # ROC-AUC chance baseline, parsimony at
                                          # its floor (issue #18)
 
+    # Backpropagation rule (issue #16)
+    backprop:                "best_hv"  # Other: "scaled_hv"
+
     # UCT exploration
     exploration_constant:    1.414    # C_p in UCB1 formula
 
@@ -566,14 +536,12 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
     min_branch_factor:       2
     max_branch_factor:       8
 
-    # Multi-fidelity schedule
-    multi_fidelity_schedule: [0.25, 0.5, 0.75, 1.0]
+    # Feature caching
+    feature_store_enabled:   True
+    feature_store_dir:       Path("output/feature_store")
 
-    # Phase weights for accuracy objective
-    phase_weights:           {phase1: 0.2, phase2: 0.5, phase3: 0.3}
-
-    # Feature operations
-    operations:              ["add", "remove", "refine"]
+    # Subprocess timeout
+    subprocess_timeout:      300      # seconds per agent evaluation
 ```
 
 ---
@@ -584,22 +552,36 @@ All objectives normalized to [0, 1]. Higher is better. Pareto ranking finds trad
     src/ctra/search/
     ├── mcts.py          MCTSNode (dataclass), MCTSSearch (main loop)
     │                    _select, _expand, _simulate_deep, _backpropagate,
-    │                    _select_best, _call_evaluate, _get_fidelity
+    │                    _select_best, _call_evaluate
     │
-    ├── pareto.py        pareto_front, pareto_rank, crowding_distance,
-    │                    hypervolume_contribution, _compute_2d_hypervolume,
-    │                    pareto_select (Pareto UCT for tree traversal)
+    ├── pareto.py        pareto_front, pareto_front_indices,
+    │                    hypervolume_contribution, pareto_select (Pareto UCT
+    │                    for tree traversal)
     │
-    ├── objectives.py    PredictiveAccuracy, Parsimony, CrossPhaseStability,
-    │                    MultiObjectiveEvaluator, ObjectiveResult, _subsample
+    ├── objectives.py    FeatureSet, ObjectiveResult
     │
     └── __init__.py      Public exports
 
+    src/ctra/mlops/
+    └── objectives.py    PredictiveAccuracy, Parsimony, MultiObjectiveEvaluator
+                         (used by training pipeline, not search layer)
+
     tests/test_search/
-    ├── test_pareto.py              38 tests — Pareto math
-    ├── test_objectives.py          25 tests — 3 objectives + evaluator
-    ├── test_mcts.py                23 tests — node properties + search mechanics
-    ├── test_mcts_simulation.py     15 tests — full loop with stubs
-    ├── test_mcts_deep_exploration.py  7 tests — depth + synergy discovery
-    └── test_autoct_mcts_comparison.py 6 tests — AutoCT vs CTRA side-by-side
+    ├── test_pareto.py                         26 tests
+    ├── test_objectives.py                      3 tests
+    ├── test_mcts.py                           13 tests
+    ├── test_mcts_simulation.py                13 tests
+    ├── test_mcts_deep_exploration.py           8 tests
+    ├── test_mcts_node_id.py                   28 tests
+    ├── test_autoct_mcts_comparison.py          6 tests
+    ├── test_backprop_variants.py              26 tests
+    ├── test_mcts_callback.py                   6 tests
+    ├── test_mcts_callback_edge.py             10 tests
+    ├── test_mcts_e2e_shapiq.py                 3 tests
+    ├── test_mcts_exhaustion.py                17 tests
+    ├── test_mcts_integrity.py                  6 tests
+    ├── test_mcts_suggestion_index.py          20 tests
+    └── test_select_best.py                    34 tests
+    
+    Total: 219 tests
 ```
