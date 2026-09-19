@@ -911,6 +911,9 @@ class MCTSSearch:
             self._log_skip(node)
             return None
 
+        # What is sent is captured before the runner call: it is the value
+        # ``parent_output`` carries and the baseline the write-back below compares against.
+        sent = self._as_index(node.suggestion_index)
         node_id = self._make_node_id(node, rollout, parent_output)
         output = self._runner(node_id, self._task, parent_output)
 
@@ -918,7 +921,7 @@ class MCTSSearch:
         node.eval_output = output
 
         # Honour a suggestion_index *advance* from the orchestrator (issue #14).
-        # ``Agent.forward`` returns three shapes, and only the middle one carries
+        # ``Agent.forward`` returns three shapes, and only the first one carries
         # a counter the node should adopt:
         #   - skipped iteration (proposer failure ``orchestrator.py:396-399``,
         #     unhandled operation ``:522-525``) -> ``sent + 1``: the suggestion was
@@ -934,24 +937,19 @@ class MCTSSearch:
         # Defensive about stand-in runners (R5: this runs outside ``search()``'s
         # rollout try/except for the root): a Mock, a missing attribute or a bool
         # leaves the node's int alone rather than raising or poisoning the counter.
-        # ``isinstance`` alone is not enough — ``Mock(spec=int)`` passes it and
-        # then raises from ``int()`` — so the conversion is guarded too.
-        sent_index = node.suggestion_index
-        returned_index = getattr(output, "suggestion_index", None)
-        returned: int | None = None
-        sent: int | None = None
-        if (
-            isinstance(returned_index, (int, np.integer))
-            and not isinstance(returned_index, bool)
-            and isinstance(sent_index, (int, np.integer))
-            and not isinstance(sent_index, bool)
-        ):
-            try:
-                returned = int(returned_index)
-                sent = int(sent_index)
-            except (TypeError, ValueError):
-                returned = sent = None
-        if returned is not None and sent is not None and returned > sent:
+        # ``_as_index`` rejects anything that is not a builtin or numpy integer
+        # (``Mock``, ``Mock(spec=int)``, ``bool``, ``str``, a missing attribute).
+        returned = self._as_index(getattr(output, "suggestion_index", None))
+        if sent is not None and returned is not None and returned > sent:
+            if returned > sent + 1:
+                logger.warning(
+                    "Runner advanced suggestion_index by %d (from %d to %d) for "
+                    "node %r; Agent.forward only ever advances by one",
+                    returned - sent,
+                    sent,
+                    returned,
+                    node.operation_detail,
+                )
             node.suggestion_index = returned
 
         # Update node features to match actual output (subprocess may
@@ -1057,6 +1055,19 @@ class MCTSSearch:
         }
         raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         return f"r{rollout}-{hashlib.sha256(raw).hexdigest()[:16]}"
+
+    @staticmethod
+    def _as_index(value: Any) -> int | None:
+        """``int`` for a builtin or numpy integer, ``None`` otherwise.
+
+        ``type`` rather than ``isinstance``: a ``Mock(spec=int)`` spoofs
+        ``__class__`` but not ``type()``, so ``int()`` can never raise here,
+        and ``bool`` is excluded because ``True == 1`` would read as an advance.
+        """
+        kind = type(value)
+        if kind is bool or not issubclass(kind, (int, np.integer)):
+            return None
+        return int(value)
 
     @staticmethod
     def _lineage(node: MCTSNode) -> list[int | str]:
