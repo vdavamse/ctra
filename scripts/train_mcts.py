@@ -315,7 +315,20 @@ def main() -> None:
 
     # ---- Define rollout callback ----
     checkpoint_every = args.checkpoint_every
-    total_rollouts = settings.mcts.num_rollouts
+    # The search iterates the *effective* config's rollout count (the
+    # checkpoint's on a resume), so the step bookkeeping below must follow it,
+    # not the CLI/settings value.
+    ckpt_rollouts = getattr(mcts.config, "num_rollouts", None)
+    total_rollouts = (
+        ckpt_rollouts if isinstance(ckpt_rollouts, int) else settings.mcts.num_rollouts
+    )
+    if checkpoint is not None and total_rollouts != settings.mcts.num_rollouts:
+        logger.warning(
+            "Checkpoint num_rollouts=%d differs from settings num_rollouts=%d; "
+            "the checkpoint value drives the search and the MLflow steps.",
+            total_rollouts,
+            settings.mcts.num_rollouts,
+        )
     search_start = time.monotonic()
 
     try:
@@ -474,8 +487,9 @@ def main() -> None:
         results_path.write_text(json.dumps(results, indent=2))
         logger.info("Saved results to %s", results_path)
 
-        # The run totals go one step past the last rollout index so they do
-        # not collide with the rollout-0 point (``step=None`` logs at step 0).
+        # The run totals go one step past the last rollout index (the effective
+        # config's ``num_rollouts``) so they do not collide with the rollout-0
+        # point (``step=None`` logs at step 0).
         if tracker is not None:
             _log_cache_stats(tracker, stats, step=total_rollouts)
         run_status = "FINISHED"
