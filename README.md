@@ -163,7 +163,7 @@ The MCTS training pipeline produces two separate output trees (one for training,
 
 **Training artifacts** (`.output/<phase>/`):
 - `feature_plans.json` — the feature plans of the selected best node (one feature set, not the whole Pareto front; the front lives in `mcts_state.pkl`)
-- `best_model.pkl` — the final trained XGBoost or TabPFN model
+- `best_model.pkl` — the fitted model pipeline (XGBoost or TabPFN) of the best node's best evaluation
 - `results.json` — run summary: task, rollouts, depth, backprop rule, best feature set with its own objective vector (`best_objectives`) and value estimate (`best_mean_objectives`), node count, elapsed time
 - `mcts_state.pkl` — the pickled `MCTSSearch` (the full tree; each node keeps its `objective_history`) plus the last rollout index and the CLI args, in the same `{"mcts", "rollout", "args"}` format as `checkpoint.pkl`
 - `checkpoint.pkl` — intermediate checkpoint for resuming long runs (see `--resume` above)
