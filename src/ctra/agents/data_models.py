@@ -294,6 +294,99 @@ class EvalOutput(NamedTuple):
     suggestions: list[str]
 
 
+# ---------------------------------------------------------------------------
+# Cache instrumentation (issue #17)
+# ---------------------------------------------------------------------------
+
+#: LLM calls one dispatched trial-group build costs on the dominant path:
+#: ``FeatureBuilder.forward`` runs a ``dspy.ReAct(max_iters=5)`` research
+#: loop (up to 5 calls) and one ChainOfThought Construct call.  It is a
+#: lower bound -- ReAct's final extract call, ``ResettingRefine``'s retries
+#: (up to 3 attempts) and its feedback calls are not counted -- and exact
+#: for the iteration-N singleton group on its first attempt.  A real run
+#: calibrates it: ``scripts/run_agent.py`` records the process-wide LLM call
+#: count in ``CacheStats.llm_calls_made``.
+LLM_CALLS_PER_GROUP_BUILD = 6
+
+#: Where a plan sent to the feature store was minted (see ``Agent.forward``).
+PLAN_ORIGINS = ("initializer", "planner")
+
+
+@dataclass
+class FeatureStoreCounters:
+    """Runtime feature-store counters for one process (issue #17).
+
+    Plain ints only: the object is JSON-friendly and crosses the
+    ``scripts/run_agent.py`` subprocess boundary inside ``AgentOutput`` without
+    a new dill site.  Single-owner rule: every (trial, feature) lookup and
+    every trial-group decision is counted exactly once -- by the upfront batch
+    probe in ``compute_features`` when it ran, otherwise by
+    ``WrappedFeatureBuilder`` -- so the wrapper's re-probe of a partially
+    cached group is never counted twice.
+
+    ``feature_hits`` is split by the origin of the plan that hit:
+    ``hits_from_planner_plans`` are hits on plans minted fresh by the planner
+    on an iteration-N path, which is exactly what cross-branch reuse looks
+    like (two independently generated plan texts collided in the store);
+    ``hits_from_initializer_plans`` are hits on iteration-0 plans, which a
+    store persisted across runs serves.
+    """
+
+    feature_lookups: int = 0
+    feature_hits: int = 0
+    groups_dispatched: int = 0
+    groups_skipped: int = 0
+    hits_from_initializer_plans: int = 0
+    hits_from_planner_plans: int = 0
+    store_writes: int = 0
+
+    @property
+    def hit_rate(self) -> float:
+        """``feature_hits / feature_lookups``; ``0.0`` before any lookup."""
+        if self.feature_lookups <= 0:
+            return 0.0
+        return self.feature_hits / self.feature_lookups
+
+    @property
+    def llm_calls_avoided_estimate(self) -> int:
+        """``groups_skipped * LLM_CALLS_PER_GROUP_BUILD``.
+
+        Only a fully cached trial-group avoids a build; a hit inside a group
+        that is still dispatched avoids nothing (the builder runs anyway), so
+        per-feature hits are deliberately not multiplied.
+        """
+        return self.groups_skipped * LLM_CALLS_PER_GROUP_BUILD
+
+    def record_hits(self, n: int, plan_origin: str) -> None:
+        """Add ``n`` hits and attribute them to ``plan_origin``."""
+        if plan_origin not in PLAN_ORIGINS:
+            raise ValueError(f"unknown plan_origin {plan_origin!r}; expected one of {PLAN_ORIGINS}")
+        self.feature_hits += n
+        if plan_origin == "initializer":
+            self.hits_from_initializer_plans += n
+        else:
+            self.hits_from_planner_plans += n
+
+    def merge(self, other: FeatureStoreCounters) -> None:
+        """Fold another counter set into this one (in place).
+
+        Only the ``FeatureStoreCounters`` fields are summed, so a
+        ``CacheStats`` can be folded into a plain counter set; a non-int value
+        (a test stand-in) is skipped rather than raising.
+        """
+        for f in fields(FeatureStoreCounters):
+            value = getattr(other, f.name, 0)
+            if isinstance(value, int) and not isinstance(value, bool):
+                setattr(self, f.name, getattr(self, f.name) + value)
+
+    def as_dict(self) -> dict[str, int | float]:
+        """Counters plus the derived ``hit_rate`` and ``llm_calls_avoided_estimate``."""
+        out: dict[str, int | float] = {f.name: getattr(self, f.name) for f in fields(self)}
+        out["hit_rate"] = self.hit_rate
+        out["llm_calls_avoided_estimate"] = self.llm_calls_avoided_estimate
+        return out
+
+
 @dataclass(eq=False)
 class AgentOutput:
     """Full iteration state container (adapted from AutoCT line 266).
