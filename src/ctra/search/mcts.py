@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
+from ctra.agents.data_models import FeaturePlan
 from ctra.agents.feature_store import plan_content_hash
 from ctra.agents.runner import extract_objectives
 from ctra.config.settings import MCTSConfig, get_settings
@@ -973,7 +974,11 @@ class MCTSSearch:
 
         SHA-256 over the canonical JSON keeps the id byte-identical across
         processes (issue #13: builtin ``hash()`` is salted per process, and its
-        negative values formatted to ``r3--...`` filenames).  Runner stand-ins
+        negative values formatted to ``r3--...`` filenames).  Because the key is
+        stable across *runs* as well, the cache directory must be per run (as
+        ``scripts/train_mcts.py`` does with ``<output_dir>/agent_cache``): a
+        shared directory would replay results across unrelated runs, starting
+        with the root evaluation at rollout 0.  Runner stand-ins
         (``Mock``, plain objects, outputs without plans) never raise: a raise
         here would land in ``search()``'s rollout ``try``/``except`` and skip
         the rollout silently (R9).
@@ -997,6 +1002,9 @@ class MCTSSearch:
         ``feature_plans`` are missing, empty or not hashable (test stand-ins);
         the two are distinct so a root and an opaque-parent child never share
         an id.  Otherwise one ``plan_content_hash`` per plan, in name order.
+        A hashing failure on real ``FeaturePlan`` values is logged at WARNING
+        with the traceback (it silently weakens the key); a stand-in that is
+        not a plan mapping only at DEBUG.
         Only the plans are hashed: the rest of an ``AgentOutput`` (DataFrames,
         fitted pipelines) has no stable representation.
         """
@@ -1008,7 +1016,14 @@ class MCTSSearch:
         try:
             return [plan_content_hash(plans[name]) for name in sorted(plans)]
         except Exception:
-            logger.debug("Parent output plans are not hashable; using the opaque sentinel")
+            values = list(plans.values()) if isinstance(plans, dict) else []
+            if values and all(isinstance(plan, FeaturePlan) for plan in values):
+                logger.warning(
+                    "Parent output FeaturePlans failed to hash; using the opaque sentinel",
+                    exc_info=True,
+                )
+            else:
+                logger.debug("Parent output plans are not hashable; using the opaque sentinel")
             return "opaque-parent"
 
     # ------------------------------------------------------------------

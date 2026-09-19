@@ -19,6 +19,7 @@ different rollout must miss, because deep revisits are intentional.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess
@@ -274,6 +275,42 @@ def test_mock_suggestion_index_never_raises() -> None:
     assert _SHAPE.fullmatch(key), key
 
 
+def test_feature_plan_hash_failure_warns_with_traceback(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Real ``FeaturePlan`` values that fail to hash weaken the key: say so loudly."""
+    import ctra.search.mcts as mcts_module
+
+    def boom(_plan: Any) -> str:
+        raise RuntimeError("hashing exploded")
+
+    monkeypatch.setattr(mcts_module, "plan_content_hash", boom)
+    search = _search()
+    _root, child = _lineage()
+    with caplog.at_level(logging.DEBUG, logger="ctra.search.mcts"):
+        key = search._make_node_id(child, 0, _parent_input(child))
+
+    assert _SHAPE.fullmatch(key), key
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1, caplog.records
+    assert "FeaturePlan" in warnings[0].getMessage()
+    assert warnings[0].exc_info is not None
+    assert warnings[0].exc_info[0] is RuntimeError
+
+
+def test_mock_parent_hash_failure_logs_only_debug(caplog: pytest.LogCaptureFixture) -> None:
+    """Test stand-ins are expected to be opaque: DEBUG, never WARNING."""
+    search = _search()
+    _root, child = _lineage()
+    with caplog.at_level(logging.DEBUG, logger="ctra.search.mcts"):
+        key = search._make_node_id(child, 0, Mock())
+
+    assert _SHAPE.fullmatch(key), key
+    levels = [r.levelno for r in caplog.records if r.name == "ctra.search.mcts"]
+    assert logging.WARNING not in levels, caplog.records
+    assert logging.DEBUG in levels, caplog.records
+
+
 def test_root_and_opaque_parent_child_differ() -> None:
     """No parent and an unhashable parent are different situations, not one sentinel."""
     search = _search()
@@ -332,26 +369,30 @@ print(json.dumps({{
 )
 
 
-def _run_python(code: str) -> subprocess.CompletedProcess[str]:
+def _run_python(code: str, hash_seed: str | None = None) -> subprocess.CompletedProcess[str]:
+    env = os.environ if hash_seed is None else {**os.environ, "PYTHONHASHSEED": hash_seed}
     result = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(code)],
         capture_output=True,
         text=True,
         cwd=_REPO_ROOT,
+        env=env,
         check=False,
     )
     assert result.returncode == 0, result.stderr
     return result
 
 
-@pytest.mark.skipif(
-    "PYTHONHASHSEED" in os.environ,
-    reason="a fixed PYTHONHASHSEED hides the per-process salt of builtin hash() (#13)",
-)
 def test_key_is_stable_across_processes() -> None:
+    """Two interpreters with *different* hash seeds agree on the key (#13).
+
+    Explicit seeds make the test independent of the outer environment: a
+    fixed ``PYTHONHASHSEED`` there would otherwise hide builtin ``hash()``'s
+    per-process salt and let the old key pass.
+    """
     code = _KEY_CODE.format(root=str(_REPO_ROOT))
-    first = _run_python(code).stdout.strip()
-    second = _run_python(code).stdout.strip()
+    first = _run_python(code, hash_seed="1").stdout.strip()
+    second = _run_python(code, hash_seed="2").stdout.strip()
     assert _SHAPE.fullmatch(first), first
     assert first == second, (first, second)
 

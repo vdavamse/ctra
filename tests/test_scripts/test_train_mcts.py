@@ -6,6 +6,7 @@ CTGLoader, Agent, MCTSSearch, dill, file I/O).
 
 from __future__ import annotations
 
+import functools
 import json
 import sys
 from pathlib import Path
@@ -385,10 +386,12 @@ class TestOnRolloutCallback:
         monkeypatch.setattr("ctra.agents.feature_utils.dump_as_json", MagicMock(return_value="{}"))
 
         dill_dump_calls = []
+        checkpoint_args = []
 
         def tracking_dill_dump(obj, f):
             if isinstance(obj, dict) and "rollout" in obj:
                 dill_dump_calls.append(obj["rollout"])
+                checkpoint_args.append(obj["args"])
 
         monkeypatch.setattr("dill.dump", tracking_dill_dump)
 
@@ -398,6 +401,128 @@ class TestOnRolloutCallback:
 
         # Checkpoint should have been saved at rollout index 1 (since (1+1)%2==0)
         assert 1 in dill_dump_calls
+        # Every checkpoint carries what rebuilds the per-run agent cache dir
+        # (output_dir / task subdir / "agent_cache") on resume.
+        for ckpt_args in checkpoint_args:
+            assert ckpt_args["output_dir"] == str(output_dir)
+            assert ckpt_args["task"] == "phase2"
+
+
+# ---------------------------------------------------------------------------
+# Tests: per-run agent cache (issue #12 review)
+# ---------------------------------------------------------------------------
+
+
+def _assert_per_run_runner(runner, expected_cache_dir: Path) -> None:
+    """``runner`` is ``run_agent_as_subprocess`` bound to this run's cache dir."""
+    from ctra.agents.runner import run_agent_as_subprocess
+
+    assert isinstance(runner, functools.partial), runner
+    assert runner.func is run_agent_as_subprocess
+    assert runner.args == ()
+    assert runner.keywords == {"cache_dir": expected_cache_dir}
+
+
+class TestPerRunAgentCache:
+    """The node id is stable across runs, so the agent cache must be per run.
+
+    ``run_agent_as_subprocess`` defaults ``cache_dir`` to the global
+    ``output/agent_cache``; with a run-stable key a fresh run would load the
+    previous run's root pickle (same ``initial_features=[]``, rollout 0, no
+    parent) and replay rollout 0 wholesale instead of running the agent.
+    """
+
+    def test_fresh_start_scopes_cache_to_output_dir(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        output_dir = tmp_path / "output"
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["train_mcts.py", "--task", "phase2", "--output-dir", str(output_dir)],
+        )
+
+        best_node = _make_best_node()
+        best_node.eval_output = _make_mock_output()
+        mock_mcts = MagicMock()
+        mock_mcts.search.return_value = best_node
+        mock_mcts.all_nodes = [best_node]
+        mock_mcts_cls = MagicMock(return_value=mock_mcts)
+        monkeypatch.setattr("ctra.search.mcts.MCTSSearch", mock_mcts_cls)
+
+        mock_settings = _make_mock_settings(num_rollouts=3)
+        monkeypatch.setattr(
+            "ctra.config.settings.get_settings", MagicMock(return_value=mock_settings)
+        )
+        monkeypatch.setattr("ctra.agents.feature_utils.dump_as_json", MagicMock(return_value="{}"))
+        monkeypatch.setattr("dill.dump", MagicMock())
+
+        from train_mcts import main
+
+        main()
+
+        mock_mcts_cls.assert_called_once()
+        runner = mock_mcts_cls.call_args.kwargs["runner"]
+        _assert_per_run_runner(runner, output_dir / "phase2" / "agent_cache")
+
+    def test_resume_repoints_runner_to_per_run_cache(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A dill-loaded search object keeps hitting *this* run's cache, not the global one."""
+        from ctra.agents.runner import run_agent_as_subprocess
+
+        output_dir = tmp_path / "output"
+        ckpt_path = tmp_path / "checkpoint.pkl"
+        ckpt_path.touch()
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "train_mcts.py",
+                "--task",
+                "phase3",
+                "--resume",
+                str(ckpt_path),
+                "--output-dir",
+                str(output_dir),
+            ],
+        )
+
+        best_node = _make_best_node()
+        best_node.eval_output = _make_mock_output()
+        mock_mcts = MagicMock()
+        mock_mcts._runner = run_agent_as_subprocess  # what an old checkpoint pickled
+        mock_mcts.search.return_value = best_node
+        mock_mcts.all_nodes = [best_node]
+        checkpoint = {"mcts": mock_mcts, "rollout": 4, "args": {"task": "phase3"}}
+        monkeypatch.setattr("dill.load", MagicMock(return_value=checkpoint))
+        monkeypatch.setattr("dill.dump", MagicMock())
+
+        mock_mcts_cls = MagicMock()
+        monkeypatch.setattr("ctra.search.mcts.MCTSSearch", mock_mcts_cls)
+        mock_settings = _make_mock_settings(num_rollouts=10)
+        monkeypatch.setattr(
+            "ctra.config.settings.get_settings", MagicMock(return_value=mock_settings)
+        )
+        monkeypatch.setattr("ctra.agents.feature_utils.dump_as_json", MagicMock(return_value="{}"))
+
+        from train_mcts import main
+
+        main()
+
+        mock_mcts_cls.assert_not_called()
+        _assert_per_run_runner(mock_mcts._runner, output_dir / "phase3" / "agent_cache")
+
+    def test_runner_partial_survives_dill_checkpoint(self, tmp_path: Path) -> None:
+        """The partial is what the checkpoint pickles; dill must round-trip it intact."""
+        import dill
+
+        from ctra.agents.runner import run_agent_as_subprocess
+
+        cache_dir = tmp_path / "phase2" / "agent_cache"
+        runner = functools.partial(run_agent_as_subprocess, cache_dir=cache_dir)
+        restored = dill.loads(dill.dumps(runner))
+        _assert_per_run_runner(restored, cache_dir)
 
 
 # ---------------------------------------------------------------------------

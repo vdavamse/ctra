@@ -20,6 +20,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import logging
 import time
@@ -123,6 +124,15 @@ def main() -> None:
     if args.depth is not None:
         settings.mcts.max_depth = args.depth
 
+    # The runner's cache is keyed on a run-stable node id (rollout, depth,
+    # sibling index, parent plans, features), so it must live inside this
+    # run's output directory: a shared cache would hand a fresh run the
+    # previous run's pickles instead of running the agent.  ``output_dir``
+    # is rebuilt from ``args`` (persisted in every checkpoint), so a resume
+    # with the same ``--output-dir`` keeps hitting its own pre-crash entries.
+    agent_cache_dir = output_dir / "agent_cache"
+    runner = functools.partial(run_agent_as_subprocess, cache_dir=agent_cache_dir)
+
     start_rollout = 0
     mcts = None
 
@@ -132,12 +142,14 @@ def main() -> None:
         with open(args.resume, "rb") as f:
             checkpoint = dill.load(f)
         mcts = checkpoint["mcts"]
+        # Re-point the pickled runner at this run's cache directory.
+        mcts._runner = runner
         start_rollout = checkpoint["rollout"] + 1
         logger.info("Resumed at rollout %d", start_rollout)
     else:
         # ---- Fresh start ----
         mcts = MCTSSearch(
-            runner=run_agent_as_subprocess,
+            runner=runner,
             task=task,
         )
 
