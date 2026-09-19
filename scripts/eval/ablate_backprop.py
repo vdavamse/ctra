@@ -526,13 +526,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     seeds = list(range(args.seeds))
 
     # The search logs every rollout at INFO and the expansion cap at WARNING;
-    # hundreds of searches of that would bury the table.
+    # hundreds of searches of that would bury the table.  Restore the caller's
+    # disable level afterwards rather than resetting it: a test session or
+    # notebook with its own ``logging.disable(...)`` keeps it.
+    previous_disable = logging.root.manager.disable
     logging.disable(logging.WARNING)
     started = time.perf_counter()
     try:
         rows = run_sweep(regimes, variants, seeds, rollouts=args.rollouts)
     finally:
-        logging.disable(logging.NOTSET)
+        logging.disable(previous_disable)
     elapsed = time.perf_counter() - started
     summary = summarise(rows)
 

@@ -283,6 +283,15 @@ class TestConfigGuard:
         with pytest.raises(ValueError, match="unknown backprop mode 'sum'"):
             search._backpropagate(leaf, ABOVE_A)
 
+    def test_an_unknown_rule_is_rejected_at_construction(self):
+        """The guard runs in ``__init__`` too: ``search()`` wraps ``_backpropagate``
+        in the per-rollout ``try/except``, so a late error would only skip rollouts."""
+        stand_in = SimpleNamespace(**{**MCTSConfig().model_dump(), "backprop": "bogus"})
+
+        with pytest.raises(ValueError, match="unknown backprop mode 'bogus'") as excinfo:
+            MCTSSearch(runner=_unused_runner, task="test", config=stand_in)  # type: ignore[arg-type]
+        assert "'mean', 'max', 'max_hv'" in str(excinfo.value)
+
 
 class TestValueEstimate:
     def test_is_the_rules_aggregate_and_the_rules_disagree(self):

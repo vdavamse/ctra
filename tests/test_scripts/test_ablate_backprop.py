@@ -8,6 +8,7 @@ landscape.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import sys
 from pathlib import Path
@@ -88,6 +89,23 @@ class TestTinyGrid:
 
     def test_unknown_variant_is_rejected(self, tmp_path):
         assert ab.main(["--variants", "sum", "--output-dir", str(tmp_path)]) == 2
+
+    def test_main_restores_the_callers_logging_disable_level(self, tmp_path):
+        """``main()`` silences the search while it runs and then puts back the
+        level the caller had set, rather than resetting it to ``NOTSET``."""
+        before = logging.root.manager.disable
+        logging.disable(logging.ERROR)
+        try:
+            code = ab.main(
+                [
+                    *("--regime", "issue", "--variants", "mean", "--seeds", "1"),
+                    *("--rollouts", str(TINY_ROLLOUTS), "--output-dir", str(tmp_path)),
+                ]
+            )
+            assert code == 0
+            assert logging.root.manager.disable == logging.ERROR
+        finally:
+            logging.disable(before)
 
 
 class TestFixtureFence:

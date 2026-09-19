@@ -169,10 +169,13 @@ class MCTSNode:
         return exploit + explore  # type: ignore[no-any-return]
 
     def value(self, reference: NDArray[Any] | None = None) -> float:
-        """Collapse the multi-objective mean reward into a single scalar for ranking.
+        """Collapse the node's aggregate reward into a single scalar for ranking.
 
+        The vector collapsed is ``mean_reward``: the active backprop rule's
+        aggregate (``MCTSSearch.value_estimate``), which is the subtree mean
+        under ``mean`` and the rule's own aggregate under ``max``/``max_hv``.
         The scalar is the *hypervolume* of the hyper-rectangle whose corners
-        are the reference point and the node's mean reward vector, i.e.::
+        are the reference point and that vector, i.e.::
 
             product( max(mean_reward[j] - reference[j], 0)  for j in objectives )
 
@@ -189,8 +192,8 @@ class MCTSNode:
                 geometry must pass it explicitly.
 
         Reporting helper for external callers.  ``_select_best`` does not use
-        it: it ranks nodes by their own evaluations, not by the subtree mean
-        this collapses (issue #15).
+        it: it ranks nodes by their own evaluations, not by the rule's
+        aggregate this collapses (issue #15).
         """
         mean = self.mean_reward
         if reference is None:
@@ -271,6 +274,15 @@ class MCTSSearch:
                 f"{self._n_objectives} objectives"
             )
         self._reference = np.asarray(ref, dtype=np.float64)
+
+        # Backprop rule (issue #16).  ``MCTSConfig`` already restricts the
+        # field to a ``Literal``; a stand-in config that bypasses it must fail
+        # here, not inside ``_backpropagate``, which ``search()`` wraps in the
+        # per-rollout ``try/except`` (every rollout would be "skipped" and the
+        # run would end successfully with a one-node tree).
+        mode = self._backprop_mode
+        if mode not in _BACKPROP_MODES:
+            raise ValueError(f"unknown backprop mode {mode!r}; expected one of {_BACKPROP_MODES}")
 
     @property
     def config(self) -> MCTSConfig:
@@ -883,11 +895,14 @@ class MCTSSearch:
         """The objective vector ``_select_best`` ranked ``node`` by.
 
         This is the node's own best evaluation, as opposed to
-        ``node.mean_reward``, which is the average over the node's whole
-        subtree and is what UCB consumes during the search (issue #15).
-        Callers that report "the best feature set scored X" want this one;
-        ``scripts/train_mcts.py`` writes it to ``results.json["best_objectives"]``
-        and keeps the subtree mean beside it as ``best_mean_objectives``.
+        ``node.mean_reward``, which is the backprop rule's aggregate over the
+        vectors backpropagated through the node (``value_estimate``: the
+        subtree mean under ``mean``, the elementwise maximum under ``max``,
+        the best realised vector under ``max_hv``) and is what UCB consumes
+        during the search (issue #15).  Callers that report "the best feature
+        set scored X" want this one; ``scripts/train_mcts.py`` writes it to
+        ``results.json["best_objectives"]`` and keeps the rule's aggregate
+        beside it as ``best_mean_objectives``.
 
         It is the score of ``node.features``: every history entry records the
         feature set it scored, and ``_best_own_objectives`` ranks only the
