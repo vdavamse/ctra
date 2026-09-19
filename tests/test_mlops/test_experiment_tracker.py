@@ -80,3 +80,23 @@ class TestLogCacheStats:
         assert metrics["agent_cache_hit_rate"] == 0.0
         assert metrics["feature_store_hit_rate"] == 0.0
         assert metrics["llm_calls_avoided_estimate"] == 0.0
+
+
+class TestEndRun:
+    def test_default_status_is_finished(self) -> None:
+        tracker, fake_mlflow = _tracker()
+        tracker._active_run = MagicMock()
+        tracker.end_run()
+        fake_mlflow.end_run.assert_called_once_with(status="FINISHED")
+        assert tracker._active_run is None
+
+    def test_failed_status_is_passed_through(self) -> None:
+        tracker, fake_mlflow = _tracker()
+        tracker._active_run = MagicMock()
+        tracker.end_run(status="FAILED")
+        fake_mlflow.end_run.assert_called_once_with(status="FAILED")
+
+    def test_without_an_active_run_nothing_is_ended(self) -> None:
+        tracker, fake_mlflow = _tracker()
+        tracker.end_run(status="FAILED")
+        fake_mlflow.end_run.assert_not_called()

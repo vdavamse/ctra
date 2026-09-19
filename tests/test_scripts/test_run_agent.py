@@ -70,6 +70,12 @@ def _setup_common_mocks(monkeypatch):
     mock_agent_cls = MagicMock(return_value=mock_agent)
     monkeypatch.setattr("ctra.agents.orchestrator.Agent", mock_agent_cls)
 
+    # Keep dspy's global callbacks untouched across tests: hand ``main`` an
+    # unregistered counter instead of letting it configure dspy (issue #17).
+    import run_agent
+
+    monkeypatch.setattr(run_agent, "install_llm_call_counter", run_agent.LMCallCounter)
+
     return {
         "configure_lm": mock_configure_lm,
         "loader": mock_loader,

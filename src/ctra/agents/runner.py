@@ -94,7 +94,8 @@ class RunCacheStats:
     ``llm_calls_made`` sums the children's calibration figures.  Plain ints
     throughout: ``as_dict`` is what ``results.json`` and MLflow receive.
     Bound into the runner partial by ``scripts/train_mcts.py``, so it is
-    pickled with every checkpoint; a resumed process starts a fresh one.
+    pickled with every checkpoint; a resumed process adopts the checkpointed
+    object and its counters continue from the pre-crash values.
     """
 
     agent_hits: int = 0

@@ -19,8 +19,14 @@ import argparse
 import logging
 import sys
 from pathlib import Path
+from typing import Any
 
 import dill
+
+try:
+    from dspy.utils.callback import BaseCallback
+except ImportError:  # pragma: no cover - dspy is a hard dependency of the agents
+    BaseCallback = object  # type: ignore[assignment,misc]
 
 logging.basicConfig(
     level=logging.INFO,
@@ -62,13 +68,47 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _llm_calls_made() -> int:
-    """Number of LM calls dspy recorded in this process; 0 if unavailable."""
+class LMCallCounter(BaseCallback):  # type: ignore[misc]
+    """Count every ``dspy.LM`` call made in this process (issue #17).
+
+    dspy runs ``on_lm_start`` once per ``LM.__call__``, so ``calls`` is an
+    unbounded count of the calls the iteration made -- unlike
+    ``len(dspy.clients.base_lm.GLOBAL_HISTORY)``, which dspy caps at
+    ``MAX_HISTORY_SIZE`` (10,000 entries, the oldest popped) and which
+    ``settings.disable_history`` empties.  Calls served by dspy's own
+    response cache **are included**: ``on_lm_end`` receives the completions
+    only, not the response's ``cache_hit`` flag, so a cached call cannot be
+    told apart here.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    def on_lm_start(self, call_id: str, instance: Any, inputs: dict[str, Any]) -> None:
+        self.calls += 1
+
+
+def install_llm_call_counter() -> LMCallCounter | None:
+    """Register an ``LMCallCounter`` on dspy's global callbacks.
+
+    Returns the counter, or ``None`` when it cannot be registered (dspy
+    missing, or dspy's settings owned by another thread), in which case the
+    calibration figure stays ``0``.  Existing callbacks are kept.
+    """
+    if BaseCallback is object:
+        return None
     try:
-        from dspy.clients.base_lm import GLOBAL_HISTORY
+        import dspy
     except ImportError:
-        return 0
-    return len(GLOBAL_HISTORY)
+        return None
+    counter = LMCallCounter()
+    try:
+        dspy.configure(callbacks=[*dspy.settings.get("callbacks", []), counter])
+    except RuntimeError as exc:
+        logger.warning("LM call counter not registered (%s); llm_calls_made stays 0", exc)
+        return None
+    return counter
 
 
 def main() -> None:
@@ -94,6 +134,9 @@ def main() -> None:
     from ctra.agents.lm_config import configure_lm
 
     configure_lm()
+    # Counts every LM call from here on (issue #17): the calibration figure
+    # for LLM_CALLS_PER_GROUP_BUILD, read back after the forward pass.
+    llm_call_counter = install_llm_call_counter()
 
     # ---- Load benchmark data ----
     from ctra.data.ctg_loader import CTGLoader
@@ -144,14 +187,13 @@ def main() -> None:
     output = agent.forward(previous_output=previous_output)
 
     # ---- Calibration for the cache instrumentation (issue #17) ----
-    # dspy appends every LM call made in this process to GLOBAL_HISTORY, so
-    # its length is the iteration's real LLM call count (all agents, not only
-    # the builder).  It rides along in the output's cache_stats so the parent
-    # can compare it with the groups_skipped * LLM_CALLS_PER_GROUP_BUILD
-    # estimate.  Guarded: an older dspy without the list just reports 0.
+    # The counter saw every LM call this process made (all agents, not only
+    # the builder; dspy-cache hits included).  It rides along in the output's
+    # cache_stats so the parent can compare it with the
+    # groups_skipped * LLM_CALLS_PER_GROUP_BUILD estimate.
     cache_stats = getattr(output, "cache_stats", None)
     if cache_stats is not None:
-        cache_stats.llm_calls_made = _llm_calls_made()
+        cache_stats.llm_calls_made = llm_call_counter.calls if llm_call_counter else 0
 
     # ---- Serialize output ----
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)

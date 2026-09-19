@@ -298,14 +298,15 @@ class EvalOutput(NamedTuple):
 # Cache instrumentation (issue #17)
 # ---------------------------------------------------------------------------
 
-#: LLM calls one dispatched trial-group build costs on the dominant path:
-#: ``FeatureBuilder.forward`` runs a ``dspy.ReAct(max_iters=5)`` research
-#: loop (up to 5 calls) and one ChainOfThought Construct call.  It is a
-#: lower bound -- ReAct's final extract call, ``ResettingRefine``'s retries
-#: (up to 3 attempts) and its feedback calls are not counted -- and exact
-#: for the iteration-N singleton group on its first attempt.  A real run
-#: calibrates it: ``scripts/run_agent.py`` records the process-wide LLM call
-#: count in ``CacheStats.llm_calls_made``.
+#: LLM calls one dispatched trial-group build is taken to cost: a mid-range
+#: point estimate, not a bound.  One ``FeatureBuilder.forward`` attempt is
+#: k ReAct steps (``dspy.ReAct(max_iters=5)``: 1 <= k <= 5, the loop stops
+#: at ``finish``) + 1 ReAct extract call + 1 ChainOfThought Construct call
+#: = k + 2, i.e. 3-7 calls (7 when ReAct exhausts its 5 steps).  Under
+#: ``ResettingRefine(N=3)`` a group can take up to 3 attempts plus 2
+#: ``OfferFeedback`` calls, so a dispatched group costs 3-23 calls.  A real
+#: run calibrates it: ``scripts/run_agent.py`` records the process-wide LLM
+#: call count in ``CacheStats.llm_calls_made``.
 LLM_CALLS_PER_GROUP_BUILD = 6
 
 #: Where a plan sent to the feature store was minted (see ``Agent.forward``).
@@ -393,9 +394,11 @@ class CacheStats(FeatureStoreCounters):
 
     ``llm_calls_made`` is the calibration field: ``scripts/run_agent.py`` sets
     it to the number of LLM calls the whole iteration made (every agent, not
-    only the builder) from ``dspy``'s global history, so a real run can check
-    ``LLM_CALLS_PER_GROUP_BUILD`` against ``groups_dispatched``.  It stays
-    ``0`` when the iteration ran in-process.
+    only the builder), counted at the source by a ``dspy`` callback on every
+    ``LM.__call__`` -- unbounded, unlike the 10,000-entry global history --
+    so a real run can check ``LLM_CALLS_PER_GROUP_BUILD`` against
+    ``groups_dispatched``.  Calls served by dspy's own response cache are
+    included.  It stays ``0`` when the iteration ran in-process.
     """
 
     llm_calls_made: int = 0
@@ -459,12 +462,15 @@ class AgentOutput:
 
         NOTE: like ``dataclasses.replace``, non-overridden mutable fields are
         **aliased** — the returned instance shares references to
-        ``builder_meta``, ``none_explanations``, ``raw_features``,
-        ``raw_val_features``, ``raw_test_features``, and ``feature_plans``
-        with ``self``. In-place mutation (``|=``, ``.pop``, ``.update``,
+        ``builder_meta``, ``builder_diagnostics``, ``cache_stats``,
+        ``none_explanations``, ``raw_features``, ``raw_val_features``,
+        ``raw_test_features``, and ``feature_plans`` with ``self``. In-place
+        mutation (``|=``, ``.pop``, ``.update``, ``+=`` on a counter,
         assignment into nested dicts) on any of those fields will silently
         propagate across sibling copies — e.g. across sibling MCTS nodes
-        created by ``parent_output._replace(suggestion_index=...)``.
+        created by ``parent_output._replace(suggestion_index=...)``, or from
+        the probe/child copies ``mcts.py`` makes of a parent's output into
+        the parent's own ``cache_stats``.
 
         Callers must ``deepcopy`` before mutating. ``forward()`` already
         does this at the top of the iter-N branch

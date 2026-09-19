@@ -7,6 +7,7 @@ harness's stubs; the rendering and I/O tests use hand-made rows.
 from __future__ import annotations
 
 import json
+import logging
 import sys
 import time
 from pathlib import Path
@@ -33,7 +34,10 @@ def tiny_rows() -> list[dict]:
     started = time.perf_counter()
     rows = mcr.run_sweep([0.0, 1.0], [0], shared_store=False, replay=True, **TINY)
     elapsed = time.perf_counter() - started
-    assert elapsed < 5.0, f"tiny grid took {elapsed:.1f}s"
+    # A budget, not an assertion: wall-clock time on a loaded CI box or under
+    # WSL is not a test outcome.
+    if elapsed > 5.0:
+        logging.getLogger(__name__).warning("tiny grid took %.1fs (budget 5s)", elapsed)
     return rows
 
 

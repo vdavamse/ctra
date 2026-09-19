@@ -105,6 +105,36 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _checkpointed_stats(mcts: Any) -> Any:
+    """The ``RunCacheStats`` pickled in a checkpoint's runner partial, or ``None``.
+
+    ``MCTSSearch`` pickles the runner it was built with; a checkpoint written
+    by this script therefore carries the ``functools.partial`` whose
+    ``stats`` keyword is the pre-crash counter object (issue #17).  A
+    checkpoint from before the counters existed, or one whose runner is not
+    such a partial, yields ``None`` and the resumed run starts a fresh set.
+    """
+    from ctra.agents.runner import RunCacheStats
+
+    runner = getattr(mcts, "_runner", None)
+    if not isinstance(runner, functools.partial):
+        return None
+    stats = runner.keywords.get("stats")
+    return stats if isinstance(stats, RunCacheStats) else None
+
+
+def _log_cache_stats(tracker: Any, stats: Any, step: int | None = None) -> None:
+    """Send the counters to MLflow; a tracking failure must never end the search."""
+    try:
+        tracker.log_cache_stats(stats, step=step)
+    except Exception:
+        logger.warning(
+            "MLflow cache-stats logging failed (step=%s); the search continues",
+            step,
+            exc_info=True,
+        )
+
+
 def main() -> None:
     """Run MCTS search for optimal feature set and trained model.
 
@@ -174,23 +204,28 @@ def main() -> None:
     # reuses its run id and keeps hitting its own pre-crash entries.
     output_dir.mkdir(parents=True, exist_ok=True)
     agent_cache_dir = output_dir / "agent_cache" / run_id
-    # Cache counters for *this process* (issue #17): agent-cache hits and
-    # misses at the runner, and the feature-store counters each child sends
-    # back.  Bound into the partial so the runner updates them in place; a
-    # resume starts a fresh set (its hits on the pre-crash pickles are the
-    # figure of interest), so results.json describes the process that wrote it.
-    stats = RunCacheStats()
+    # Cache counters for this run (issue #17): agent-cache hits and misses at
+    # the runner, and the feature-store counters each child sends back.
+    # Bound into the partial so the runner updates them in place and every
+    # checkpoint pickles them.  A resume adopts the checkpointed object, so
+    # the counters continue from the pre-crash values: the post-checkpoint
+    # evaluations the crashed process already ran replay from its pickles and
+    # count as agent hits on top, and results.json describes the whole run.
+    stats = _checkpointed_stats(checkpoint["mcts"]) if checkpoint is not None else None
+    if stats is not None:
+        logger.info(
+            "Resuming cache counters from the checkpoint: agent hits/misses=%d/%d, "
+            "feature-store hits/lookups=%d/%d, LLM calls made=%d",
+            stats.agent_hits,
+            stats.agent_misses,
+            stats.feature_store.feature_hits,
+            stats.feature_store.feature_lookups,
+            stats.llm_calls_made,
+        )
+    else:
+        stats = RunCacheStats()
     runner = functools.partial(run_agent_as_subprocess, cache_dir=agent_cache_dir, stats=stats)
     logger.info("Run id %s — agent cache at %s", run_id, agent_cache_dir)
-
-    # Opt-in MLflow tracking (issue #17).  The import stays lazy: the flag
-    # off, mlflow is never imported and no tracker is constructed.
-    tracker = None
-    if args.mlflow:
-        from ctra.mlops.experiment_tracker import ExperimentTracker
-
-        tracker = ExperimentTracker()
-        tracker.start_mcts_run(settings.mcts, task.output_subdir)
 
     if checkpoint is not None:
         mcts = checkpoint["mcts"]
@@ -235,6 +270,24 @@ def main() -> None:
             task=task,
         )
 
+    # Opt-in MLflow tracking (issue #17).  The import stays lazy: the flag
+    # off, mlflow is never imported and no tracker is constructed.  Started
+    # after the checkpoint branch so the logged params are the *effective*
+    # config -- on resume the checkpoint's, which the warnings above may have
+    # just said differs from the CLI settings.
+    tracker = None
+    if args.mlflow:
+        try:
+            from ctra.mlops.experiment_tracker import ExperimentTracker
+
+            tracker = ExperimentTracker()
+        except ImportError as exc:
+            raise SystemExit(
+                f"--mlflow needs the mlflow package, which could not be imported ({exc}). "
+                "Install it or drop the flag."
+            ) from exc
+        tracker.start_mcts_run(mcts.config, task.output_subdir)
+
     # ---- Define rollout callback ----
     checkpoint_every = args.checkpoint_every
     total_rollouts = settings.mcts.num_rollouts
@@ -277,7 +330,7 @@ def main() -> None:
             stats.llm_calls_made,
         )
         if tracker is not None:
-            tracker.log_cache_stats(stats, step=rollout_idx)
+            _log_cache_stats(tracker, stats, step=rollout_idx)
 
         if pbar is not None:
             pbar.update(1)
@@ -310,90 +363,101 @@ def main() -> None:
         len(settings.mcts.objectives),
     )
 
-    best_node = mcts.search(
-        initial_features=[],
-        on_rollout=on_rollout,
-        start_rollout=start_rollout,
-    )
-
-    if pbar is not None:
-        pbar.close()
-
-    total_elapsed = time.monotonic() - search_start
-    logger.info("Search complete in %.0fs", total_elapsed)
-
-    # ---- Save outputs ----
-    from ctra.agents.feature_utils import dump_as_json
-
-    # 1. Feature plans — from best node's eval_output
-    best_output = best_node.eval_output
-
-    if best_output is not None and best_output.feature_plans:
-        plans_path = output_dir / "feature_plans.json"
-        plans_path.write_text(dump_as_json(best_output.feature_plans))
-        logger.info("Saved feature plans to %s", plans_path)
-
-        # 2. Best model pipeline
-        if best_output.eval_outputs:
-            best_eval, _ = best_output.get_best_eval_output()
-            model_path = output_dir / "best_model.pkl"
-            with open(model_path, "wb") as fw:
-                dill.dump(best_eval.model_eval_result.pipeline, fw)
-            logger.info("Saved best model to %s", model_path)
-
-    # 3. Full checkpoint for resume
-    final_ckpt = output_dir / "mcts_state.pkl"
-    with open(final_ckpt, "wb") as fw:
-        dill.dump(
-            {
-                "mcts": mcts,
-                "rollout": total_rollouts - 1,
-                "args": vars(args),
-            },
-            fw,
+    # The MLflow run (if any) must close with the right status whatever
+    # happens below: FAILED on the way out of an exception, FINISHED
+    # otherwise.  mlflow's own atexit hook would mark a crash FINISHED.
+    run_status = "FAILED"
+    try:
+        best_node = mcts.search(
+            initial_features=[],
+            on_rollout=on_rollout,
+            start_rollout=start_rollout,
         )
-    logger.info("Saved final checkpoint to %s", final_ckpt)
 
-    # 4. Results summary
-    # ``best_objectives`` is the best node's *own* evaluation (issue #15): the
-    # score of ``best_features``.  Each history entry snapshots the feature
-    # set it scored and the accessor ranks only the entries matching the
-    # node's current set, so a re-evaluation that changed the plans cannot
-    # leave this field describing an earlier set than the ``eval_output``
-    # shipped in ``feature_plans.json`` (a checkpoint from before the snapshot
-    # existed is the one exception: its entries carry no set and all count).
-    # Before that fix this field held ``mean_reward``, the average over the
-    # node's subtree, which is a different (usually lower) number; it is kept
-    # alongside as ``best_mean_objectives`` for continuity with older runs.
-    # That value is ``value_estimate(best_node)``, the vector UCB exploited
-    # under the run's backprop rule (issue #16): a subtree mean under
-    # ``mean``, the elementwise maximum under ``max``, the best realised
-    # vector under ``max_hv``.  The key is kept for continuity and
-    # ``backprop`` records the rule; a checkpoint from before the field
-    # existed ran under ``mean``.
-    best_own = mcts.best_own_objectives(best_node)
-    backprop = getattr(mcts.config, "backprop", "mean")
-    best_estimate = mcts.value_estimate(best_node)
-    results = {
-        "task": args.task,
-        "rollouts": total_rollouts,
-        "depth": settings.mcts.max_depth,
-        "backprop": backprop,
-        "best_features": best_node.features,
-        "best_objectives": best_own.tolist(),
-        "best_mean_objectives": best_estimate.tolist(),
-        "total_nodes": len(mcts.all_nodes),
-        "elapsed_seconds": round(total_elapsed, 1),
-        # Both cache layers for this process (issue #17); see RunCacheStats.
-        "cache": stats.as_dict(),
-    }
-    results_path = output_dir / "results.json"
-    results_path.write_text(json.dumps(results, indent=2))
-    logger.info("Saved results to %s", results_path)
+        if pbar is not None:
+            pbar.close()
 
-    if tracker is not None:
-        tracker.log_cache_stats(stats)
-        tracker.end_run()
+        total_elapsed = time.monotonic() - search_start
+        logger.info("Search complete in %.0fs", total_elapsed)
+
+        # ---- Save outputs ----
+        from ctra.agents.feature_utils import dump_as_json
+
+        # 1. Feature plans — from best node's eval_output
+        best_output = best_node.eval_output
+
+        if best_output is not None and best_output.feature_plans:
+            plans_path = output_dir / "feature_plans.json"
+            plans_path.write_text(dump_as_json(best_output.feature_plans))
+            logger.info("Saved feature plans to %s", plans_path)
+
+            # 2. Best model pipeline
+            if best_output.eval_outputs:
+                best_eval, _ = best_output.get_best_eval_output()
+                model_path = output_dir / "best_model.pkl"
+                with open(model_path, "wb") as fw:
+                    dill.dump(best_eval.model_eval_result.pipeline, fw)
+                logger.info("Saved best model to %s", model_path)
+
+        # 3. Full checkpoint for resume
+        final_ckpt = output_dir / "mcts_state.pkl"
+        with open(final_ckpt, "wb") as fw:
+            dill.dump(
+                {
+                    "mcts": mcts,
+                    "rollout": total_rollouts - 1,
+                    "args": vars(args),
+                },
+                fw,
+            )
+        logger.info("Saved final checkpoint to %s", final_ckpt)
+
+        # 4. Results summary
+        # ``best_objectives`` is the best node's *own* evaluation (issue #15): the
+        # score of ``best_features``.  Each history entry snapshots the feature
+        # set it scored and the accessor ranks only the entries matching the
+        # node's current set, so a re-evaluation that changed the plans cannot
+        # leave this field describing an earlier set than the ``eval_output``
+        # shipped in ``feature_plans.json`` (a checkpoint from before the snapshot
+        # existed is the one exception: its entries carry no set and all count).
+        # Before that fix this field held ``mean_reward``, the average over the
+        # node's subtree, which is a different (usually lower) number; it is kept
+        # alongside as ``best_mean_objectives`` for continuity with older runs.
+        # That value is ``value_estimate(best_node)``, the vector UCB exploited
+        # under the run's backprop rule (issue #16): a subtree mean under
+        # ``mean``, the elementwise maximum under ``max``, the best realised
+        # vector under ``max_hv``.  The key is kept for continuity and
+        # ``backprop`` records the rule; a checkpoint from before the field
+        # existed ran under ``mean``.
+        best_own = mcts.best_own_objectives(best_node)
+        backprop = getattr(mcts.config, "backprop", "mean")
+        best_estimate = mcts.value_estimate(best_node)
+        results = {
+            "task": args.task,
+            "rollouts": total_rollouts,
+            "depth": settings.mcts.max_depth,
+            "backprop": backprop,
+            "best_features": best_node.features,
+            "best_objectives": best_own.tolist(),
+            "best_mean_objectives": best_estimate.tolist(),
+            "total_nodes": len(mcts.all_nodes),
+            "elapsed_seconds": round(total_elapsed, 1),
+            # Both cache layers for this process (issue #17); see RunCacheStats.
+            "cache": stats.as_dict(),
+        }
+        results_path = output_dir / "results.json"
+        results_path.write_text(json.dumps(results, indent=2))
+        logger.info("Saved results to %s", results_path)
+
+        if tracker is not None:
+            _log_cache_stats(tracker, stats)
+        run_status = "FINISHED"
+    finally:
+        if tracker is not None:
+            try:
+                tracker.end_run(status=run_status)
+            except Exception:
+                logger.warning("Could not end the MLflow run as %s", run_status, exc_info=True)
 
     # ---- Print summary ----
     print(f"\n{'=' * 60}")

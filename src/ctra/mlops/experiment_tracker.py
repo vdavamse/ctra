@@ -105,11 +105,17 @@ class ExperimentTracker:
         logger.info("Started MLflow run %s for task %s", run_id, task_name)
         return run_id  # type: ignore[no-any-return]
 
-    def end_run(self) -> None:
-        """End the current MLflow run."""
+    def end_run(self, status: str = "FINISHED") -> None:
+        """End the current MLflow run.
+
+        Args:
+            status: The terminal run status recorded in MLflow --
+                ``"FINISHED"`` (default) or ``"FAILED"`` when the caller is
+                unwinding from an exception.
+        """
         if self._active_run is not None:
-            self._mlflow.end_run()
-            logger.info("Ended MLflow run %s", self._active_run.info.run_id)
+            self._mlflow.end_run(status=status)
+            logger.info("Ended MLflow run %s (%s)", self._active_run.info.run_id, status)
             self._active_run = None
 
     # ------------------------------------------------------------------

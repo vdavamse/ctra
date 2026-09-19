@@ -21,7 +21,7 @@ Three cache-like layers exist in the MCTS training loop. Only the last two are c
 | `feature_lookups` | `(trial, feature)` pairs probed in the store. |
 | `feature_hits` | ... of those, served from the store. `hit_rate = feature_hits / feature_lookups` (0.0 before any lookup). |
 | `hits_from_initializer_plans` | Hits on plans minted by the Initializer (iteration 0). Within one run these are 0: the root is evaluated once. They only appear when the store persisted from an earlier run. |
-| `hits_from_planner_plans` | Hits on plans minted by the FeaturePlanner on an iteration-N path. Every such plan is freshly generated, so a hit here means two independently generated plan texts collided — this is the cross-branch signal. |
+| `hits_from_planner_plans` | Hits on plans minted by the FeaturePlanner on an iteration-N path. Every such plan is freshly generated, so a hit here means two independently generated plan texts collided — this is the cross-branch signal. One same-branch source exists: an evaluation whose subprocess crashed after some store writes but before its pickle landed is re-run on resume, and with dspy's disk cache at temperature 0 the planner reproduces the byte-identical text, so its remaining lookups hit; negligible in count, and lineage stamping (§7) is the fix. |
 | `groups_dispatched` | `(trial, plan-group)` pairs sent to the builder (LLM calls happen). |
 | `groups_skipped` | `(trial, plan-group)` pairs fully served from the store (zero LLM calls). |
 | `store_writes` | Feature values persisted after a build. |
@@ -43,16 +43,16 @@ LLM_CALLS_PER_GROUP_BUILD = 6
 llm_calls_avoided_estimate = groups_skipped * 6
 ```
 
-Six is the dominant-path cost of one dispatched trial-group build: `FeatureBuilder.forward` runs `dspy.ReAct(max_iters=5)` (≤ 5 calls) plus one ChainOfThought Construct call. It is a **lower bound** — ReAct's final extract call, `ResettingRefine`'s up-to-3 attempts and its feedback calls are not counted — and exact for the iteration-N singleton group on its first attempt, which is where nearly every dispatched build happens.
+Six is a **mid-range point estimate** of what one dispatched trial-group build costs, not a bound. One `FeatureBuilder.forward` attempt is k ReAct steps (`dspy.ReAct(max_iters=5)`: 1 ≤ k ≤ 5, the loop stops at `finish`) + 1 ReAct extract call + 1 ChainOfThought Construct call = k + 2, i.e. 3–7 calls (7 when ReAct exhausts its 5 steps). Under `ResettingRefine(N=3)` a group can take up to 3 attempts plus 2 `OfferFeedback` calls (one after each attempt but the last, when the reward is below the 1.0 threshold), so a dispatched group costs 3–23 calls (`feature_builder.py`, dspy `react.py` / `refine.py`). The calibration below replaces it with the measured figure.
 
 Only a fully cached group avoids a build. A hit inside a group that is still dispatched avoids nothing (the builder runs for the group anyway), so per-feature hits are deliberately **not** multiplied; `features_served_from_store` is reported separately as `feature_hits`.
 
-**Calibration.** `scripts/run_agent.py` records `len(dspy.clients.base_lm.GLOBAL_HISTORY)` at the end of each iteration into `cache_stats.llm_calls_made` — every LM call the iteration made (proposer, planner, evaluator, grouper, builder). A real run therefore yields `llm_calls_made` alongside `groups_dispatched`; the ratio, after subtracting the per-iteration fixed cost (proposer + planner + evaluator, ~3–9 calls under Refine), is the measured multiplier to compare with 6.
+**Calibration.** `scripts/run_agent.py` registers an `LMCallCounter` (a `dspy.utils.callback.BaseCallback` whose `on_lm_start` fires once per `LM.__call__`) on dspy's global callbacks and records its count at the end of each iteration into `cache_stats.llm_calls_made` — every LM call the iteration made (proposer, planner, evaluator, grouper, builder). Counting at the source keeps the figure unbounded; `len(dspy.clients.base_lm.GLOBAL_HISTORY)` would saturate at dspy's `MAX_HISTORY_SIZE` (10,000 entries) on exactly the large iteration-0 evaluations the figure is meant to calibrate, and is empty under `settings.disable_history`. Calls served by dspy's own response cache **are included** (`on_lm_end` receives the completions, not the response's `cache_hit` flag), so on a re-run against a warm dspy cache the figure counts calls, not paid calls. A real run therefore yields `llm_calls_made` alongside `groups_dispatched`; the ratio, after subtracting the per-iteration fixed cost (proposer + planner + evaluator, ~3–9 calls under Refine), is the measured multiplier to compare with 6.
 
 ## 3. Where the numbers land
 
 - **Log:** one line per rollout from `train_mcts.py`: `Rollout k/N cache — agent hits/misses=…, feature-store hit rate=…% (hits/lookups), groups skipped=…, LLM calls avoided~…, LLM calls made=…` (running totals; `on_rollout` sees only the last node of a deep rollout, so the totals live at the runner boundary).
-- **`results.json["cache"]`:** `RunCacheStats.as_dict()` for the process that wrote it (a resumed process starts a fresh set: its hits on the pre-crash pickles are the figure of interest).
+- **`results.json["cache"]`:** `RunCacheStats.as_dict()` for the whole run. The object is pickled in every checkpoint (it is bound into the runner partial), and a resume adopts it, so the counters continue across a crash; the evaluations the crashed process ran after its last checkpoint replay from its pickles and count as `agent_hits` on top.
 - **MLflow** (opt-in, `--mlflow`): `ExperimentTracker.log_cache_stats` logs `agent_cache_hit_rate`, `feature_store_hit_rate`, `groups_skipped`, `llm_calls_avoided_estimate`, `llm_calls_made` and every raw counter, per rollout (`step`) and as final totals.
 - **Summary print** at the end of `train_mcts.py`.
 
@@ -78,7 +78,7 @@ python scripts/eval/measure_cache_reuse.py --collision-rate 0,0.25,0.5,1 --seeds
 Reading the table:
 
 - At collision rate 0 there are **no** planner-plan hits: every iteration-N plan is new text, and the value carry-forward (layer a) is what keeps the search from rebuilding inherited plans. The store does nothing within a single run unless plan texts collide.
-- At collision rate 1 the ceiling is 83.3% of planner lookups, not 100%: the first branch to plan each feature name still builds it (8 pool names × 10 trials = 80 dispatches, the `groups dispatched` column). The store hit rate (77.8%) is lower than the planner-plan rate because the 30 initializer lookups never hit within one run.
+- At collision rate 1 the ceiling is 83.3% of planner lookups, not 100%: the first branch to plan each feature name still builds it. The 80 in the `groups dispatched` column is the root's 10 (its one initializer group, dispatched once per trial and never a hit within a run) + 7 reachable pool names × 10 trials = 70 planner dispatches; `feat_H` is unreachable at depth 5, because the evaluator stub suggests the first three missing pool names in `POOL` order, so five additions can only reach `feat_A`–`feat_G` (420 planner lookups − 350 hits = 70 misses = 7 names). The store hit rate (77.8%) is lower than the planner-plan rate because the 30 initializer lookups never hit within one run.
 - The avoided-calls estimate is `groups_skipped × 6`; a real run replaces the 6 with the calibrated multiplier.
 - `--replay` (the resume scenario) replays every evaluation from the agent cache: 43 hits, 0 misses, `replayed_group_builds == groups_dispatched` of the first pass, and **nothing** folded into the feature-store counters. Within a single search the agent hit rate is 0 by construction (the rollout index is part of the node id).
 
@@ -122,4 +122,4 @@ Regardless of the rate: if the calibrated multiplier (`llm_calls_made` per dispa
 ## 7. Deferred
 
 - Lineage stamping (which node/rollout wrote each store entry) would let a hit be attributed to a specific branch pair rather than to "a planner plan"; it needs `--node-id` plumbing through `runner.py` and `run_agent.py` and a metadata-returning read path.
-- A `results.json` that merges the counters of a resumed run with its pre-crash process (today each process reports its own).
+- Splitting `llm_calls_made` into paid calls and dspy-cache hits: the callback API does not expose the `cache_hit` flag, so it would need a wrapper around `LM.forward`.
