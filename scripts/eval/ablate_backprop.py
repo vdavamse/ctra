@@ -38,6 +38,7 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from unittest import mock
 
 import numpy as np
 import pandas as pd
@@ -53,6 +54,7 @@ from ctra.agents.data_models import (
 )
 from ctra.config.settings import MCTSConfig
 from ctra.search.mcts import MCTSSearch
+from ctra.search.pareto import pareto_select
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
@@ -250,26 +252,29 @@ class _SelectionCounter:
 
     def __init__(self) -> None:
         self.ucb_decided = 0
-        self._original = mcts_mod.pareto_select
+        # ``MCTSSearch._select`` binds the name ``pareto_select`` imported into
+        # ``ctra.search.mcts``, so the seam is that module attribute (the
+        # original callable is ``ctra.search.pareto.pareto_select``).
+        self._patcher = mock.patch.object(mcts_mod, "pareto_select", self._counting)
+
+    def _counting(self, nodes: Sequence[Any], **kwargs: Any) -> Any:
+        if len(nodes) > 1 and all(n.visit_count > 0 for n in nodes):
+            self.ucb_decided += 1
+        return pareto_select(nodes, **kwargs)
 
     def __enter__(self) -> _SelectionCounter:
-        def counting(nodes: Sequence[Any], **kwargs: Any) -> Any:
-            if len(nodes) > 1 and all(n.visit_count > 0 for n in nodes):
-                self.ucb_decided += 1
-            return self._original(nodes, **kwargs)
-
-        mcts_mod.pareto_select = counting  # type: ignore[assignment]
+        self._patcher.start()
         return self
 
     def __exit__(self, *exc: object) -> None:
-        mcts_mod.pareto_select = self._original  # type: ignore[assignment]
+        self._patcher.stop()
 
 
 def run_one(variant: str, seed: int, cell: Cell) -> dict[str, Any]:
     """Run one search and measure it; returns a row with every ``COLUMNS`` key."""
     runner = FeatureAwareRunner(make_synergy_evaluator(seed), make_pool(seed), cell.branch)
     config = MCTSConfig(
-        backprop=variant,  # type: ignore[arg-type]
+        backprop=variant,
         num_rollouts=cell.rollouts,
         max_depth=MAX_DEPTH,
         objectives=["accuracy", "parsimony"],

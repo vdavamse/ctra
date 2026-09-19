@@ -9,11 +9,9 @@ from __future__ import annotations
 import logging
 import pickle
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import pandas as pd
-from numpy.typing import NDArray
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
@@ -21,6 +19,10 @@ from sklearn.preprocessing import FunctionTransformer, OneHotEncoder
 
 from ctra.config.settings import ModelConfig, get_settings
 from ctra.models.tabpfn_classifier import PredictionResult, compute_metrics
+
+if TYPE_CHECKING:
+    import pandas as pd
+    from numpy.typing import NDArray
 
 logger = logging.getLogger(__name__)
 

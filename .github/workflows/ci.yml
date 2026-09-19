@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  lock:
+    name: Lockfile integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # setup-uv publishes no floating major tag past v7; pin the full release SHA.
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.11.32"
+          # Nothing worth caching for a lock check; avoid the empty-cache post-step failure.
+          enable-cache: false
+      - name: uv lock --check
+        run: uv lock --check
+
+  test:
+    name: Tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Use uv-managed interpreters on every leg; otherwise 3.12 silently picks
+      # the runner image's /usr/bin/python3.12 and its patch level drifts with the image.
+      UV_PYTHON_PREFERENCE: only-managed
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # setup-uv publishes no floating major tag past v7; pin the full release SHA.
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.11.32"
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - name: Install
+        run: uv sync --frozen --extra api # the dev dependency group is a uv default group
+      - name: Run tests
+        run: uv run --frozen pytest -q -p no:cacheprovider
+
+  lint:
+    name: Lint and types
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # setup-uv publishes no floating major tag past v7; pin the full release SHA.
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.11.32"
+          python-version: "3.10"
+          enable-cache: true
+      - name: Install
+        run: uv sync --frozen --extra api # the dev dependency group is a uv default group
+      - name: ruff check
+        run: uv run --frozen ruff check
+      - name: ruff format --check
+        run: uv run --frozen ruff format --check
+      # Python 3.10 only: uv.lock forks pandas-stubs (3.0.0 on python_full_version >= 3.11
+      # vs 2.3.3 below), which yields 4 mypy errors there (3 no-any-return, 1 unused-ignore).
+      # Never add mypy to the matrix legs.
+      - name: mypy
+        run: uv run --frozen mypy src/ctra scripts

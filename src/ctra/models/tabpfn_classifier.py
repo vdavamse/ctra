@@ -16,11 +16,9 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import pandas as pd
-from numpy.typing import NDArray
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
@@ -29,6 +27,10 @@ from sklearn.metrics import (
 )
 
 from ctra.config.settings import ModelConfig, get_settings
+
+if TYPE_CHECKING:
+    import pandas as pd
+    from numpy.typing import NDArray
 
 logger = logging.getLogger(__name__)
 
