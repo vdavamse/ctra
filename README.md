@@ -176,9 +176,7 @@ The two caches are per-phase for different reasons. The feature store is namespa
 
 Fallback location (`output/agent_cache/`, i.e. `settings.output_dir / "agent_cache"`): used only when `run_agent_as_subprocess` is called without a `cache_dir` — for example when it is passed bare as the `runner` of an `MCTSSearch` constructed programmatically (`MCTSSearch` has no default runner; the caller supplies one). `train_mcts.py` never uses it; it always passes the per-run directory above. Keys are still phase-prefixed (`phase2--<node_id>.output.pkl`), so phases cannot collide there.
 
-**Measured reuse:** _pending — see issue #17._
-
-`results.json` carries a `cache` block with the run's feature-store and agent-cache hit rates (also logged per rollout, and to MLflow with `--mlflow`). What each counter means, how "LLM calls avoided" is estimated and the offline measurement are in [research/cache-reuse-measurement.md](./research/cache-reuse-measurement.md).
+**Measured reuse:** not yet measured on a production run (issue #17 adds the instrumentation; the offline harness numbers are in the research note linked below). `results.json` carries a `cache` block with the run's feature-store and agent-cache hit rates (also logged per rollout, and to MLflow with `--mlflow`). What each counter means, how "LLM calls avoided" is estimated and the offline measurement are in [research/cache-reuse-measurement.md](./research/cache-reuse-measurement.md).
 
 ### 4. Prediction
 

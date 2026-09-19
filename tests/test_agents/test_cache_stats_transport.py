@@ -34,7 +34,6 @@ from tests.test_agents.test_orchestrator import _make_output, _make_plan
 def agent(monkeypatch: pytest.MonkeyPatch) -> Agent:
     """An ``Agent`` with every dspy module stubbed (the test_orchestrator patch set)."""
     mock_settings = MagicMock()
-    mock_settings.mcts.feature_cache_dir = "/tmp/test_cache"
     mock_settings.model.classifiers = []
     monkeypatch.setattr("ctra.agents.orchestrator.get_settings", lambda: mock_settings)
     monkeypatch.setattr("ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module)
