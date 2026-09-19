@@ -133,7 +133,6 @@ class TestEmptyEvalOutputs:
         monkeypatch.setattr("ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module)
 
         mock_orchestrator_settings = MagicMock()
-        mock_orchestrator_settings.mcts.feature_cache_dir = "/tmp/test_cache"
         mock_orchestrator_settings.model.classifiers = [ClassifierType.XGBOOST]
         monkeypatch.setattr(
             "ctra.agents.orchestrator.get_settings",
@@ -192,7 +191,6 @@ class TestNoneExplanationsCoverage:
         monkeypatch.setattr("ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module)
 
         mock_orchestrator_settings = MagicMock()
-        mock_orchestrator_settings.mcts.feature_cache_dir = "/tmp/test_cache"
         mock_orchestrator_settings.model.classifiers = [ClassifierType.XGBOOST]
         mock_orchestrator_settings.model.shapiq_max_order = 2
         mock_orchestrator_settings.model.shapiq_max_samples = 100
@@ -273,7 +271,6 @@ class TestNoneExplanationsCoverage:
         monkeypatch.setattr("ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module)
 
         mock_orchestrator_settings = MagicMock()
-        mock_orchestrator_settings.mcts.feature_cache_dir = "/tmp/test_cache"
         mock_orchestrator_settings.model.classifiers = [ClassifierType.XGBOOST]
         mock_orchestrator_settings.model.shapiq_max_order = 2
         mock_orchestrator_settings.model.shapiq_max_samples = 100
@@ -359,7 +356,6 @@ class TestIterNDiagnosticsPreservation:
         monkeypatch.setattr("ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module)
 
         mock_orchestrator_settings = MagicMock()
-        mock_orchestrator_settings.mcts.feature_cache_dir = "/tmp/test_cache"
         mock_orchestrator_settings.model.classifiers = [ClassifierType.XGBOOST]
         mock_orchestrator_settings.model.shapiq_max_order = 2
         mock_orchestrator_settings.model.shapiq_max_samples = 100
@@ -579,7 +575,6 @@ class TestIterNDiagnosticsPreservation:
         monkeypatch.setattr("ctra.agents.orchestrator.ResettingRefine", lambda module, **kw: module)
 
         mock_orchestrator_settings = MagicMock()
-        mock_orchestrator_settings.mcts.feature_cache_dir = "/tmp/test_cache"
         mock_orchestrator_settings.model.classifiers = [ClassifierType.XGBOOST]
         mock_orchestrator_settings.model.shapiq_max_order = 2
         mock_orchestrator_settings.model.shapiq_max_samples = 100

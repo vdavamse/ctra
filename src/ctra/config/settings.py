@@ -434,10 +434,6 @@ class MCTSConfig(BaseSettings):
     subprocess_timeout: int = 3600
     """Timeout in seconds for each subprocess agent evaluation."""
 
-    # Legacy dir kept for agent_cache derivation in runner.py (runner.py:110
-    # uses feature_cache_dir.parent / "agent_cache").
-    feature_cache_dir: Path = Path("output/feature_cache")
-
     # Global feature value store (cross-branch reuse via per-feature granularity)
     feature_store_enabled: bool = True
     feature_store_dir: Path = Path("output/feature_store")

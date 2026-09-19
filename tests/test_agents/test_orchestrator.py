@@ -215,7 +215,6 @@ class TestForwardIteration0:
         """Create Agent with all sub-agents fully mocked."""
         # Mock settings
         mock_settings = MagicMock()
-        mock_settings.mcts.feature_cache_dir = "/tmp/test_cache"
         mock_settings.model.classifiers = []  # Skip model training
         monkeypatch.setattr("ctra.agents.orchestrator.get_settings", lambda: mock_settings)
 
@@ -305,7 +304,6 @@ class TestForwardIterationN:
     def mock_agent(self, monkeypatch: pytest.MonkeyPatch) -> Agent:
         """Create Agent with all sub-agents fully mocked."""
         mock_settings = MagicMock()
-        mock_settings.mcts.feature_cache_dir = "/tmp/test_cache"
         mock_settings.model.classifiers = []
         monkeypatch.setattr("ctra.agents.orchestrator.get_settings", lambda: mock_settings)
 
@@ -487,7 +485,6 @@ class TestTaskNamespaceResolution:
         monkeypatch: pytest.MonkeyPatch,
     ) -> Agent:
         mock_settings = MagicMock()
-        mock_settings.mcts.feature_cache_dir = "/tmp/test_cache"
         mock_settings.mcts.feature_store_dir = "/tmp/test_store"
         mock_settings.mcts.feature_store_enabled = True
         mock_settings.model.classifiers = []

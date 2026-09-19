@@ -30,10 +30,10 @@ This plan transforms the AutoCT research prototype into a production-grade CTRA 
 - **Notebooks → Scripts:** 6 Jupyter notebooks converted to idempotent CLI scripts
 - **RAG:** LinearRAG replaces txtai, with `en_core_sci_scibert` NER and date-gated temporal filtering
 - **LLM:** Claude Opus 4.6 via DSPy with extended thinking (budget tokens), following the DIFW agent pattern
-- **MCTS:** 6 targeted fixes + Pareto multi-objective search (3 objectives) + AB-MCTS adaptive branching
+- **MCTS:** 6 targeted fixes + Pareto multi-objective search (2 objectives per phase) + AB-MCTS adaptive branching. See `research/mcts-implementation-design.md` § "As Implemented" for current design vs. planned design.
 - **Data:** TrialBench + TOP + CTOD benchmarks; training expanded to 200-500 samples
 - **Rollouts:** Minimum 20 MCTS rollouts (up from default 10)
-- **Feature Caching:** Global feature value store for cross-branch reuse — projected 49-66% reduction in LLM calls
+- **Feature Caching:** Per-phase feature value store (namespaced by `Task.output_subdir`, so reuse is cross-branch within one phase's tree, not global) — projected 49-66% reduction in LLM calls
 
 ---
 
@@ -783,6 +783,8 @@ def _build_evaluator_context(self, node):
 ```
 
 ### 6.2 Pareto Multi-Objective MCTS
+
+> **Note:** This section (all of § 6.2) describes the planned design. The current implementation uses 2 objectives per phase and no multi-fidelity evaluation in the search layer. See `research/mcts-implementation-design.md` § "As Implemented" for what was actually built.
 
 Based on detailed design in `research/mcts-implementation-design.md`.
 

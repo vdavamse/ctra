@@ -351,9 +351,10 @@ def pareto_select(
             the exploration-vs-exploitation balance (default √2 ≈ 1.414).
         rng: Generator for the random picks in steps 1 and 5.  ``None`` (the
             default) keeps the historical behaviour and draws from numpy's
-            global RNG.  ``MCTSSearch.search`` passes a generator seeded per
-            rollout so that a resumed run replays the pre-crash selection
-            path and finds its cached evaluations (issue #12).
+            global RNG; in practice this default is unreachable from
+            ``MCTSSearch.search``, which always passes a generator seeded per
+            rollout (PR #28). Per-rollout seeding lets resumed runs replay
+            the pre-crash selection path and find cached evaluations (issue #12).
 
     Returns:
         The single selected child node to descend into.
