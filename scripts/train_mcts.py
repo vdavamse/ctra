@@ -15,6 +15,9 @@ Usage::
 
     # Custom output directory
     python scripts/train_mcts.py --task phase2 --output-dir .output/phase2_v1/
+
+    # Also log the cache hit rates to MLflow (per rollout and final totals)
+    python scripts/train_mcts.py --task phase2 --rollouts 20 --mlflow
 """
 
 from __future__ import annotations
@@ -93,6 +96,11 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=5,
         help="Save checkpoint every N rollouts (default: 5).",
+    )
+    parser.add_argument(
+        "--mlflow",
+        action="store_true",
+        help="Log the MCTS config and cache hit rates to MLflow (off by default).",
     )
     return parser.parse_args()
 
@@ -174,6 +182,15 @@ def main() -> None:
     stats = RunCacheStats()
     runner = functools.partial(run_agent_as_subprocess, cache_dir=agent_cache_dir, stats=stats)
     logger.info("Run id %s — agent cache at %s", run_id, agent_cache_dir)
+
+    # Opt-in MLflow tracking (issue #17).  The import stays lazy: the flag
+    # off, mlflow is never imported and no tracker is constructed.
+    tracker = None
+    if args.mlflow:
+        from ctra.mlops.experiment_tracker import ExperimentTracker
+
+        tracker = ExperimentTracker()
+        tracker.start_mcts_run(settings.mcts, task.output_subdir)
 
     if checkpoint is not None:
         mcts = checkpoint["mcts"]
@@ -259,6 +276,8 @@ def main() -> None:
             fs.llm_calls_avoided_estimate,
             stats.llm_calls_made,
         )
+        if tracker is not None:
+            tracker.log_cache_stats(stats, step=rollout_idx)
 
         if pbar is not None:
             pbar.update(1)
@@ -371,6 +390,10 @@ def main() -> None:
     results_path = output_dir / "results.json"
     results_path.write_text(json.dumps(results, indent=2))
     logger.info("Saved results to %s", results_path)
+
+    if tracker is not None:
+        tracker.log_cache_stats(stats)
+        tracker.end_run()
 
     # ---- Print summary ----
     print(f"\n{'=' * 60}")

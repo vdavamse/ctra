@@ -1087,3 +1087,73 @@ class TestCacheReporting:
         runner = mock_mcts.set_runner.call_args.args[0]
         assert isinstance(runner.keywords["stats"], RunCacheStats)
         assert runner.keywords["stats"] == RunCacheStats()
+
+
+# ---------------------------------------------------------------------------
+# Tests: --mlflow (issue #17)
+# ---------------------------------------------------------------------------
+
+
+class TestMlflowFlag:
+    """The tracker is built and fed only when ``--mlflow`` is given."""
+
+    @staticmethod
+    def _run(monkeypatch: pytest.MonkeyPatch, output_dir: Path, *extra: str) -> MagicMock:
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["train_mcts.py", "--task", "phase2", "--output-dir", str(output_dir), *extra],
+        )
+        best_node = _make_best_node()
+        best_node.eval_output = _make_mock_output()
+        mock_mcts = _make_mock_mcts(best_node)
+
+        def mock_search(initial_features, on_rollout=None, start_rollout=0):
+            on_rollout(0, best_node, np.array([0.80, 0.70]))
+            on_rollout(1, best_node, np.array([0.82, 0.72]))
+            return best_node
+
+        mock_mcts.search.side_effect = mock_search
+        monkeypatch.setattr("ctra.search.mcts.MCTSSearch", MagicMock(return_value=mock_mcts))
+        monkeypatch.setattr(
+            "ctra.config.settings.get_settings",
+            MagicMock(return_value=_make_mock_settings(num_rollouts=2)),
+        )
+        monkeypatch.setattr("ctra.agents.feature_utils.dump_as_json", MagicMock(return_value="{}"))
+        monkeypatch.setattr("dill.dump", MagicMock())
+        tracker_cls = MagicMock()
+        monkeypatch.setattr("ctra.mlops.experiment_tracker.ExperimentTracker", tracker_cls)
+
+        from train_mcts import main
+
+        main()
+        return tracker_cls
+
+    def test_default_is_off(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "argv", ["train_mcts.py", "--task", "phase2"])
+        from train_mcts import parse_args
+
+        assert parse_args().mlflow is False
+
+    def test_flag_off_constructs_no_tracker(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        tracker_cls = self._run(monkeypatch, tmp_path / "output")
+        tracker_cls.assert_not_called()
+
+    def test_flag_on_logs_per_rollout_and_final_totals(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from ctra.agents.runner import RunCacheStats
+
+        tracker_cls = self._run(monkeypatch, tmp_path / "output", "--mlflow")
+        tracker_cls.assert_called_once_with()
+        tracker = tracker_cls.return_value
+        tracker.start_mcts_run.assert_called_once()
+        assert tracker.start_mcts_run.call_args.args[1] == "phase2"
+        steps = [c.kwargs.get("step") for c in tracker.log_cache_stats.call_args_list]
+        assert steps == [0, 1, None]
+        assert all(
+            isinstance(c.args[0], RunCacheStats) for c in tracker.log_cache_stats.call_args_list
+        )
+        tracker.end_run.assert_called_once()
