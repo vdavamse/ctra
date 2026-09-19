@@ -462,3 +462,32 @@ class TestNonFiniteScores:
         _wire(search, root, child)
 
         assert search._select_best() is root
+
+
+class TestTolerances:
+    """Ties and near-duplicates are decided by ``_TIE_ATOL`` (1e-9), not by exact equality or a grid."""
+
+    def test_twins_straddling_a_decimal_grid_boundary_are_deduped(self):
+        """Merging is by tolerance, not by rounding to a decimal grid.
+
+        These twins are 2e-15 apart but round to different 12-decimal values,
+        so a round-then-unique dedupe would keep both and let the root win.
+        """
+        search = _search(["accuracy", "parsimony"], [0.0, 0.0])
+        root = _node(["a"], own=[[0.50, 0.98]], visit_count=1)
+        twins = [
+            _node(["a", "b", "c"], own=[[0.85, 0.940000000000499]], visit_count=1, parent=root),
+            _node(["a", "b", "d"], own=[[0.85, 0.940000000000501]], visit_count=1, parent=root),
+        ]
+        _wire(search, root, *twins)
+
+        assert search._select_best() is twins[0]
+
+    def test_a_measurably_better_accuracy_is_not_tied_away(self):
+        """One ordered pair on a 500/500 split (4e-6) is far above the tolerance and must win."""
+        search = _search(["accuracy"], [0.0])
+        root = _node(["a"], own=[[0.900000]], visit_count=1)
+        better = _node(["a", "b", "c"], own=[[0.900005]], visit_count=1, parent=root)
+        _wire(search, root, better)
+
+        assert search._select_best() is better
