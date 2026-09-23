@@ -202,15 +202,45 @@ CTRA runs `Ihor/gliner-biomed-large-v1.0` — the **uni-encoder** at **large** s
 
 `docs/ner-evaluation-guide.md:143` already lists *"Test a different GLiNER variant (e.g., the bi-encoder model)"* as a supported operation — and it appears never to have been run. The NER evaluation compared GLiNER against scibert and scispaCy, never against its own smaller and bi-encoder siblings.
 
-Measured baseline: **1.16 chunk/s** on real CTG text (GTX 1650 Ti, fp16, batch 8) → 22 days for ClinicalTrials.gov alone. A 3–6x gain would bring that to 4–7 days.
+### MEASURED 2026-09-23 — the bi-encoder is **not** the win; downscaling is
 
-**Effort:** config change + a benchmark run · **Risk:** low (reversible) · **This is the largest single unknown in the index-cost column — benchmark first.**
+All six variants, on 120 real CTG chunks (mean 1,147 chars), GTX 1650 Ti fp16 batch 8, production call path, threshold 0.4. Scripts and raw JSON: `notes/bench_rag_hardware/bench_gliner_variants.py`, `results_gliner_variants.json`.
+
+| Model | Labels | doc/s | vs prod | VRAM | CTG est | Agreement vs prod |
+|---|---|---|---|---|---|---|
+| **uni-large** (production) | 16 | 1.13 | 1.00x | 1,616 M | 22.8 d | — |
+| uni-large | 6 | 1.22 | 1.08x | 1,616 M | 21.1 d | — |
+| bi-large | 16 | 1.43 | **1.27x** | 1,618 M | 18.0 d | 0.46 |
+| **uni-base** | 16 | 3.95 | **3.50x** | 744 M | **6.5 d** | **0.56** |
+| bi-base | 16 | 3.40 | 3.02x | 1,013 M | 7.6 d | 0.45 |
+| **uni-small** | 16 | 6.35 | **5.63x** | 655 M | **4.1 d** | 0.50 |
+| bi-small | 16 | 4.84 | 4.29x | 903 M | 5.3 d | 0.44 |
+
+**Three findings, two of which contradict the prediction above:**
+
+1. **The bi-encoder only helps at `large`, and less than advertised.** `bi-large` gives 1.27x — below the paper's 39–63% band. At base and small it is *slower* than the uni-encoder (`bi-base` 0.86x of `uni-base`; `bi-small` 0.76x of `uni-small`) and uses **more** VRAM, consistent with carrying a second encoder. The paper's gains come from amortising cached label embeddings across many labels; at 16 labels and ~1,147-char documents, text encoding dominates and the extra encoder is pure overhead. Their measurements were RTX3090 / fp32 / "dataset-specific labels" — a different regime.
+
+2. **Model scale is the real lever.** `uni-small` is **5.63x** production (22.8 d → 4.1 d), `uni-base` **3.50x** (→ 6.5 d). That is the 3–6x hoped for, from a different knob than expected.
+
+3. **⚠️ The speedup is not free — agreement with production is only 0.44–0.56 Jaccard.** Even the closest variant (`uni-base`, 0.56) shares barely half its extracted entity set with the current model. These are materially different extractions, not cheaper approximations of the same output. Note also that bi-encoder variants cluster low (0.44–0.46) regardless of scale, suggesting the architecture extracts systematically differently.
+
+**Recommendation:** drop the bi-encoder idea. Evaluate **`uni-base`** (best speed/agreement trade) and **`uni-small`** on F1 — and unlike the retrieval question, **the harness for this already exists**: `src/ctra/rag/eval/` (`NERExperiment`, CHIA/BioNLP benchmarks, threshold sweeps) is precisely the right tool. This is the one item on the list that is decidable today.
+
+**Effort:** config change + an existing-harness run · **Risk:** low to trial, medium to adopt (0.5 agreement is a real quality change)
 
 ---
 
 ## 11. Cut the label count
 
-Uni-encoder cost is quadratic in `(|labels| + |text|)`, so label count is a direct lever. Of CTRA's 16 labels, three have authoritative vocabularies:
+### ⚠️ MEASURED 2026-09-23 — the cost rationale below is wrong
+
+Cutting 16 labels → 6 gave only **1.08x** at large (1.13 → 1.22 doc/s), and similarly small deltas at every scale. The quadratic term in `(|labels| + |text|)` is real but irrelevant here: CTRA's chunks are ~1,147 characters, so `|text|` dominates `|labels|` completely. The paper's 92–568% figures were measured at **127 labels**, where the ratio inverts.
+
+**Label count is not a cost lever for CTRA.** The *precision* rationale below stands on its own and is unaffected — a curated gazetteer is exact for in-vocabulary terms where GLiNER is probabilistic — but this item should be justified on quality, not speed, and it drops well down the priority list.
+
+---
+
+Of CTRA's 16 labels, three have authoritative vocabularies:
 
 | Label | Vocabulary | Status |
 |---|---|---|
@@ -218,7 +248,7 @@ Uni-encoder cost is quadratic in `(|labels| + |text|)`, so label count is a dire
 | `Disease` | MeSH, CTG `conditionsModule` | Available |
 | `Gene or protein` | HGNC | Available |
 
-Aho-Corasick over 100k+ phrases tags documents in milliseconds, single-pass. Run the gazetteer for those three; reserve GLiNER for the types with no vocabulary — `Mechanism of action`, `Clinical endpoint`, `Adverse event`, `Patient population`, `Biomarker`. 16 → ~6 labels is a **superlinear** saving under the quadratic cost, and GLiNER stays where it genuinely generalises.
+Aho-Corasick over 100k+ phrases tags documents in milliseconds, single-pass. Run the gazetteer for those three; reserve GLiNER for the types with no vocabulary — `Mechanism of action`, `Clinical endpoint`, `Adverse event`, `Patient population`, `Biomarker`. GLiNER then stays where it genuinely generalises, and drug/disease/gene mentions become exact rather than probabilistic. ~~16 → ~6 labels is a superlinear saving under the quadratic cost~~ — measured at 1.08x; see above.
 
 ⚠️ `docs/ner-evaluation-guide.md` found GLiNER's *typed* extraction acts as an implicit precision filter and beat scispaCy on downstream retrieval. That compared two statistical taggers; a curated gazetteer is a third option neither was measured against. It wins on precision by construction for in-vocabulary terms and loses on out-of-vocabulary recall. **Measure the in-vocabulary hit rate on real CTG interventions before committing.**
 
@@ -249,8 +279,8 @@ CTG passages average 5,544 chars (measured over 3,000 real trials), but entity d
 | 7 | Multi-seed instead of argmax | schemagraph | 0.5 d | low-med | **yes** |
 | 8 | Node specificity + hub pruning | both | 1 d | low-med | **yes** |
 | 9 | BM25 fallback for entity-less queries | SPRIG | 2 h | low | no |
-| 10 | GLiNER bi-encoder | GLiNER-BioMed paper | config | low | partly |
-| 11 | Cut label count via gazetteer | CTRA-specific | 2–3 d | med | **yes** |
+| 10 | ~~GLiNER bi-encoder~~ → **downscale to `uni-base`/`uni-small`** | measured | config | low-med | NER harness (**exists**) |
+| 11 | Gazetteer for Drug/Disease/Gene (precision, **not** speed) | CTRA-specific | 2–3 d | med | **yes** |
 | 12 | Field-selective NER + BM25F fields | schemagraph | 1–2 d | low-med | no |
 
 ### What this fixes
@@ -264,7 +294,7 @@ CTG passages average 5,544 chars (measured over 3,000 real trials), but entity d
 | Non-deterministic results | **Gone** (4) |
 | Best-effort leakage filter | **Gone** (5) |
 | Single-seed activation fragility | **Gone** (6–8) |
-| GLiNER index cost — 22 days for CTG | **Reduced, not solved** — perhaps 3–6 days (10–12) |
+| GLiNER index cost — 22 days for CTG | **Measured 4.1 d (`uni-small`) / 6.5 d (`uni-base`)** — but at 0.50–0.56 entity agreement, so quality must be adjudicated first (10) |
 | Sentence embedding store, 13–100 GB | **Still hard** — see below |
 
 ### The residual
@@ -274,7 +304,7 @@ LinearRAG's **sentence tier** is its most expensive structure and the one item o
 ### Suggested order
 
 1. **Item 4** (1 hour, no risk) — otherwise run-to-run variance pollutes every later measurement.
-2. **The retrieval benchmark harness** — still the blocking prerequisite (`research/rag-alternatives-hybrid-retrieval.md` § 8). Items 6, 7, 8 and 11 are undecidable without it.
-3. **Items 1, 2, 3, 5** — pure implementation wins, no quality risk, and they make iteration fast enough to evaluate the rest.
-4. **Item 10** — benchmark the bi-encoder; largest single unknown in index cost.
+2. **Item 10's F1 run** — `uni-base` and `uni-small` on the **existing** `src/ctra/rag/eval/` NER harness. Throughput is now measured (3.50x / 5.63x, 22.8 d → 6.5 d / 4.1 d); only quality is open, and the tool for it already exists. **This is the one decidable item on the list today**, and a 3–6x faster index makes every later experiment cheaper.
+3. **The retrieval benchmark harness** — still the blocking prerequisite for everything else (`research/rag-alternatives-hybrid-retrieval.md` § 8). Items 6, 7, 8 and 11 are undecidable without it.
+4. **Items 1, 2, 3, 5** — pure implementation wins, no quality risk, and they make iteration fast enough to evaluate the rest.
 5. **Items 6–9, 11–12** — quality changes, one variable per run, scored on the harness.
